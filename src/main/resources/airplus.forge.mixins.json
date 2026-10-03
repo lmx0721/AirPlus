@@ -79,6 +79,7 @@
     "world.MixinWorldClient"
   ],
   "client": [
+    "client.MixinSplashProgress",
     "gui.MixinGuiAchievement",
     "gui.MixinGuiContainer",
     "gui.MixinGuiTextField",

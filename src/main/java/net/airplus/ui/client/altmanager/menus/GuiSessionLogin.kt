@@ -5,13 +5,11 @@
  */
 package net.airplus.ui.client.altmanager.menus
 
-import com.thealtening.AltService
 import kotlinx.coroutines.launch
 import net.airplus.lang.translationButton
 import net.airplus.ui.client.altmanager.GuiAltManager
 import net.airplus.ui.font.AWTFontRenderer.Companion.assumeNonVolatile
 import net.airplus.ui.font.Fonts
-import net.airplus.utils.client.ClientUtils.LOGGER
 import net.airplus.utils.kotlin.SharedScopes
 import net.airplus.utils.login.LoginUtils
 import net.airplus.utils.render.RenderUtils.drawRect
@@ -93,16 +91,6 @@ class GuiSessionLogin(private val prevGui: GuiAltManager) : AbstractScreen() {
 
                     status = when (loginResult) {
                         LoginUtils.LoginResult.LOGGED -> {
-                            if (GuiAltManager.altService.currentService != AltService.EnumAltService.MOJANG) {
-                                try {
-                                    GuiAltManager.altService.switchService(AltService.EnumAltService.MOJANG)
-                                } catch (e: NoSuchFieldException) {
-                                    LOGGER.error("Something went wrong while trying to switch alt service.", e)
-                                } catch (e: IllegalAccessException) {
-                                    LOGGER.error("Something went wrong while trying to switch alt service.", e)
-                                }
-                            }
-
                             "§aLogged into §f§l${mc.session.username}§a."
                         }
 

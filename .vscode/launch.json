@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "name": "Minecraft Client",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/run",
+      "console": "internalConsole",
+      "stopOnEntry": false,
+      "mainClass": "net.fabricmc.devlaunchinjector.Main",
+      "vmArgs": "\"-Dfabric.dli.config\u003dD:\\codex\\AirPlus-Fork\\.gradle\\loom-cache\\launch.cfg\" \"-Dfabric.dli.env\u003dclient\" \"-Ddev-mode\u003dtrue\" \"-Xmx4096m\" \"-Xms1024m\" \"-Dfabric.dli.main\u003dnet.minecraft.launchwrapper.Launch\"",
+      "args": "",
+      "env": {},
+      "projectName": ""
+    }
+  ]
+}

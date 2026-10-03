@@ -9,7 +9,6 @@ import org.lwjgl.opengl.Display
 object ClientConfiguration : Configurable("ClientConfiguration"), MinecraftInstance {
     var clientTitle by boolean("ClientTitle", true)
     var customBackground by boolean("CustomBackground", true)
-    var menuBackgroundIndex by int("MenuBackgroundIndex", 0, 0..4)
     var particles by boolean("Particles", false)
     var stylisedAlts by boolean("StylisedAlts", true)
     var unformattedAlts by boolean("CleanAlts", true)

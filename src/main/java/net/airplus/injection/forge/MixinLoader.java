@@ -8,25 +8,25 @@ package net.airplus.injection.forge;
 import net.airplus.injection.transformers.ForgeNetworkTransformer;
 import net.airplus.script.remapper.injection.transformers.AbstractJavaLinkerTransformer;
 import net.minecraftforge.fml.relauncher.IFMLLoadingPlugin;
-import org.spongepowered.asm.launch.MixinBootstrap;
-import org.spongepowered.asm.mixin.MixinEnvironment;
-import org.spongepowered.asm.mixin.Mixins;
 
 import java.util.Map;
 
+/**
+ * CoreMod kept ONLY to register the two non-mixin ASM transformers.
+ * Mixin bootstrap / config is now handled by Architectury Loom (forge { mixinConfig } + TweakClass).
+ */
 public class MixinLoader implements IFMLLoadingPlugin {
 
     public MixinLoader() {
-        System.out.println("[AirPlus] Injecting with IFMLLoadingPlugin.");
-
-        MixinBootstrap.init();
-        Mixins.addConfiguration("airplus.forge.mixins.json");
-        MixinEnvironment.getDefaultEnvironment().setSide(MixinEnvironment.Side.CLIENT);
+        System.out.println("[AirPlus] CoreMod loaded (ASM transformers only; mixin bootstrap handled by Loom).");
     }
 
     @Override
     public String[] getASMTransformerClass() {
-        return new String[] {ForgeNetworkTransformer.class.getName(), AbstractJavaLinkerTransformer.class.getName()};
+        return new String[] {
+                ForgeNetworkTransformer.class.getName(),
+                AbstractJavaLinkerTransformer.class.getName()
+        };
     }
 
     @Override

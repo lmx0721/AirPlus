@@ -1,4 +1,4 @@
-/*
+    /*
  * AirPlus Hacked Client
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
@@ -163,6 +163,7 @@ object AirPlus {
         isStarting = true
 
         LOGGER.info("Starting $CLIENT_NAME $clientVersionText $clientCommit, by $CLIENT_AUTHOR")
+
 
         try {
             // Initialize ViaMCP (protocol translation) and its version slider

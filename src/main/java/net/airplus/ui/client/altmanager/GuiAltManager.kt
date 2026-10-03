@@ -5,7 +5,6 @@
  */
 package net.airplus.ui.client.altmanager
 
-import com.thealtening.AltService
 import kotlinx.coroutines.launch
 import me.liuli.elixir.account.CrackedAccount
 import me.liuli.elixir.account.MicrosoftAccount
@@ -22,7 +21,6 @@ import net.airplus.lang.translationText
 import net.airplus.ui.client.altmanager.menus.GuiDonatorCape
 import net.airplus.ui.client.altmanager.menus.GuiLoginIntoAccount
 import net.airplus.ui.client.altmanager.menus.GuiSessionLogin
-import net.airplus.ui.client.altmanager.menus.altgenerator.GuiTheAltening
 import net.airplus.ui.font.AWTFontRenderer.Companion.assumeNonVolatile
 import net.airplus.ui.font.Fonts
 import net.airplus.utils.client.ClientUtils.LOGGER
@@ -87,11 +85,7 @@ class GuiAltManager(private val prevGui: GuiScreen) : AbstractScreen() {
         +GuiButton(6, 5, startPositionY + 24 * 4, 90, 20, translationButton("altManager.directLogin"))
         +GuiButton(10, 5, startPositionY + 24 * 5, 90, 20, translationButton("altManager.sessionLogin"))
 
-        if (activeGenerators.getOrDefault("thealtening", true)) {
-            +GuiButton(9, 5, startPositionY + 24 * 6, 90, 20, translationButton("altManager.theAltening"))
-        }
-
-        +GuiButton(11, 5, startPositionY + 24 * 7, 90, 20, translationButton("altManager.cape"))
+        +GuiButton(11, 5, startPositionY + 24 * 6, 90, 20, translationButton("altManager.cape"))
     }
 
     override fun drawScreen(mouseX: Int, mouseY: Int, partialTicks: Float) {
@@ -111,10 +105,7 @@ class GuiAltManager(private val prevGui: GuiScreen) : AbstractScreen() {
             )
             Fonts.fontSemibold35.drawStringWithShadow(
                 "§7Type: §a${
-                    if (altService.currentService == AltService.EnumAltService.THEALTENING) "TheAltening" else if (isValidTokenOffline(
-                            mc.getSession().token
-                        )
-                    ) "Premium" else "Cracked"
+                    if (isValidTokenOffline(mc.getSession().token)) "Premium" else "Cracked"
                 }", 6f, 15f, 0xffffff
             )
             searchField.drawTextBox()
@@ -185,7 +176,6 @@ class GuiAltManager(private val prevGui: GuiScreen) : AbstractScreen() {
 
             5 -> { // Random name button
                 status = "§aLogged into §f§l${randomAccount().name}§a."
-                altService.switchService(AltService.EnumAltService.MOJANG)
             }
 
             6 -> { // Direct login button
@@ -263,10 +253,6 @@ class GuiAltManager(private val prevGui: GuiScreen) : AbstractScreen() {
                 } catch (any: Exception) {
                     any.printStackTrace()
                 }
-            }
-
-            9 -> { // Altening Button
-                mc.displayGuiScreen(GuiTheAltening(this))
             }
 
             10 -> { // Session Login Button
@@ -460,7 +446,6 @@ class GuiAltManager(private val prevGui: GuiScreen) : AbstractScreen() {
 
     companion object {
 
-        val altService = AltService()
         private val activeGenerators = mutableMapOf<String, Boolean>()
 
         fun loadActiveGenerators() {
@@ -473,22 +458,10 @@ class GuiAltManager(private val prevGui: GuiScreen) : AbstractScreen() {
             }
         }
 
-        fun login(
-            minecraftAccount: MinecraftAccount, success: () -> Unit, error: (Exception) -> Unit, done: () -> Unit
-        ) = SharedScopes.IO.launch {
-            if (altService.currentService != AltService.EnumAltService.MOJANG) {
-                try {
-                    altService.switchService(AltService.EnumAltService.MOJANG)
-                } catch (e: NoSuchFieldException) {
-                    error(e)
-                    LOGGER.error("Something went wrong while trying to switch alt service.", e)
-                } catch (e: IllegalAccessException) {
-                    error(e)
-                    LOGGER.error("Something went wrong while trying to switch alt service.", e)
-                }
-            }
-
-            try {
+    fun login(
+        minecraftAccount: MinecraftAccount, success: () -> Unit, error: (Exception) -> Unit, done: () -> Unit
+    ) = SharedScopes.IO.launch {
+        try {
                 minecraftAccount.update()
                 mc.session = Session(
                     minecraftAccount.session.username,

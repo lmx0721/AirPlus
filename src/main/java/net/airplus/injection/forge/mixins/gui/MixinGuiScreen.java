@@ -14,8 +14,8 @@ import net.airplus.injection.implementations.IMinecraft;
 import net.airplus.utils.inputfix.GuiScreenFix;
 import net.airplus.utils.inputfix.InputFixInit;
 import net.airplus.utils.render.shader.Background;
+import net.airplus.utils.render.shader.FluxBlobShader;
 import net.airplus.utils.render.ParticleUtils;
-import net.airplus.utils.render.MenuBackground;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.*;
 import net.minecraft.event.ClickEvent;
@@ -31,6 +31,7 @@ import org.spongepowered.asm.mixin.Overwrite;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.Collections;
@@ -42,6 +43,12 @@ import static net.minecraft.client.renderer.GlStateManager.disableLighting;
 @Mixin(GuiScreen.class)
 @SideOnly(Side.CLIENT)
 public abstract class MixinGuiScreen {
+    /**
+     * Lazy shared fallback shader used when no custom background file is set.
+     * Kept static so every screen reuses the same GL program (same as the main menu).
+     */
+    private static FluxBlobShader fallbackBlobShader;
+
     @Shadow
     public Minecraft mc;
 
@@ -94,10 +101,15 @@ public abstract class MixinGuiScreen {
             final Background background = AirPlus.INSTANCE.getBackground();
 
             if (background == null) {
-                // Use built-in menu background image
-                MenuBackground.INSTANCE.drawBackground(width, height);
+                // No custom background file set -> fall back to the built-in blob shader (same as main menu)
+                if (fallbackBlobShader == null)
+                    fallbackBlobShader = new FluxBlobShader();
+
+                if (!fallbackBlobShader.isAvailable())
+                    return; // Shader unavailable -> vanilla background
+
+                fallbackBlobShader.renderShader(width, height);
             } else {
-                // Use custom background
                 background.drawBackground(width, height);
             }
 
@@ -147,28 +159,16 @@ public abstract class MixinGuiScreen {
         injectedActionPerformed(button);
     }
 
-    /**
-     * @author AirClient
-     * @reason Chinese input fix (IME support): route keyboard input through the
-     * platform specific input fix implementation, which also forwards the LWJGL
-     * events carrying actual text (key code 0 with a defined character).
-     */
-    @Overwrite
-    public void handleKeyboardInput() {
-        if (InputFixInit.impl != null) {
-            GuiScreenFix.handleKeyboardInput((GuiScreen) (Object) this);
-        } else {
-            char c = Keyboard.getEventCharacter();
-            int k = Keyboard.getEventKey();
-            if (Keyboard.getEventKeyState() || (k == 0 && Character.isDefined(c))) {
-                this.keyTyped(c, k);
-            }
-        }
-
-        ((IMinecraft) this.mc).airplus$dispatchKeypresses();
-    }
-
     protected void injectedActionPerformed(GuiButton button) {
 
+    }
+
+    /**
+     * 这里只需几行代码就可以inputfix了
+     * 自https://github.com/Sk1erLLC/Patcher/blob/master/src/main/java/club/sk1er/patcher/mixins/bugfixes/GuiScreenMixin_FixWindowsIME.java
+     */
+    @Redirect(method = "handleKeyboardInput", at = @At(value = "INVOKE", target = "Lorg/lwjgl/input/Keyboard;getEventKeyState()Z", remap = false))
+    private boolean patcher$checkCharacter() {
+        return Keyboard.getEventKey() == 0 && Keyboard.getEventCharacter() >= ' ' || Keyboard.getEventKeyState();
     }
 }

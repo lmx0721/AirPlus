@@ -39,7 +39,13 @@ object FileManager : MinecraftInstance, Iterable<FileConfig> by FILE_CONFIGS {
     val hudConfig = +HudConfig(File(dir, "hud.json"))
     val shortcutsConfig = +ShortcutsConfig(File(dir, "shortcuts.json"))
 
-    val backgroundImageFile = File(dir, "userbackground.png")
+    // User-selected background file (copied from local pick; extension is preserved to detect png/frag)
+    private val backgroundFileExtensions = arrayOf("png", "frag", "glsl", "shader")
+
+    fun backgroundFileFor(extension: String) = File(dir, "userbackground.${extension.lowercase()}")
+
+    fun existingBackgroundFile(): File? =
+        backgroundFileExtensions.map { backgroundFileFor(it) }.firstOrNull { it.exists() }
 
     var firstStart = false
         private set
@@ -177,11 +183,15 @@ object FileManager : MinecraftInstance, Iterable<FileConfig> by FILE_CONFIGS {
     }
 
     /**
-     * Load background for background
+     * Load the user-selected background (png image or frag shader), if any
      */
     fun loadBackground() {
-        if (backgroundImageFile.exists()) {
-            background = Background.fromFile(backgroundImageFile)
+        val file = existingBackgroundFile() ?: return
+        background = try {
+            Background.fromFile(file)
+        } catch (t: Throwable) {
+            LOGGER.error("[FileManager] Failed to load background file: ${file.name}.", t)
+            null
         }
     }
 }

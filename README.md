@@ -4,6 +4,8 @@
 
 **一个基于 Mixin 注入的 Minecraft 1.8.9 Forge 开源客户端**
 
+**基于AirClient重构**
+
 基于 [LiquidBounce Legacy](https://github.com/CCBlueX/LiquidBounce/tree/legacy) 二次开发，深度融合 Kotlin 现代化特性
 
 ![Minecraft](https://img.shields.io/badge/Minecraft-1.8.9-8b89c4?logo=minecraft&logoColor=white)
@@ -15,6 +17,8 @@
 </div>
 
 ---
+
+https://github.com/user-attachments/assets/b0afaeae-1c57-46d9-b6cc-f3860bc6cb17
 
 ## 简介
 
@@ -75,15 +79,15 @@ net.airplus
 
 ## 技术栈
 
-| 技术 | 用途 |
-|------|------|
+| 技术                                                     | 用途 |
+|--------------------------------------------------------|------|
 | [Mixin](https://github.com/SpongePowered/Mixin) 0.7.11 | 运行时字节码注入 |
-| [Kotlin](https://kotlinlang.org) 2.0.21 + Coroutines | 主要开发语言与异步调度 |
-| [ForgeGradle](https://github.com/MinecraftForge/ForgeGradle) | 构建与开发环境 |
-| [Shadow](https://github.com/johnrengelman/shadow) | 依赖打包 |
-| [DiscordIPC](https://github.com/jagrosh/DiscordIPC) | Discord 状态展示 |
-| [Elixir](https://github.com/CCBlueX/Elixir) | CCBlueX 通用工具库 |
-| FlatLaf | Swing 界面主题 |
+| [Kotlin](https://kotlinlang.org) 2.0.21 + Coroutines   | 主要开发语言与异步调度 |
+| Architectury Loom(以前为ForgeGradle)                      | 构建与开发环境 |
+| [Shadow](https://github.com/johnrengelman/shadow)      | 依赖打包 |
+| [DiscordIPC](https://github.com/jagrosh/DiscordIPC)    | Discord 状态展示 |
+| [Elixir](https://github.com/CCBlueX/Elixir)            | CCBlueX 通用工具库 |
+| FlatLaf                                                | Swing 界面主题 |
 
 ## 贡献
 

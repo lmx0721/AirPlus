@@ -40,11 +40,11 @@ object Sound : Module("Sound", Category.CLIENT, canBeEnabled = false) {
     )
 
     val killSoundEnabled by boolean("KillSound", true)
-    
+
     val killCooldown by int("KillCooldown", 1, 0..60) { killSoundEnabled }
-    
+
     private var lastKillSoundTime = 0L
-    
+
     val killSounds by choices(
         "Kill",
         (getWAVS("assets/minecraft/airplus/sounds/Kill") + getMP3S("assets/minecraft/airplus/sounds/Kill")).toTypedArray().takeIf { it.isNotEmpty() }
@@ -92,19 +92,21 @@ object Sound : Module("Sound", Category.CLIENT, canBeEnabled = false) {
     fun playKillSound() {
         if (!killSoundEnabled) return
         if (killSounds == "None") return
-        
+
         val currentTime = System.currentTimeMillis()
         if (killCooldown > 0 && currentTime - lastKillSoundTime < killCooldown * 1000L) {
             return
         }
         lastKillSoundTime = currentTime
+
+
         
         val wavPath = "airplus/sounds/Kill/${killSounds}.wav"
         val mp3Path = "airplus/sounds/Kill/${killSounds}.mp3"
         
         val wavExists = javaClass.getResourceAsStream("/assets/minecraft/$wavPath") != null
         val mp3Exists = javaClass.getResourceAsStream("/assets/minecraft/$mp3Path") != null
-        
+
         when {
             wavExists -> asyncPlayWav(wavPath)
             mp3Exists -> playMP3(mp3Path)

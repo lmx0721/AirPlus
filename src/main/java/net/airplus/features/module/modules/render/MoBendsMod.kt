@@ -3,10 +3,10 @@
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
  *
- * Ported from SilenceFix MoBendsMod（"MoreBends"，平滑动作）。
+ * Ported from SilenceFix MoBendsMod("MoreBends",????)?
  *
- * 动画引擎（dev.xinxin.utils.mobends 包）从 SilenceFix 原样迁移；
- * 渲染接管点在 MixinRendererLivingEntity（原版在补丁版 RendererLivingEntity 中调用）。
+ * ????(net.airplus.utils.xinxin.mobends ?)? SilenceFix ????;
+ * ?????? MixinRendererLivingEntity(?????? RendererLivingEntity ???)?
  */
 package net.airplus.features.module.modules.render
 
@@ -15,14 +15,14 @@ import net.airplus.event.TickEndEvent
 import net.airplus.event.handler
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
-import dev.xinxin.utils.mobends.AnimatedEntity
-import dev.xinxin.utils.mobends.client.renderer.entity.RenderBendsPlayer
-import dev.xinxin.utils.mobends.client.renderer.entity.RenderBendsSpider
-import dev.xinxin.utils.mobends.client.renderer.entity.RenderBendsZombie
-import dev.xinxin.utils.mobends.data.Data_Player
-import dev.xinxin.utils.mobends.data.Data_Spider
-import dev.xinxin.utils.mobends.data.Data_Zombie
-import dev.xinxin.utils.mobends.data.EntityData
+import net.airplus.utils.xinxin.mobends.AnimatedEntity
+import net.airplus.utils.xinxin.mobends.client.renderer.entity.RenderBendsPlayer
+import net.airplus.utils.xinxin.mobends.client.renderer.entity.RenderBendsSpider
+import net.airplus.utils.xinxin.mobends.client.renderer.entity.RenderBendsZombie
+import net.airplus.utils.xinxin.mobends.data.Data_Player
+import net.airplus.utils.xinxin.mobends.data.Data_Spider
+import net.airplus.utils.xinxin.mobends.data.Data_Zombie
+import net.airplus.utils.xinxin.mobends.data.EntityData
 import net.minecraft.client.entity.AbstractClientPlayer
 import net.minecraft.entity.EntityLivingBase
 import net.minecraft.entity.monster.EntitySpider
@@ -143,8 +143,8 @@ object MoBendsMod : Module("MoreBends", Category.RENDER) {
     }
 
     /**
-     * 由 MixinRendererLivingEntity 在 doRender HEAD 调用。
-     * 返回 true 表示已由 MoBends 渲染器接管，应取消原版渲染。
+     * ? MixinRendererLivingEntity ? doRender HEAD ???
+     * ?? true ???? MoBends ?????,????????
      */
     fun onRenderLivingEvent(
         renderer: net.minecraft.client.renderer.entity.RendererLivingEntity<*>,
