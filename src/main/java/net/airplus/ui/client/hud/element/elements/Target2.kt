@@ -111,6 +111,7 @@ class Target2 : Element("Target2") {
             Novoline(this),
             Novoline2(this),
             Novoline3(this),
+            Onyx(this),
             Raven(this),
             RavenB4(this),
             Remix(this),

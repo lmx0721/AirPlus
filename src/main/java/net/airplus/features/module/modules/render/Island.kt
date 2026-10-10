@@ -46,7 +46,13 @@ import net.minecraft.client.shader.Framebuffer
 import net.minecraft.client.network.NetworkPlayerInfo
 import net.minecraft.client.gui.Gui
 import net.minecraft.client.gui.GuiPlayerTabOverlay
+import net.minecraft.entity.item.EntityEnderPearl
+import net.minecraft.block.material.Material
+import net.minecraft.init.Items
+import net.minecraft.util.AxisAlignedBB
+import net.minecraft.util.BlockPos
 import net.minecraft.util.IChatComponent
+import net.minecraft.util.Vec3
 import net.minecraft.world.WorldSettings
 import org.lwjgl.input.Keyboard
 import org.lwjgl.opengl.GL11
@@ -122,6 +128,12 @@ object Island : Module("Island", Category.RENDER) {
     private val showGappleProgress by boolean("GappleProgress", true)
     private val gappleProgressTheme by color("GappleProgressTheme", Color(255, 215, 0))
 
+    private val pearlCountdown by boolean("PearlCountdown", true)
+
+    private val lowHealthCheck by boolean("LowHealthWarn", true)
+    private val lowHealthThreshold by float("LowHealth-HP", 6F, 1F..20F) { lowHealthCheck }
+    private val lowHealthColor by color("LowHealth-Color", Color(210, 60, 60, 200)) { lowHealthCheck }
+
     private val ChestTheme by boolean("Chest", true)
     private val ChestRounded by float("ChestRoundRadius", 4F, 0.0F..8.0F)
 
@@ -162,6 +174,17 @@ object Island : Module("Island", Category.RENDER) {
     private var gappleProgressTarget = 0F
     private var animatedGappleProgress = 0F
     private var lastGappleProgressUpdateTime: Long = 0L
+
+    private var pearlEntityId = -1
+    private var pearlLandingTicks = -1 // 抛物线预测的落地总 tick
+    private var pearlThrowTimeMs = 0L  // 本地投掷时刻
+    private var pearlTicksRemaining = -1F // 剩余 tick（由投掷时间 + 预测落地时间推算）
+
+    private var lowAnimAlpha = 0F
+    private var lowAnimScale = 0F
+    private var velLowAlpha = 0f
+    private var velLowScale = 0f
+    private var lowLastVisible = false
 
     // 反射缓存：避免每帧重新查找 Method/Field，减少渲染热路径开销
     private var gappleProgressMethod: java.lang.reflect.Method? = null
@@ -475,6 +498,12 @@ object Island : Module("Island", Category.RENDER) {
             gappleProgressTarget = 0F
         }
 
+        if (pearlCountdown) {
+            updatePearlTracking()
+        } else {
+            resetPearlTracking()
+        }
+
         if (ModuleNotify) {
             for (module in ModuleManager) {
                 if (!prevModuleStates.containsKey(module)) {
@@ -534,6 +563,100 @@ object Island : Module("Island", Category.RENDER) {
         } catch (_: Exception) {
             0f
         }
+    }
+
+    /**
+     * 珍珠追踪：找到玩家自己投掷的末影珍珠，记录本地投掷时间，
+     * 用抛物线预测落地时间，倒计时到珍珠落地为止
+     */
+    private fun updatePearlTracking() {
+        val player = mc.thePlayer
+        val world = mc.theWorld
+        if (player == null || world == null) {
+            resetPearlTracking()
+            return
+        }
+
+        val pearls = world.loadedEntityList.filterIsInstance<EntityEnderPearl>()
+        val pearl = pearls.firstOrNull { it.entityId == pearlEntityId }
+            ?: pearls.firstOrNull {
+                // 1.8.9 客户端不会同步珍珠的 thrower 字段（handleSpawnObject 不设置），
+                // 改用启发式判定是自己的珍珠：刚出生(<=1 tick)、出生点在玩家眼睛 2 格内、
+                // 初速方向与玩家视线同向
+                it.ticksExisted <= 1 &&
+                    Vec3(it.posX - player.posX, it.posY - (player.posY + player.getEyeHeight()), it.posZ - player.posZ)
+                        .lengthVector() < 2.0 &&
+                    it.motionX * player.lookVec.xCoord + it.motionY * player.lookVec.yCoord +
+                        it.motionZ * player.lookVec.zCoord > 0
+            }
+        if (pearl == null) {
+            resetPearlTracking()
+            return
+        }
+
+        if (pearl.entityId != pearlEntityId) {
+            // 新珍珠：记录本地投掷时刻，用初始运动做抛物线预测得到落地所需 tick
+            pearlEntityId = pearl.entityId
+            pearlThrowTimeMs = System.currentTimeMillis()
+            pearlLandingTicks = predictPearlLandingTicks(pearl.posX, pearl.posY, pearl.posZ,
+                pearl.motionX, pearl.motionY, pearl.motionZ)
+        }
+
+        // 落地倒计时 = 预测落地 tick - 已飞行 tick
+        val elapsedTicks = (System.currentTimeMillis() - pearlThrowTimeMs) / 50.0
+        pearlTicksRemaining = (pearlLandingTicks - elapsedTicks).toFloat()
+    }
+
+    private fun resetPearlTracking() {
+        pearlEntityId = -1
+        pearlLandingTicks = -1
+        pearlThrowTimeMs = 0L
+        pearlTicksRemaining = -1F
+    }
+
+    /**
+     * 抛物线预测：模拟珍珠运动直到碰撞方块/实体，返回落地所需 tick 数
+     * （重力 0.03，空气中摩擦 0.99，水中 0.8，实体碰撞判定参考 Projectiles 的预测算法）
+     */
+    private fun predictPearlLandingTicks(px0: Double, py0: Double, pz0: Double,
+                                         mx0: Double, my0: Double, mz0: Double): Int {
+        val world = mc.theWorld ?: return -1
+        val player = mc.thePlayer ?: return -1
+        val size = 0.25
+
+        var px = px0
+        var py = py0
+        var pz = pz0
+        var mx = mx0
+        var my = my0
+        var mz = mz0
+
+        for (tick in 1..200) {
+            val before = Vec3(px, py, pz)
+            val after = Vec3(px + mx, py + my, pz + mz)
+            if (world.rayTraceBlocks(before, after, false, true, false) != null)
+                return tick
+
+            // 实体碰撞检测
+            val hitBox = AxisAlignedBB(px - size, py - size, pz - size, px + size, py + size, pz + size)
+                .addCoord(mx, my, mz)
+            for (entity in world.getEntitiesWithinAABBExcludingEntity(player, hitBox)) {
+                if (entity.canBeCollidedWith()) return tick
+            }
+
+            px += mx
+            py += my
+            pz += mz
+
+            val inWater = world.getBlockState(BlockPos(px, py, pz)).block.material === Material.water
+            val drag = if (inWater) 0.8 else 0.99
+            mx *= drag
+            mz *= drag
+            my = my * drag - 0.03
+
+            if (py < -10.0) return tick
+        }
+        return 200
     }
 
     val onScreen = handler<ScreenEvent>(always = true) { event ->
@@ -640,6 +763,13 @@ object Island : Module("Island", Category.RENDER) {
             targetX = (width - targetWidth) / 2
             targetY = start_y
 
+        } else if (style == "legacy" && pearlCountdown && pearlTicksRemaining >= 0f) {
+            renderMode = "PEARL"
+            targetWidth = 190F
+            targetHeight = 58F
+            targetX = (width - targetWidth) / 2
+            targetY = start_y
+
         } else if (style == "legacy" && (scaffoldModule?.state == true ||  scaffoldModule2?.state == true && isScaffold)) {
             renderMode = "SCAFFOLD"
             when (scaffoldStyle) {
@@ -681,6 +811,7 @@ object Island : Module("Island", Category.RENDER) {
                     val toggleActive = ModuleNotify && notifications.isNotEmpty()
                     val gappleOn = showGappleProgress && animatedGappleProgress > 0.01f && gappleModuleRef?.state == true
                     val tabListOn = showTabList && playerList.isNotEmpty()
+                    val pearlOn = pearlCountdown && pearlTicksRemaining >= 0f
 
                     when {
                         isChestOpen && chestSlots.isNotEmpty() -> {
@@ -701,6 +832,12 @@ object Island : Module("Island", Category.RENDER) {
                             targetHeight = th
                             targetX = (width - targetWidth) / 2
                             targetY = start_y.coerceIn(5f, height - targetHeight - 5f)
+                        }
+                        pearlOn -> {
+                            renderMode = "IOS_PEARL"
+                            targetWidth = 170f
+                            targetHeight = 34f
+                            targetX = (width - targetWidth) / 2
                         }
                         gappleOn -> {
                             renderMode = "IOS_GAPPLE"
@@ -896,6 +1033,8 @@ object Island : Module("Island", Category.RENDER) {
                 "TABLIST" -> renderTabListContent(drawX, drawY, drawW, drawH, playerList, headerLines, footerLines)
                 "BREAK_PROGRESS" -> renderBreakProgressContent(drawX, drawY, drawW, drawH)
                 "GAPPLE_PROGRESS" -> renderGappleProgressContent(drawX, drawY, drawW, drawH)
+                "PEARL" -> renderPearlContent(drawX, drawY, drawW, drawH)
+                "IOS_PEARL" -> renderIosPearl(drawX, drawY, drawW, drawH)
                 "IOS_WATERMARK" -> renderIosWatermark(drawX, drawY, drawW, drawH)
                 "IOS_TOGGLE" -> renderIosToggle(drawX, drawY, drawW, drawH)
                 "IOS_SCAFFOLD" -> renderIosScaffold(drawX, drawY, drawW, drawH)
@@ -909,6 +1048,8 @@ object Island : Module("Island", Category.RENDER) {
         if (style == "legacy" && showLyricOnIsland && lyricDisplayMode != "None") {
             renderLyricDisplay()
         }
+
+        renderLowHealthPill()
 
         glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE)
         glDisable(GL_LINE_SMOOTH)
@@ -950,6 +1091,70 @@ object Island : Module("Island", Category.RENDER) {
         drawRoundedRect(x + padding, barY, x + padding + maxBarWidth, barY + barHeight, Color(60, 60, 70, 180).rgb, 3F)
         val lighter = Color(gappleProgressTheme.red, gappleProgressTheme.green, gappleProgressTheme.blue, 255)
         drawRoundedRect(x + padding, barY, x + padding + currentBarWidth, barY + barHeight, lighter.rgb, 3F)
+    }
+
+    private fun renderPearlContent(x: Float, y: Float, w: Float, h: Float) {
+        val total = pearlLandingTicks.coerceAtLeast(1)
+        val remaining = pearlTicksRemaining.coerceIn(0f, total.toFloat())
+        val padding = 8F
+        val iconSize = 32F
+        val iconBgX = x + padding
+        val iconBgY = y + padding
+        val theme = ClientThemesUtils.getColor()
+        drawRoundedRect(iconBgX, iconBgY, iconBgX + iconSize, iconBgY + iconSize, Color(theme.red, theme.green, theme.blue, 200).rgb, 5F)
+
+        glPushMatrix()
+        enableGUIStandardItemLighting()
+        try {
+            mc.renderItem.renderItemAndEffectIntoGUI(ItemStack(Items.ender_pearl), (iconBgX + 8f).toInt(), (iconBgY + 8f).toInt())
+        } catch (_: Exception) {
+        }
+        disableStandardItemLighting()
+        GlStateManager.enableAlpha()
+        GlStateManager.disableBlend()
+        GlStateManager.disableLighting()
+        glPopMatrix()
+
+        val textX = iconBgX + iconSize + 8F
+        val titleY = y + padding + 2F
+        Fonts.fontSemibold40.drawString("Pearl Landing", textX, titleY, Color.WHITE.rgb)
+        val remainText = String.format("%.1fs", remaining * 50f / 1000f)
+        Fonts.fontRegular40.drawString(remainText, textX, titleY + Fonts.fontSemibold40.FONT_HEIGHT + 2F, Color(200, 200, 200).rgb)
+
+        val barHeight = 8F
+        val barY = y + h - barHeight - padding
+        val maxBarWidth = w - (padding * 2)
+        val progress = (1f - remaining / total).coerceIn(0f, 1f)
+        drawRoundedRect(x + padding, barY, x + padding + maxBarWidth, barY + barHeight, Color(60, 60, 70, 180).rgb, 3F)
+        drawRoundedRect(x + padding, barY, x + padding + maxBarWidth * progress, barY + barHeight, Color(theme.red, theme.green, theme.blue, 255).rgb, 3F)
+    }
+
+    private fun renderIosPearl(x: Float, y: Float, w: Float, h: Float) {
+        val total = pearlLandingTicks.coerceAtLeast(1)
+        val remaining = pearlTicksRemaining.coerceIn(0f, total.toFloat())
+        val padding = 12F
+        val centerY = y + h / 2f
+        var cx = x + padding
+
+        val secs = String.format("%.1fs", remaining * 50f / 1000f)
+        val textBaseY = centerY - Fonts.fontSemibold35.FONT_HEIGHT / 2f + 1f
+        Fonts.fontSemibold35.drawString(secs, cx, textBaseY, Color.WHITE.rgb)
+        cx += Fonts.fontSemibold35.getStringWidth(secs).toFloat() + 10F
+
+        val barW = (x + w - padding) - cx
+        val gap = 2F
+        val segCount = 10
+        val segW = ((barW - gap * (segCount - 1)) / segCount).coerceAtLeast(3F)
+        val barH = 8F
+        val barY = centerY - barH / 2f
+        val filled = ((remaining.toFloat() / total) * segCount + 0.5f).toInt().coerceIn(0, segCount)
+        val theme = ClientThemesUtils.getColor()
+        val themeColor = Color(theme.red, theme.green, theme.blue, 230)
+        for (i in 0 until segCount) {
+            val sx = cx + i * (segW + gap)
+            val col = if (i < filled) themeColor else Color(60, 60, 60, 200)
+            drawRoundedRect(sx, barY, sx + segW, barY + barH, col.rgb, 2F)
+        }
     }
 
     private fun renderBreakProgressContent(x: Float, y: Float, w: Float, h: Float) {
@@ -2768,6 +2973,68 @@ object Island : Module("Island", Category.RENDER) {
 
     private fun renderIosTabList(x: Float, y: Float, w: Float, h: Float, players: List<NetworkPlayerInfo>, header: List<String>, footer: List<String>) {
         renderTabListContent(x, y, w, h, players, header, footer)
+    }
+
+    /**
+     * 低血量提示：岛下方红色胶囊 + 心跳脉动，血量低于阈值时出现
+     */
+    private fun renderLowHealthPill() {
+        val player = mc.thePlayer
+        val active = lowHealthCheck && player != null && player.isEntityAlive &&
+                player.health > 0f && player.health <= lowHealthThreshold
+
+        if (active && !lowLastVisible) {
+            lowAnimAlpha = 0F
+            lowAnimScale = 0F
+            velLowAlpha = 0f
+            velLowScale = 0f
+        }
+        lowLastVisible = active
+
+        val target = if (active) 1f else 0f
+        val (nextAlpha, vA) = spring(lowAnimAlpha, target, velLowAlpha)
+        lowAnimAlpha = nextAlpha.coerceIn(0f, 1f)
+        velLowAlpha = vA
+        val (nextScale, vS) = spring(lowAnimScale, target, velLowScale)
+        lowAnimScale = nextScale.coerceAtLeast(0f)
+        velLowScale = vS
+
+        if (lowAnimAlpha < 0.01f || lowAnimScale < 0.01f) return
+        val p = player ?: return
+
+        val text = "Low Health :" + String.format("%.1f", p.health) + " HP"
+        val font = Fonts.fontSemibold35
+        val pad = 12f
+        val pillH = 24f
+        val pillW = font.getStringWidth(text) + pad * 2 + 16f
+        val cx = AnimGlobalX + AnimGlobalWidth / 2f
+        val by = AnimGlobalY + AnimGlobalHeight + 8f
+        val nowMs = System.currentTimeMillis()
+        val pulse = 1f + 0.05f * sin(nowMs / 180.0).toFloat()
+        val s = lowAnimScale * pulse
+        val alphaF = lowAnimAlpha
+
+        val x1 = cx - pillW / 2f
+        val y1 = by
+        val x2 = cx + pillW / 2f
+        val y2 = by + pillH
+        val pivotX = cx
+        val pivotY = by + pillH / 2f
+
+        glPushMatrix()
+        glTranslatef(pivotX, pivotY, 0f)
+        glScalef(s, s, 1f)
+        glTranslatef(-pivotX, -pivotY, 0f)
+
+        val base = lowHealthColor
+        drawRoundedRect(x1, y1, x2, y2, Color(base.red, base.green, base.blue, (base.alpha * alphaF).toInt()).rgb, pillH / 2f)
+
+        // 心跳红点
+        drawCircle(x1 + pad + 4f, pivotY, 4f + sin(nowMs / 110.0).toFloat() * 1.2f, Color(255, 95, 95, (235 * alphaF).toInt()))
+
+        font.drawString(text, x1 + pad + 14f, pivotY - font.FONT_HEIGHT / 2f + 1f, Color(255, 255, 255, (255 * alphaF).toInt()).rgb)
+
+        glPopMatrix()
     }
 
 }

@@ -26,6 +26,7 @@ import net.minecraft.item.EnumAction;
 import net.minecraft.item.ItemMap;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.ItemSword;
+import net.minecraft.util.MathHelper;
 import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
 import org.spongepowered.asm.mixin.Final;
@@ -136,12 +137,12 @@ public abstract class MixinItemRenderer {
 
                 switch (enumaction) {
                     case NONE:
-                        transformFirstPersonItem(f, 0f);
+                        transformMainHand(f, 0f);
                         break;
                     case EAT:
                     case DRINK:
                         performDrinking(abstractclientplayer, partialTicks);
-                        transformFirstPersonItem(f, f1);
+                        transformMainHand(f, f1);
                         break;
                     case BLOCK:
                         final Animation animation;
@@ -157,7 +158,7 @@ public abstract class MixinItemRenderer {
                         }
                         break;
                     case BOW:
-                        transformFirstPersonItem(f, f1);
+                        transformMainHand(f, f1);
                         doBowTransformations(partialTicks, abstractclientplayer);
                         break;
                 }
@@ -166,7 +167,7 @@ public abstract class MixinItemRenderer {
                     doItemUsedTransformations(f1);
                 }
 
-                transformFirstPersonItem(f, f1);
+                transformMainHand(f, f1);
             }
 
             renderItem(abstractclientplayer, itemToRender, ItemCameraTransforms.TransformType.FIRST_PERSON);
@@ -177,6 +178,39 @@ public abstract class MixinItemRenderer {
         popMatrix();
         disableRescaleNormal();
         RenderHelper.disableStandardItemLighting();
+    }
+
+    /**
+     * Onyx 主手变换（迁移自 OpenOnyx HandModule "Main hand"）：
+     * Animations.MainHand 开启时，用可自定义的位置/旋转/缩放替换原版 transformFirstPersonItem，
+     * 并保留原版挥剑旋转公式与装备进度偏移；未开启时回退原版行为。
+     */
+    private boolean transformMainHand(float equipProgress, float swingProgress) {
+        final Animations animations = Animations.INSTANCE;
+        if (!animations.getMainHandEnabled()) {
+            transformFirstPersonItem(equipProgress, swingProgress);
+            return true;
+        }
+
+        translate(
+            animations.getMainHandX(),
+            animations.getMainHandY() - equipProgress * 0.6F,
+            animations.getMainHandZ()
+        );
+        rotate(animations.getMainHandRotX(), 1.0F, 0.0F, 0.0F);
+        rotate(animations.getMainHandRotY(), 0.0F, 1.0F, 0.0F);
+        rotate(animations.getMainHandRotZ(), 0.0F, 0.0F, 1.0F);
+        final float f = MathHelper.sin(swingProgress * swingProgress * (float) Math.PI);
+        final float f1 = MathHelper.sin(MathHelper.sqrt_float(swingProgress) * (float) Math.PI);
+        rotate(f * -20.0F, 0.0F, 1.0F, 0.0F);
+        rotate(f1 * -20.0F, 0.0F, 0.0F, 1.0F);
+        rotate(f1 * -80.0F, 1.0F, 0.0F, 0.0F);
+        scale(
+            animations.getMainHandScaleX(),
+            animations.getMainHandScaleY(),
+            animations.getMainHandScaleZ()
+        );
+        return true;
     }
 
     @Redirect(method = "renderFireInFirstPerson", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/GlStateManager;color(FFFF)V"))

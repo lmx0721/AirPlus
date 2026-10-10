@@ -46,7 +46,13 @@ object HUD : MinecraftInstance {
         SpeedGraph::class.java,
         Cooldown::class.java,
         Taco::class.java,
-        Keystrokes::class.java
+        Keystrokes::class.java,
+        Combo::class.java,
+        Nearby::class.java,
+        Ping::class.java,
+        KillFeed::class.java,
+        HitDirection::class.java,
+        Keybinds::class.java
     )
 
     val ELEMENTS = ALL_ELEMENT_CLASSES.associateWithTo(IdentityHashMap(ALL_ELEMENT_CLASSES.size)) {

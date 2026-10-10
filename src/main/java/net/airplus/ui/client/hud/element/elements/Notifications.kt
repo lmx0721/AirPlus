@@ -42,7 +42,7 @@ class Notifications(
     x: Double = 0.0, y: Double = 30.0, scale: Float = 1F, side: Side = Side(Side.Horizontal.RIGHT, Side.Vertical.DOWN)
 ) : Element("Notifications", x, y, scale, side) {
 
-    val style by choices("Style", arrayOf("Classic", "Modern", "Compact", "Hanabi", "Flux"), "Modern")
+    val style by choices("Style", arrayOf("Classic", "Modern", "Compact", "Hanabi", "Flux", "Onyx"), "Modern")
     val horizontalFade by choices("HorizontalFade", arrayOf("InOnly", "OutOnly", "Both", "None"), "OutOnly")
     val padding by int("Padding", 5, 1..20)
     val roundRadius by float("RoundRadius", 3f, 0f..10f)
@@ -178,6 +178,10 @@ class Notification(
         private val COMPACT_BG = Color(14, 14, 18, 200)
         private val HANABI_BG = Color(36, 36, 36, 217).rgb
         private val FLUX_BG = Color(38, 41, 43)
+
+        // Onyx 样式（卡片几何对齐 Keybinds 元素；垂直间距沿用 MAX_HEIGHT）
+        private const val ONYX_HEIGHT = 34F
+        private const val ONYX_RADIUS = 12F
     }
 
     enum class FadeState {
@@ -194,6 +198,8 @@ class Notification(
         val hanabi = element.style == "Hanabi"
         // Flux style: width derived from the Flux-native Poppins fonts
         val flux = element.style == "Flux"
+        // Onyx style: dynamic-island card, width clamped to 130..240
+        val onyx = element.style == "Onyx"
         val notificationWidth = if (hanabi) {
             val width = element.titleFontRenderer.getStringWidth("$title $description") + 45F
             textLength = width.toInt()
@@ -201,6 +207,14 @@ class Notification(
         } else if (flux) {
             // Flux 样式宽度按 Poppins 字体实测（对应 Flux 原版 max(标题, 正文) + 40）
             val width = Fonts.fontFluxTitle.getStringWidth(longestString(Fonts.fontFluxTitle)) + 45F
+            textLength = width.toInt()
+            width
+        } else if (onyx) {
+            // Onyx 样式：宽度 = max(130, 最长文本 + 45)，封顶 240
+            val width = maxOf(
+                130F,
+                element.titleFontRenderer.getStringWidth(longestString(element.titleFontRenderer)) + 45F
+            ).coerceAtMost(240F)
             textLength = width.toInt()
             width
         } else {
@@ -211,7 +225,8 @@ class Notification(
         val extraSpace = 4F
 
         val currentX = when (fadeState) {
-            FadeState.IN -> if (element.horizontalFade in arrayOf("InOnly", "Both")) x else notificationWidth
+            // Onyx 自带滑入动画（progress 由 x 映射），不受默认 HorizontalFade=OutOnly 影响
+            FadeState.IN -> if (element.horizontalFade in arrayOf("InOnly", "Both") || onyx) x else notificationWidth
             FadeState.OUT -> if (element.horizontalFade in arrayOf("OutOnly", "Both")) x else notificationWidth
             else -> x
         }
@@ -221,6 +236,7 @@ class Notification(
             element.style == "Modern" -> drawModern(element, currentX, extraSpace)
             element.style == "Compact" -> drawCompact(element, currentX, extraSpace)
             element.style == "Flux" -> drawFlux(element, currentX, extraSpace)
+            element.style == "Onyx" -> drawOnyx(element, currentX, notificationWidth)
             else -> drawClassic(element, currentX, extraSpace)
         }
 
@@ -240,9 +256,9 @@ class Notification(
             }
 
             FadeState.STAY -> {
-                if (textLength != maxTextLength) {
+                if (textLength != maxTextLength || (onyx && x < notificationWidth)) {
                     maxTextLength = maxOf(textLength, maxTextLength)
-                    x = if (hanabi || flux) notificationWidth else maxTextLength + ICON_SIZE + 16F
+                    x = if (hanabi || flux || onyx) notificationWidth else maxTextLength + ICON_SIZE + 16F
                     fadeStep = x
                 }
                 stay -= delta
@@ -531,4 +547,55 @@ class Notification(
             Notifications.SeverityType.RED_SUCCESS, Notifications.SeverityType.ERROR -> Color(240, 71, 71)
             else -> fluxAccentColor
         }
+
+    /**
+     * Onyx 样式：34px 高的圆角岛卡（圆角 12；垂直间距仍按 MAX_HEIGHT=32 推进）。
+     * severity 图标 16px + 白色标题/灰色描述 + 底部 accent 剩余时间进度条。
+     * 滑入：progress 由现有 fadeState 的 x 推进映射（0→1），14px 位移 + 透明度。
+     */
+    private fun drawOnyx(element: Notifications, currentX: Float, notificationWidth: Float) {
+        val progress = (currentX / notificationWidth).coerceIn(0F, 1F)
+        val alpha = progress
+        val cardRight = (1F - progress) * 14F // 入场：右侧 14px 位移滑入
+        val cardLeft = cardRight - notificationWidth
+        val cardTop = -y - ONYX_HEIGHT
+        val cardBottom = -y
+
+        // 岛卡背景（深色底、圆角 12，随入场透明度淡入）
+        drawRoundedRect(
+            cardLeft, cardTop, cardRight, cardBottom,
+            Color(20, 20, 24, (220 * alpha).toInt()).rgb, ONYX_RADIUS
+        )
+
+        // severity 图标（16px 垂直居中）
+        RenderUtils.drawImage(
+            severityType.path,
+            cardLeft + 10F,
+            cardTop + (ONYX_HEIGHT - 16) / 2F,
+            16, 16,
+            color = Color(255, 255, 255, (255 * alpha).toInt()),
+            radius = 4F
+        )
+
+        // 标题 + 描述
+        val textX = cardLeft + 32F
+        element.titleFontRenderer.drawString(title, textX, cardTop + 6F, Color(255, 255, 255, (255 * alpha).toInt()).rgb)
+        element.descFontRenderer.drawString(
+            description, textX, cardTop + 6F + element.titleFontRenderer.height + 1F,
+            Color(170, 170, 175, (255 * alpha).toInt()).rgb
+        )
+
+        // 底部 accent 剩余时间进度条（滑入/停留阶段显示）
+        if (fadeState == FadeState.IN || fadeState == FadeState.STAY) {
+            val remain = (stay / delay.toFloat()).coerceIn(0F, 1F)
+            val barLeft = cardLeft + 10F
+            val barRight = cardRight - 10F
+            val barY = cardBottom - 3.5F
+            drawRoundedRect(barLeft, barY, barRight, barY + 1.5F, Color(255, 255, 255, (40 * alpha).toInt()).rgb, 0.75F)
+            drawRoundedRect(
+                barLeft, barY, barLeft + (barRight - barLeft) * remain, barY + 1.5F,
+                accentColor.withAlpha((255 * alpha).toInt()).rgb, 0.75F
+            )
+        }
+    }
 }

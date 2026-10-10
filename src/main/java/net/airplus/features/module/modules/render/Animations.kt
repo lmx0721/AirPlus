@@ -7,8 +7,6 @@ package net.airplus.features.module.modules.render
 
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
-import net.airplus.features.module.modules.render.Animations.animations
-import net.airplus.features.module.modules.render.Animations.defaultAnimation
 import net.airplus.utils.client.MinecraftInstance
 import net.minecraft.client.entity.AbstractClientPlayer
 import net.minecraft.client.renderer.GlStateManager.*
@@ -20,19 +18,6 @@ import org.lwjgl.opengl.GL11.glTranslatef
  * Animations module
  *
  * This module affects the blocking animation. It allows the user to customize the animation.
- * If you are looking forward to contribute to this module, please name your animation with a reasonable name. Do not name them after clients or yourself.
- * Please credit from where you got the animation from and make sure they are willing to contribute.
- * If they are not willing to contribute, please do not add the animation to this module.
- *
- * If you are looking for the animation classes, please look at the [Animation] class. It allows you to create your own animation.
- * After making your animation class, please add it to the [animations] array. It should automatically be added to the list and show up in the GUI.
- *
- * By default, the module uses the [OneSevenAnimation] animation. If you want to change the default animation, please change the [defaultAnimation] variable.
- * Default animations are even used when the module is disabled.
- *
- * If another variables from the renderItemInFirstPerson method are needed, please let me know or pass them by yourself.
- *
- * @author CCBlueX
  */
 object Animations : Module("Animations", Category.RENDER, gameDetecting = false) {
 
@@ -47,7 +32,9 @@ object Animations : Module("Animations", Category.RENDER, gameDetecting = false)
         HeliumAnimation(),
         ArgonAnimation(),
         CesiumAnimation(),
-        SulfurAnimation()
+        SulfurAnimation(),
+        ExhibitionAnimation(),
+        SwingAnimation()
     )
 
     private val animationMode by choices("Mode", animations.map { it.name }.toTypedArray(), "NewPushdown")
@@ -60,6 +47,18 @@ object Animations : Module("Animations", Category.RENDER, gameDetecting = false)
     val handPosX by float("PositionRotationX", 0f, -50f..50f)
     val handPosY by float("PositionRotationY", 0f, -50f..50f)
     val handPosZ by float("PositionRotationZ", 0f, -50f..50f)
+
+    // Onyx 主手变换：开启时用可自定义的位置/旋转/缩放替换原版手部渲染（MixinItemRenderer#transformMainHand）
+    val mainHandEnabled by boolean("MainHand", false)
+    val mainHandX by float("MainHand-X", -0.5f, -2f..2f) { mainHandEnabled }
+    val mainHandY by float("MainHand-Y", -0.52f, -2f..2f) { mainHandEnabled }
+    val mainHandZ by float("MainHand-Z", -0.72f, -2f..2f) { mainHandEnabled }
+    val mainHandRotX by float("MainHand-RotX", 0f, -180f..180f) { mainHandEnabled }
+    val mainHandRotY by float("MainHand-RotY", 0f, -180f..180f) { mainHandEnabled }
+    val mainHandRotZ by float("MainHand-RotZ", 0f, -180f..180f) { mainHandEnabled }
+    val mainHandScaleX by float("MainHand-ScaleX", 1f, 0.1f..2f) { mainHandEnabled }
+    val mainHandScaleY by float("MainHand-ScaleY", 1f, 0.1f..2f) { mainHandEnabled }
+    val mainHandScaleZ by float("MainHand-ScaleZ", 1f, 0.1f..2f) { mainHandEnabled }
 
     fun getAnimation() = animations.firstOrNull { it.name == animationMode }
 
@@ -245,5 +244,35 @@ class SulfurAnimation : Animation("Sulfur") {
         rotate(-c5 * 30.0f, c5 / 10.0f, c6 / 10.0f, 0.0f)
         translate(c5 / 1.5, 0.2, 0.0)
         doBlockTransformations()
+    }
+}
+
+/**
+ * Sk1d animation.
+ * @author Sk1d
+ */
+
+class ExhibitionAnimation : Animation("Exhibition") {
+    override fun transform(f1: Float, f: Float, clientPlayer: AbstractClientPlayer) {
+        val var151 = MathHelper.sin(MathHelper.sqrt_float(f1) * 3.1415927f)
+        glTranslated(-0.03, (var151 * 0.062f).toDouble(), 0.0)
+        glTranslated(0.025, 0.09615, 0.0)
+        transformFirstPersonItem(f / 3f, 0.0f)
+        rotate(-var151 * 9f, -var151 / 20f, -var151 / 20f, 1f)
+        rotate(-var151 * 55f, 1.2f, var151 / 4f, 0.36f)
+        if (mc.thePlayer.isSneaking) {
+            translate(-0.05, -0.05, 0.0)
+        }
+        doBlockTransformations()
+    }
+}
+
+class SwingAnimation : Animation("Swing") {
+    override fun transform(f1: Float, f: Float, clientPlayer: AbstractClientPlayer) {
+        transformFirstPersonItem(f / 2.0f, f1)
+        translate(-0.5f, 0.4f, 0.0f)
+        rotate(30.0f, 0.0f, 1.0f, 0.0f)
+        rotate(-80.0f, 1.0f, 0.0f, 0.0f)
+        rotate(60.0f, 0.0f, 1.0f, 0.0f)
     }
 }
