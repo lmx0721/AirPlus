@@ -48,7 +48,7 @@ class Arraylist(
 ) : Element("Arraylist", x, y, scale, side) {
 
     private val textColorMode by choices(
-        "Text-Mode", arrayOf("Custom", "Fade", "Random", "Rainbow", "Gradient", "Theme"), "Custom"
+        "Text-Mode", arrayOf("Custom", "Fade", "Random", "Rainbow", "Gradient", "Theme"), "theme"
     )
     private val textColors = ColorSettingsInteger(this, "TextColor") { textColorMode == "Custom" }.with(blueRibbon)
     private val textFadeColors = ColorSettingsInteger(this, "Text-Fade") { textColorMode == "Fade" }.with(0, 111, 255)
@@ -66,7 +66,7 @@ class Arraylist(
     private val rectMode by choices("Rect-Mode", arrayOf("None", "Left", "Right", "Outline"), "Right")
     private val roundedRectRadius by float("RoundedRect-Radius", 0F, 0F..2F) { rectMode !in setOf("None", "Outline") }
     private val rectColorMode by choices(
-        "Rect-ColorMode", arrayOf("Custom", "Fade", "Random", "Rainbow", "Gradient", "Theme"), "Custom"
+        "Rect-ColorMode", arrayOf("Custom", "Fade", "Random", "Rainbow", "Gradient", "Theme"), "theme"
     ) { rectMode != "None" }
     private val rectColors =
         ColorSettingsInteger(this, "RectColor", applyMax = true) { isCustomRectSupported }.with(blueRibbon)

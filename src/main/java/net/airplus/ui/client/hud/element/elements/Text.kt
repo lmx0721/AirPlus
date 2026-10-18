@@ -128,7 +128,7 @@ class Text(x: Double = 10.0, y: Double = 10.0, scale: Float = 1F, side: Side = S
 
     private var displayString by text("DisplayText", "")
 
-    private val textColorMode by choices("Text-ColorMode", arrayOf("Custom", "Rainbow", "Gradient", "Theme"), "Custom")
+    private val textColorMode by choices("Text-ColorMode", arrayOf("Custom", "Rainbow", "Gradient", "Theme"), "theme")
 
     private val themeGradientMode by choices(
         "Theme-GradientMode", arrayOf("Sync", "LeftToRight", "RightToLeft"), "Sync"

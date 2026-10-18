@@ -58,26 +58,29 @@ object RenderUtils : MinecraftInstance {
 
         disableAlpha()
 
-        glEnable(GL_STENCIL_TEST)
-        glStencilFunc(GL_ALWAYS, 1, 1)
-        glStencilOp(GL_REPLACE, GL_REPLACE, GL_REPLACE)
-        glStencilMask(1)
-        glClear(GL_STENCIL_BUFFER_BIT)
+        try {
+            glEnable(GL_STENCIL_TEST)
+            glStencilFunc(GL_ALWAYS, 1, 1)
+            glStencilOp(GL_REPLACE, GL_REPLACE, GL_REPLACE)
+            glStencilMask(1)
+            glClear(GL_STENCIL_BUFFER_BIT)
 
-        main()
+            main()
 
-        glStencilFunc(GL_EQUAL, 1, 1)
-        glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP)
-        glStencilMask(0)
+            glStencilFunc(GL_EQUAL, 1, 1)
+            glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP)
+            glStencilMask(0)
 
-        toClip()
+            toClip()
+        } finally {
+            // 异常路径同样复位 stencil，避免 GL_EQUAL/GL_STENCIL_TEST 残留污染后续渲染
+            glStencilMask(0xFF)
+            glDisable(GL_STENCIL_TEST)
 
-        glStencilMask(0xFF)
-        glDisable(GL_STENCIL_TEST)
+            enableAlpha()
 
-        enableAlpha()
-
-        glPopMatrix()
+            glPopMatrix()
+        }
     }
 
     inline fun withOutline(main: () -> Unit, toOutline: () -> Unit) {
@@ -87,27 +90,29 @@ object RenderUtils : MinecraftInstance {
 
         disableAlpha()
 
-        glEnable(GL_STENCIL_TEST)
-        glClear(GL_STENCIL_BUFFER_BIT)
+        try {
+            glEnable(GL_STENCIL_TEST)
+            glClear(GL_STENCIL_BUFFER_BIT)
 
-        glStencilFunc(GL_ALWAYS, 1, 1)
-        glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE)
-        glStencilMask(1)
+            glStencilFunc(GL_ALWAYS, 1, 1)
+            glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE)
+            glStencilMask(1)
 
-        main()
+            main()
 
-        glStencilFunc(GL_EQUAL, 0, 1)
-        glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP)
-        glStencilMask(0)
+            glStencilFunc(GL_EQUAL, 0, 1)
+            glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP)
+            glStencilMask(0)
 
-        toOutline()
+            toOutline()
+        } finally {
+            glStencilMask(0xFF)
+            glDisable(GL_STENCIL_TEST)
 
-        glStencilMask(0xFF)
-        glDisable(GL_STENCIL_TEST)
+            enableAlpha()
 
-        enableAlpha()
-
-        glPopMatrix()
+            glPopMatrix()
+        }
     }
 
     fun deltaTimeNormalized(ticks: Int = 1) = (deltaTime safeDivD ticks * 50.0).coerceAtMost(1.0)
@@ -1168,15 +1173,22 @@ object RenderUtils : MinecraftInstance {
     ) {
         val (newX1, newY1, newX2, newY2) = orderPoints(x1, y1, x2, y2)
 
+        // 保存 blend 状态：结束时按原样恢复，避免无条件关闭外层已开启的 blend
+        val prevBlend = glIsEnabled(GL_BLEND)
+
         glPushMatrix()
         glEnable(GL_BLEND)
         glDisable(GL_TEXTURE_2D)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glEnable(GL_LINE_SMOOTH)
 
-        glColor4f(red, green, blue, alpha)
+        // 走 GlStateManager.color 保持缓存同步（裸 glColor4f 会导致 GlStateManager 颜色缓存失同步）
+        color(red, green, blue, alpha)
 
         val radiusD = min(radius.toDouble(), min(newX2 - newX1, newY2 - newY1) / 2.0)
+
+        // 圆角平滑度随半径自适应：半径越大分段越多（固定 10 段在大圆角下呈明显多边形棱角）
+        val cornerSteps = radiusD.toInt().coerceIn(8, 28)
 
         val corners = arrayOf(
             Corner.BOTTOM_RIGHT to doubleArrayOf(
@@ -1197,8 +1209,8 @@ object RenderUtils : MinecraftInstance {
                 val (cx, cy, startAngle, ox, oy) = directionData
 
                 if (corner in cornersToRound.corners) {
-                    for (i in 0..90 step 10) {
-                        val angle = Math.toRadians(startAngle + i)
+                    for (i in 0..cornerSteps) {
+                        val angle = Math.toRadians(startAngle + 90.0 * i / cornerSteps)
                         val x = cx + radiusD * sin(angle)
                         val y = cy + radiusD * cos(angle)
                         pos(x, y, 0.0).endVertex()
@@ -1209,10 +1221,10 @@ object RenderUtils : MinecraftInstance {
             }
         }
 
-        glColor(Color.WHITE)
+        color(1f, 1f, 1f, 1f)
         glEnable(GL_TEXTURE_2D)
         glDisable(GL_LINE_SMOOTH)
-        glDisable(GL_BLEND)
+        if (prevBlend) glEnable(GL_BLEND) else glDisable(GL_BLEND)
         glPopMatrix()
     }
 
@@ -1394,8 +1406,10 @@ object RenderUtils : MinecraftInstance {
         ).endVertex()
     }
 
+    // 走 GlStateManager.color 而不是裸 glColor4f，保持 GlStateManager 颜色缓存与真实状态同步，
+    // 否则缓存失同步会导致后续 GlStateManager.color 调用被跳过，出现"莫名变色"
     fun glColor(red: Int, green: Int, blue: Int, alpha: Int) =
-        glColor4f(red / 255f, green / 255f, blue / 255f, alpha / 255f)
+        color(red / 255f, green / 255f, blue / 255f, alpha / 255f)
 
     fun glColor(color: Color) = glColor(color.red, color.green, color.blue, color.alpha)
 

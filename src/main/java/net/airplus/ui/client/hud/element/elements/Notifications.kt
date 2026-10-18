@@ -42,7 +42,7 @@ class Notifications(
     x: Double = 0.0, y: Double = 30.0, scale: Float = 1F, side: Side = Side(Side.Horizontal.RIGHT, Side.Vertical.DOWN)
 ) : Element("Notifications", x, y, scale, side) {
 
-    val style by choices("Style", arrayOf("Classic", "Modern", "Compact", "Hanabi", "Flux", "Onyx"), "Modern")
+    val style by choices("Style", arrayOf("Classic", "Modern", "Compact", "Hanabi", "Flux", "Onyx", "Southside"), "Modern")
     val horizontalFade by choices("HorizontalFade", arrayOf("InOnly", "OutOnly", "Both", "None"), "OutOnly")
     val padding by int("Padding", 5, 1..20)
     val roundRadius by float("RoundRadius", 3f, 0f..10f)
@@ -200,6 +200,8 @@ class Notification(
         val flux = element.style == "Flux"
         // Onyx style: dynamic-island card, width clamped to 130..240
         val onyx = element.style == "Onyx"
+        // Southside style: dark card, width = max(140, text + 40)
+        val southside = element.style == "Southside"
         val notificationWidth = if (hanabi) {
             val width = element.titleFontRenderer.getStringWidth("$title $description") + 45F
             textLength = width.toInt()
@@ -215,6 +217,15 @@ class Notification(
                 130F,
                 element.titleFontRenderer.getStringWidth(longestString(element.titleFontRenderer)) + 45F
             ).coerceAtMost(240F)
+            textLength = width.toInt()
+            width
+        } else if (southside) {
+            // Southside 样式：宽度 = max(140, 最长文本 + 40)（对应原版 minWidth 140 / extraWidth 40）
+            val width = maxOf(
+                140F,
+                element.titleFontRenderer.getStringWidth(longestString(element.titleFontRenderer)) + 40F,
+                element.descFontRenderer.getStringWidth(longestString(element.descFontRenderer)) + 40F
+            )
             textLength = width.toInt()
             width
         } else {
@@ -237,6 +248,7 @@ class Notification(
             element.style == "Compact" -> drawCompact(element, currentX, extraSpace)
             element.style == "Flux" -> drawFlux(element, currentX, extraSpace)
             element.style == "Onyx" -> drawOnyx(element, currentX, notificationWidth)
+            element.style == "Southside" -> drawSouthside(element, currentX, notificationWidth)
             else -> drawClassic(element, currentX, extraSpace)
         }
 
@@ -385,6 +397,51 @@ class Notification(
             )
         }
     }
+
+    /**
+     * Southside 样式：迁移自 dev.diona.southside.module.modules.client.Notification。
+     * 深色圆角卡片（32,32,32）+ 左上标题 / 左下正文 + 底部随已流逝时间向右增长的类型色进度条
+     * （原版 percent = 1 - time/keepTime，scissor 裁出底边 3px 条带，此处直接按条带绘制）。
+     */
+    private fun drawSouthside(element: Notifications, currentX: Float, notificationWidth: Float) {
+        val height = MAX_HEIGHT.toFloat()
+        val cardLeft = -currentX - 5F
+        val cardTop = -y - height
+        val cardBottom = -y
+
+        // 深色卡片背景（Southside new Color(32, 32, 32)）
+        drawRoundedRect(cardLeft, cardTop, cardLeft + notificationWidth, cardBottom, Color(32, 32, 32).rgb, element.roundRadius)
+
+        // 底部进度条：随已流逝时间增长（Southside percent = 1 - clamp(time/keepTime)）
+        if (fadeState == FadeState.IN || fadeState == FadeState.STAY) {
+            val percent = (1F - stay / delay.toFloat()).coerceIn(0F, 1F)
+            drawRoundedRect(
+                cardLeft, cardBottom - 3F,
+                cardLeft + notificationWidth * percent, cardBottom,
+                southsideAccentColor.rgb, element.roundRadius
+            )
+        }
+
+        // 左上标题 + 左下正文（原版 title font 9 在 +4、message 在底部；按本客户端字体行高改为上下排布避免重叠）
+        val textX = cardLeft + 6F
+        element.titleFontRenderer.drawString(title, textX, cardTop + 4F, Color.WHITE.rgb)
+        element.descFontRenderer.drawString(
+            description, textX,
+            cardTop + 4F + element.titleFontRenderer.height + 1F, Color(200, 200, 200).rgb
+        )
+    }
+
+    /**
+     * Southside 类型色（原版取 ClientStyle 五色，此处映射为现有 severity 配色）。
+     */
+    private val southsideAccentColor: Color
+        get() = when (severityType) {
+            Notifications.SeverityType.SUCCESS -> Color(114, 181, 94)
+            Notifications.SeverityType.RED_SUCCESS -> Color(240, 71, 71)
+            Notifications.SeverityType.INFO -> ClientThemesUtils.getColor()
+            Notifications.SeverityType.WARNING -> Color(239, 188, 18)
+            Notifications.SeverityType.ERROR -> Color(240, 71, 71)
+        }
 
     private val accentColor: Color
         get() = when (severityType) {

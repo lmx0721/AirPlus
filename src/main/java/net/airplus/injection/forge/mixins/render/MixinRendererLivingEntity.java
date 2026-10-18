@@ -172,6 +172,21 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
         ci.cancel();
     }
 
+    /**
+     * Jelly：在 rotateCorpse RETURN 处施加果冻缩放。此时已完成 renderLivingAt 平移与朝向旋转，
+     * 矩阵处于 doRender 的 pushMatrix/popMatrix 内，自动恢复无残留；缩放围绕脚底原点，压扁贴地。
+     */
+    @Inject(method = "rotateCorpse(Lnet/minecraft/entity/EntityLivingBase;FFF)V", at = @At("RETURN"))
+    private <T extends EntityLivingBase> void injectJelly(T entity, float yaw, float offset, float partialTicks, CallbackInfo callbackInfo) {
+        final float sy = Jelly.INSTANCE.scaleY(entity.getEntityId());
+        if (Math.abs(sy - 1f) < 0.002f) {
+            return;
+        }
+        // 体积守恒：XZ 反向补偿
+        final float sxz = 1f / (float) Math.sqrt(sy);
+        scale(sxz, sy, sxz);
+    }
+
     @Inject(method = "doRender(Lnet/minecraft/entity/EntityLivingBase;DDDFF)V", at = @At(value = "HEAD"))
     private void injectFreeLookPitchPreMovePrevention(CallbackInfo ci) {
         FreeLook.INSTANCE.restoreOriginalRotation();

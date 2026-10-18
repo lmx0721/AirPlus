@@ -18,6 +18,7 @@ import net.minecraft.client.renderer.vertex.DefaultVertexFormats
 import net.minecraft.client.shader.Framebuffer
 import net.minecraft.client.shader.ShaderGroup
 import net.minecraft.util.ResourceLocation
+import org.lwjgl.BufferUtils
 import org.lwjgl.opengl.GL11
 
 object BlurUtils : MinecraftInstance {
@@ -140,42 +141,57 @@ object BlurUtils : MinecraftInstance {
         group.loadShaderGroup(mc.timer.renderPartialTicks)
         mc.framebuffer.bindFramebuffer(true)
 
-        Stencil.write(displayClipMask)
-        triggerMethod()
+        // 记录将被修改的 alpha 状态（Stencil.erase 会把 alphaFunc 改为 GREATER 0）
+        val prevAlphaEnabled = GL11.glIsEnabled(GL11.GL_ALPHA_TEST)
+        val alphaRefBuf = BufferUtils.createFloatBuffer(16)
+        GL11.glGetFloat(GL11.GL_ALPHA_TEST_REF, alphaRefBuf)
+        val prevAlphaRef = alphaRefBuf.get(0)
 
-        Stencil.erase(true)
-        val prevBlend = GL11.glIsEnabled(GL11.GL_BLEND)
-        GlStateManager.enableBlend()
-        GlStateManager.blendFunc(770, 771)
-        GlStateManager.pushMatrix()
-        GlStateManager.colorMask(true, true, true, false)
-        GlStateManager.disableDepth()
-        GlStateManager.depthMask(false)
-        GlStateManager.enableTexture2D()
-        GlStateManager.disableLighting()
-        GlStateManager.disableAlpha()
-        resultFramebuffer.bindFramebufferTexture()
-        GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F)
-        val f2 = resultFramebuffer.framebufferWidth.toDouble() / resultFramebuffer.framebufferTextureWidth.toDouble()
-        val f3 = resultFramebuffer.framebufferHeight.toDouble() / resultFramebuffer.framebufferTextureHeight.toDouble()
-        val tessellator = Tessellator.getInstance()
-        val worldrenderer = tessellator.worldRenderer
-        worldrenderer.begin(7, DefaultVertexFormats.POSITION_TEX_COLOR)
-        worldrenderer.pos(0.0, height.toDouble(), 0.0).tex(0.0, 0.0).color(255, 255, 255, 255).endVertex()
-        worldrenderer.pos(width.toDouble(), height.toDouble(), 0.0).tex(f2, 0.0).color(255, 255, 255, 255).endVertex()
-        worldrenderer.pos(width.toDouble(), 0.0, 0.0).tex(f2, f3).color(255, 255, 255, 255).endVertex()
-        worldrenderer.pos(0.0, 0.0, 0.0).tex(0.0, f3).color(255, 255, 255, 255).endVertex()
-        tessellator.draw()
-        resultFramebuffer.unbindFramebufferTexture()
-        GlStateManager.enableDepth()
-        GlStateManager.depthMask(true)
-        GlStateManager.colorMask(true, true, true, true)
-        GlStateManager.popMatrix()
-        // 恢复进入时的 blend 状态，避免泄漏
-        if (prevBlend) GlStateManager.enableBlend() else GlStateManager.disableBlend()
+        try {
+            Stencil.write(displayClipMask)
+            triggerMethod()
 
-        Stencil.dispose()
-        GlStateManager.enableAlpha()
+            Stencil.erase(true)
+            val prevBlend = GL11.glIsEnabled(GL11.GL_BLEND)
+            GlStateManager.enableBlend()
+            GlStateManager.blendFunc(770, 771)
+            GlStateManager.pushMatrix()
+            GlStateManager.colorMask(true, true, true, false)
+            GlStateManager.disableDepth()
+            GlStateManager.depthMask(false)
+            GlStateManager.enableTexture2D()
+            GlStateManager.disableLighting()
+            GlStateManager.disableAlpha()
+            resultFramebuffer.bindFramebufferTexture()
+            GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F)
+            val f2 = resultFramebuffer.framebufferWidth.toDouble() / resultFramebuffer.framebufferTextureWidth.toDouble()
+            val f3 = resultFramebuffer.framebufferHeight.toDouble() / resultFramebuffer.framebufferTextureHeight.toDouble()
+            val tessellator = Tessellator.getInstance()
+            val worldrenderer = tessellator.worldRenderer
+            worldrenderer.begin(7, DefaultVertexFormats.POSITION_TEX_COLOR)
+            worldrenderer.pos(0.0, height.toDouble(), 0.0).tex(0.0, 0.0).color(255, 255, 255, 255).endVertex()
+            worldrenderer.pos(width.toDouble(), height.toDouble(), 0.0).tex(f2, 0.0).color(255, 255, 255, 255).endVertex()
+            worldrenderer.pos(width.toDouble(), 0.0, 0.0).tex(f2, f3).color(255, 255, 255, 255).endVertex()
+            worldrenderer.pos(0.0, 0.0, 0.0).tex(0.0, f3).color(255, 255, 255, 255).endVertex()
+            tessellator.draw()
+            resultFramebuffer.unbindFramebufferTexture()
+            GlStateManager.enableDepth()
+            GlStateManager.depthMask(true)
+            GlStateManager.colorMask(true, true, true, true)
+            GlStateManager.popMatrix()
+            // 恢复进入时的 blend 状态，避免泄漏
+            if (prevBlend) GlStateManager.enableBlend() else GlStateManager.disableBlend()
+        } finally {
+            // 异常路径也必须 dispose，否则 stencil/colorMask 残留会导致后续渲染错乱
+            Stencil.dispose()
+            // 恢复进入时的 alpha 状态与 alphaFunc（Stencil.erase/修改过 alphaFunc）
+            if (prevAlphaEnabled) {
+                GlStateManager.enableAlpha()
+                GlStateManager.alphaFunc(GL11.GL_GREATER, prevAlphaRef)
+            } else {
+                GlStateManager.disableAlpha()
+            }
+        }
     }
 
     @JvmStatic

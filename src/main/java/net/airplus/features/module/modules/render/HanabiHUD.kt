@@ -19,6 +19,7 @@ import net.airplus.features.module.Module
 import net.airplus.features.module.ModuleManager
 import net.airplus.config.BoolValue
 import net.airplus.config.FloatValue
+import net.airplus.config.FontValue
 import net.airplus.config.IntValue
 import net.airplus.config.ListValue
 import net.airplus.config.Value
@@ -397,6 +398,8 @@ object HanabiHUD : Module("HanabiHUD", Category.RENDER, gameDetecting = false) {
         is FloatValue -> "${s.name}: " + String.format("%.2f", s.get())
         is IntValue -> "${s.name}: ${s.get()}"
         is BoolValue -> "${s.name}: ${s.get()}"
+        // FontValue.get() 是 FontRenderer 对象，直接拼接会显示成包名+哈希
+        is FontValue -> "${s.name}: ${s.displayName.removePrefix("Font: ")}"
         else -> "${s.name}: ${s.get()}"
     }
 

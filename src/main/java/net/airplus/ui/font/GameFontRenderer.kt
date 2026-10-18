@@ -13,6 +13,7 @@ import net.airplus.utils.render.RenderUtils.drawLine
 import net.airplus.utils.render.shader.shaders.GradientFontShader
 import net.airplus.utils.render.shader.shaders.RainbowFontShader
 import net.minecraft.client.gui.FontRenderer
+import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.client.renderer.GlStateManager.*
 import net.minecraft.util.ResourceLocation
 import org.lwjgl.opengl.GL11.*
@@ -50,9 +51,12 @@ class GameFontRenderer(
 ) {
 
     val defaultFont = AWTFontRenderer(font)
-    private val boldFont = AWTFontRenderer(font.deriveFont(Font.BOLD))
-    private val italicFont = AWTFontRenderer(font.deriveFont(Font.ITALIC))
-    private val boldItalicFont = AWTFontRenderer(font.deriveFont(Font.BOLD or Font.ITALIC))
+
+    // 样式变体懒烘焙：绝大多数文字不含 §l/§o 样式码，启动时烘焙 bold/italic/boldItalic
+    // 是纯浪费（每个字体 4 次字形贴图烘焙 → 1 次）。
+    private val boldFont: AWTFontRenderer by lazy { AWTFontRenderer(font.deriveFont(Font.BOLD)) }
+    private val italicFont: AWTFontRenderer by lazy { AWTFontRenderer(font.deriveFont(Font.ITALIC)) }
+    private val boldItalicFont: AWTFontRenderer by lazy { AWTFontRenderer(font.deriveFont(Font.BOLD or Font.ITALIC)) }
 
     val fontHeight: Int
     val size: Int
@@ -64,6 +68,10 @@ class GameFontRenderer(
      */
     val height: Int
         get() = defaultFont.height / 2
+
+    /** 视觉行高（em 行盒），用于任意盒子内的垂直居中：drawY = top + (boxH - visualLineHeight)/2 + 2.75f */
+    val visualLineHeight: Float
+        get() = defaultFont.visualLineHeight
 
     init {
         fontHeight = height
@@ -141,9 +149,10 @@ class GameFontRenderer(
             return 0
         }
 
-        // Basic blend
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        // Basic blend（必须走 GlStateManager：裸调用绕过缓存，
+        // 会让后续 enableBlend 被跳过 → 主文本无混合渲染，且状态残留影响后续绘制）
+        GlStateManager.enableBlend()
+        GlStateManager.blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
         // NameProtect modifies text (like hiding the player's name)
         val currentText = NameProtect.handleTextMessage(text)
@@ -163,7 +172,8 @@ class GameFontRenderer(
             )
         }
 
-        glDisable(GL_BLEND)
+        glUseProgram(0)
+        GlStateManager.disableBlend()
 
         // Then real text with optional rainbow or gradient
         val rainbowActive = RainbowFontShader.isInUse
@@ -299,6 +309,9 @@ class GameFontRenderer(
 
         // Cleanup
         disableBlend()
+        // 无颜色码文本不会走进 §r 分支的 glUseProgram(0)，着色器程序会残留绑定，
+        // 导致后续固定管线绘制（如第一人称手持物品）走错管线 → 手持物品异常/半透明
+        glUseProgram(0)
         glTranslated(-(x - 1.5), -(y + 0.5), 0.0)
         glColor4f(1f, 1f, 1f, 1f)
         resetColor()

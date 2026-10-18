@@ -11,6 +11,7 @@ import net.airplus.file.FileManager.backgroundFileFor
 import net.airplus.file.FileManager.existingBackgroundFile
 import net.airplus.file.FileManager.valuesConfig
 import net.airplus.file.configs.models.ClientConfiguration
+import net.airplus.injection.forge.StartupSplash
 import net.airplus.ui.client.GuiMainMenu
 import net.airplus.ui.client.GuiMainMenuSettings
 import net.airplus.ui.font.Fonts
@@ -47,13 +48,14 @@ object MainMenuStyles {
     val STYLE_ORBIT = "Orbit"
     val STYLE_HEADER = "Header"
     val STYLE_DIAGONAL = "Diagonal"
+    val STYLE_SETSUNA = "Setsuna"
 
     // 旧版本配置值迁移（Default -> Flux, Custom -> Hanabi）
     private val LEGACY_NAMES = mapOf("Default" to STYLE_FLUX, "Custom" to STYLE_HANABI)
 
     val STYLES = listOf(
         STYLE_FLUX, STYLE_HANABI, STYLE_HANABI2, STYLE_MINIMAL, STYLE_SIDEBAR, STYLE_DOCK, STYLE_SPLIT,
-        STYLE_GRID, STYLE_ORBIT, STYLE_HEADER, STYLE_DIAGONAL, STYLE_XINXIN
+        STYLE_GRID, STYLE_ORBIT, STYLE_HEADER, STYLE_DIAGONAL, STYLE_XINXIN, STYLE_SETSUNA
     )
 
     /** 迁移旧配置里的风格名，保证读取到的总是新名字。 */
@@ -109,6 +111,8 @@ object MainMenuStyles {
      */
     @JvmStatic
     fun drawFluxBackground(width: Int, height: Int) {
+        // 自定义背景延迟到首次绘制时加载（含 GL 贴图上传，须在渲染线程）
+        FileManager.ensureBackgroundLoaded()
         val custom = AirPlus.background
         if (custom != null) {
             custom.drawBackground(width, height)
@@ -223,6 +227,7 @@ object MainMenuStyles {
         STYLE_HEADER -> HeaderMainMenu()
         STYLE_DIAGONAL -> DiagonalMainMenu()
         STYLE_XINXIN -> XinxinMainMenu()
+        STYLE_SETSUNA -> SetsunaMainMenu()
         else -> GuiMainMenu()
     }
 
@@ -238,6 +243,30 @@ object MainMenuStyles {
     private const val SETTINGS_W = 110f
     private const val SETTINGS_H = 20f
     private var settingsHoverAni = 0f
+
+    // ===== 启动淡入（splash 欢迎画面交还主线程后，主菜单从黑罩淡入，所有风格通用）=====
+    // 进度取「时间（2000ms）」与「帧数（30 帧）」的较大者——启动初期渲染首批内容
+    // （blob 着色器编译等）单帧可能耗时数百 ms，帧数下限保证淡入逐帧可见不跳变
+    private var startupFadeStart = -1L
+    private var startupFadeFrames = 0
+
+    /** 绘制启动淡入黑罩（在主菜单 drawScreen 内容全部画完之后调用）；仅 splash 结束后首次进主菜单播一次。 */
+    @JvmStatic
+    fun drawStartupFade(width: Int, height: Int) {
+        if (!StartupSplash.animationPlayed) return
+        if (startupFadeStart == 0L) return
+        if (startupFadeStart < 0L) startupFadeStart = System.currentTimeMillis()
+        val p = maxOf(
+            (System.currentTimeMillis() - startupFadeStart) / 2000f,
+            startupFadeFrames / 30f
+        )
+        if (p >= 1f) {
+            startupFadeStart = 0L
+            return
+        }
+        startupFadeFrames++
+        RenderUtils.drawRect(0f, 0f, width.toFloat(), height.toFloat(), ((1f - p) * 255f).toInt() shl 24)
+    }
 
     private fun settingsRect(width: Int, height: Int): FloatArray =
         floatArrayOf(width - SETTINGS_W - 10f, height - SETTINGS_H - 10f, SETTINGS_W, SETTINGS_H)
@@ -270,6 +299,9 @@ object MainMenuStyles {
             0xCCFFFFFF.toInt(),
             true
         )
+
+        // 启动淡入黑罩盖在所有内容之上（各非 Flux 风格统一从这里触发）
+        drawStartupFade(width, height)
     }
 
     /** 处理右下角 Menu Settings 按钮点击，命中返回 true。左键打开主菜单设置界面（Flux 同款切换方式）。 */

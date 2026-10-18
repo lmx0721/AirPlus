@@ -13,6 +13,7 @@ import net.airplus.utils.attack.CooldownHelper;
 import net.airplus.utils.client.ClassUtils;
 import net.airplus.utils.movement.MovementUtils;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.entity.player.PlayerCapabilities;
@@ -85,14 +86,33 @@ public abstract class MixinEntityPlayer extends MixinEntityLivingBase {
 
     @ModifyConstant(method = "attackTargetEntityWithCurrentItem", constant = @Constant(doubleValue = 0.6))
     private double injectKeepSprintA(double constant) {
-        return KeepSprint.INSTANCE.handleEvents() && isSprinting() ? KeepSprint.INSTANCE.getMotionAfterAttack() : constant;
+        if (KeepSprint.INSTANCE.handleEvents() && isSprinting()) {
+            if (KeepSprint.INSTANCE.isRise()) {
+                // Rise 模式：null 表示该次攻击不接管（buffer 耗尽 / OnlyInAir 拦截），走原版 0.6
+                // hurtTime 定义在父类 EntityLivingBase 上，不能直接 @Shadow，通过转换访问
+                final int hurtTime = ((EntityLivingBase) (Object) this).hurtTime;
+                Double slowDown = KeepSprint.INSTANCE.beginRiseAttack(hurtTime, this.onGround);
+                return slowDown != null ? slowDown : constant;
+            }
+            return KeepSprint.INSTANCE.getMotionAfterAttack();
+        }
+        return constant;
     }
 
     @Redirect(method = "attackTargetEntityWithCurrentItem", at = @At(value = "INVOKE", target = "Lnet/minecraft/entity/player/EntityPlayer;setSprinting(Z)V"))
     private void injectKeepSprintB(EntityPlayer instance, boolean sprint) {
         boolean keepSprint = Boolean.FALSE.equals(MovementUtils.INSTANCE.getAffectSprintOnAttack());
 
-        if (!KeepSprint.INSTANCE.handleEvents() && !keepSprint) {
+        if (KeepSprint.INSTANCE.handleEvents()) {
+            if (KeepSprint.INSTANCE.isRise()) {
+                // Rise 模式：sprintSlowDown* 为 true（或该次未接管）时执行原版疾跑重置，否则保持疾跑
+                Boolean riseSprint = KeepSprint.INSTANCE.getLastRiseSprint();
+                if (riseSprint == null || riseSprint) {
+                    instance.setSprinting(sprint);
+                }
+            }
+            // Legacy 模式：不调用 setSprinting，始终保持疾跑
+        } else if (!keepSprint) {
             instance.setSprinting(sprint);
         }
 

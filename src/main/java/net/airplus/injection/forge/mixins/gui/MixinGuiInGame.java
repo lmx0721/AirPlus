@@ -8,6 +8,7 @@ package net.airplus.injection.forge.mixins.gui;
 import net.airplus.event.EventManager;
 import net.airplus.event.Render2DEvent;
 import net.airplus.features.module.modules.render.AntiBlind;
+import net.airplus.features.module.modules.render.DeltaForceStyle;
 import net.airplus.features.module.modules.render.HUD;
 import net.airplus.features.module.modules.render.SilentHotbarModule;
 import net.airplus.ui.font.AWTFontRenderer;
@@ -71,6 +72,27 @@ public abstract class MixinGuiInGame extends Gui {
 
     @Inject(method = "renderTooltip", at = @At("HEAD"), cancellable = true)
     private void injectCustomHotbar(ScaledResolution resolution, float delta, CallbackInfo ci) {
+        // DeltaForceStyle replaces the vanilla hotbar (texture, items and held item name)
+        // with its own borderless one — cancel vanilla rendering but keep the 2D event alive.
+        if (DeltaForceStyle.INSTANCE.handleEvents()) {
+            // Forge renders health/food/armor/air/XP after renderTooltip in GuiIngameForge#renderGameOverlay,
+            // gated by static flags that are only set once in <clinit>. Clearing them here (hotbar phase)
+            // hides the vanilla stats for this frame; they are restored once the module turns off.
+            net.minecraftforge.client.GuiIngameForge.renderHealth = false;
+            net.minecraftforge.client.GuiIngameForge.renderFood = false;
+            net.minecraftforge.client.GuiIngameForge.renderArmor = false;
+            net.minecraftforge.client.GuiIngameForge.renderAir = false;
+            net.minecraftforge.client.GuiIngameForge.renderExperiance = false;
+            net.minecraftforge.client.GuiIngameForge.renderHealthMount = false;
+            DeltaForceStyle.INSTANCE.markVanillaSuppressed();
+            liquidBounce$injectRender2DEvent(delta);
+            ci.cancel();
+            return;
+        }
+
+        // Module inactive -> make sure the vanilla stats flags suppressed earlier are back on.
+        DeltaForceStyle.INSTANCE.restoreVanillaFlags();
+
         final HUD hud = HUD.INSTANCE;
         final RenderUtils render = RenderUtils.INSTANCE;
 

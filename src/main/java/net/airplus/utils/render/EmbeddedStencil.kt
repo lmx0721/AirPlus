@@ -25,6 +25,8 @@ object EmbeddedStencil {
         EXTFramebufferObject.glRenderbufferStorageEXT(EXTFramebufferObject.GL_RENDERBUFFER_EXT, EXTPackedDepthStencil.GL_DEPTH_STENCIL_EXT, Minecraft.getMinecraft().displayWidth, Minecraft.getMinecraft().displayHeight)
         EXTFramebufferObject.glFramebufferRenderbufferEXT(EXTFramebufferObject.GL_FRAMEBUFFER_EXT, EXTFramebufferObject.GL_DEPTH_ATTACHMENT_EXT, EXTFramebufferObject.GL_RENDERBUFFER_EXT, stencilDepthBufferID)
         EXTFramebufferObject.glFramebufferRenderbufferEXT(EXTFramebufferObject.GL_FRAMEBUFFER_EXT, EXTFramebufferObject.GL_STENCIL_ATTACHMENT_EXT, EXTFramebufferObject.GL_RENDERBUFFER_EXT, stencilDepthBufferID)
+        // 解绑 renderbuffer，避免残留绑定影响后续 renderbuffer 操作
+        EXTFramebufferObject.glBindRenderbufferEXT(EXTFramebufferObject.GL_RENDERBUFFER_EXT, 0)
     }
 
     fun write(invert: Boolean) {
@@ -60,6 +62,10 @@ object EmbeddedStencil {
 
     fun dispose() {
         glDisable(GL_STENCIL_TEST)
+        // 恢复 colorMask/depthMask：若调用方在 write 后、erase 前异常退出，
+        // colorMask 残留 false 会导致后续渲染"画面消失"
+        glColorMask(true, true, true, true)
+        glDepthMask(true)
         // 恢复调用方原有状态：若调用方本就开启了 stencil test 则重新启用，
         // 并还原 stencil 清除值，避免污染同一帧内其他渲染
         if (prevStencilTest) glEnable(GL_STENCIL_TEST)

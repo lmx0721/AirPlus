@@ -26,6 +26,10 @@ object InternalBlurShader {
         val factor = sr.scaleFactor
         ensureFramebuffer(mc.displayWidth, mc.displayHeight)
 
+        // 提前校验并 return，必须在启用 scissor 之前（否则提前返回会残留 scissor 状态）
+        val buffer = blurOutputFramebuffer ?: return
+        val mainBuffer = mc.framebuffer
+
         val sX = (x * factor).toInt()
         val sY = (mc.displayHeight - (y * factor).toInt() - (height * factor).toInt())
         val sW = (width * factor).toInt()
@@ -37,9 +41,6 @@ object InternalBlurShader {
         // Strictly limit scissor to blur area (no padding) to prevent blur from bleeding outside GUI bounds.
         // Texture sampling is not affected by scissor, so blur quality remains intact.
         glScissor(sX, sY, sW, sH)
-
-        val buffer = blurOutputFramebuffer ?: return
-        val mainBuffer = mc.framebuffer
 
         // 保存将被修改的 GL 状态，结束时恢复，避免纹理/blend 状态泄漏（奇怪的纹理）
         val prevBlend = GL11.glIsEnabled(GL11.GL_BLEND)

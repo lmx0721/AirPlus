@@ -200,7 +200,7 @@ class ModuleCommand(val module: Module, val values: Collection<Value<*>> = modul
                         return
                     }
 
-                    chat("§7${module.getName()} §8${args[1]}§7 was set to §8${value.get()}§7.")
+                    chat("§7${module.getName()} §8${args[1]}§7 was set to §8${value.toText()}§7.")
                     playEdit()
                 } catch (e: NumberFormatException) {
                     chatInvalid(args[2], value, "cannot be converted to a number for")

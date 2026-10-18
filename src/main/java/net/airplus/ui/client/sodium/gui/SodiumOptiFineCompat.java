@@ -121,18 +121,18 @@ public class SodiumOptiFineCompat {
 
         OptionGroup.Builder performance = OptionGroup.createBuilder();
         int performanceCount = 0;
-        performanceCount += addBool(performance, "Smooth FPS", "ofSmoothFps",
-                "Stabilizes the frame rate by flushing the graphics driver buffers. Can introduce slight input latency.");
-        performanceCount += addBool(performance, "Smooth World", "ofSmoothWorld",
-                "Removes lag spikes caused by chunk updates while moving in singleplayer.");
-        performanceCount += addBool(performance, "Fast Render", "ofFastRender",
-                "Uses optimized rendering algorithms for a large FPS boost. Requires a game restart to take full effect.");
-        performanceCount += addBool(performance, "Lazy Chunk Loading", "ofLazyChunkLoading",
-                "Loads chunks more evenly to smooth out world loading in singleplayer.");
-        performanceCount += addBool(performance, "Fast Math", "ofFastMath",
-                "Uses faster trigonometric functions. Hardware dependent, can improve FPS on weaker GPUs.");
-        performanceCount += addSlider(performance, "Chunk Updates", "ofChunkUpdates",
-                "The number of chunk geometry rebuilds allowed per frame. Higher values load the world faster but can reduce FPS.");
+        performanceCount += addBool(performance, "平滑 FPS", "ofSmoothFps",
+                "通过刷新显卡驱动缓冲区来稳定帧率，可能引入轻微操作延迟。");
+        performanceCount += addBool(performance, "平滑世界", "ofSmoothWorld",
+                "消除单人游戏中区块更新造成的卡顿尖峰。");
+        performanceCount += addBool(performance, "快速渲染", "ofFastRender",
+                "使用优化后的渲染算法，大幅提升帧率。完全生效需要重启游戏。");
+        performanceCount += addBool(performance, "懒加载区块", "ofLazyChunkLoading",
+                "更均匀地加载区块，让单人游戏的世界加载更流畅。");
+        performanceCount += addBool(performance, "快速运算", "ofFastMath",
+                "使用更快的三角函数实现。效果因硬件而异，较弱显卡可能提升 FPS。");
+        performanceCount += addSlider(performance, "区块更新", "ofChunkUpdates",
+                "每帧允许的区块几何重建次数。数值越高世界加载越快，但可能降低 FPS。");
 
         if (performanceCount > 0) {
             groups.add(performance.build());
@@ -140,29 +140,29 @@ public class SodiumOptiFineCompat {
 
         OptionGroup.Builder details = OptionGroup.createBuilder();
         int detailsCount = 0;
-        detailsCount += addBool(details, "Sky", "ofSky",
-                "Toggles the rendering of the sky. Turning this off can improve performance.", OptionFlag.REQUIRES_RENDERER_RELOAD);
-        detailsCount += addBool(details, "Sun & Moon", "ofSunMoon",
-                "Toggles the rendering of the sun and moon.", OptionFlag.REQUIRES_RENDERER_RELOAD);
-        detailsCount += addBool(details, "Stars", "ofStars",
-                "Toggles the rendering of stars at night.", OptionFlag.REQUIRES_RENDERER_RELOAD);
-        detailsCount += addBool(details, "Weather", "ofWeather",
-                "Toggles rain and snow effects. Only works in local worlds.");
-        detailsCount += addBool(details, "Void Fog", "ofVoidFog",
-                "Toggles the fog that appears near the void at low heights.", OptionFlag.REQUIRES_RENDERER_RELOAD);
-        detailsCount += addCycle(details, "Vignette", "ofVignette", TriState.class,
-                new String[] {"Default", "Fast", "Fancy"},
-                "Controls the subtle darkening effect around the screen edges.");
-        detailsCount += addCycle(details, "Rain & Snow", "ofRain", QuadState.class,
-                new String[] {"Default", "Fast", "Fastest", "Off"},
-                "Controls the visual quality of rain and snow.");
-        detailsCount += addBool(details, "Clear Water", "ofClearWater",
-                "Makes water transparent with better underwater visibility.", OptionFlag.REQUIRES_RENDERER_RELOAD);
-        detailsCount += addBool(details, "Swamp Colors", "ofSwampColors",
-                "Toggles the darker plant and water colors in swamps.", OptionFlag.REQUIRES_RENDERER_RELOAD);
-        detailsCount += addCycle(details, "Dropped Items", "ofDroppedItems", TriState.class,
-                new String[] {"Default", "Fast", "Fancy"},
-                "Controls how dropped items are rendered.");
+        detailsCount += addBool(details, "天空", "ofSky",
+                "切换天空的渲染。关闭可以提升性能。", OptionFlag.REQUIRES_RENDERER_RELOAD);
+        detailsCount += addBool(details, "太阳与月亮", "ofSunMoon",
+                "切换太阳和月亮的渲染。", OptionFlag.REQUIRES_RENDERER_RELOAD);
+        detailsCount += addBool(details, "星星", "ofStars",
+                "切换夜晚星星的渲染。", OptionFlag.REQUIRES_RENDERER_RELOAD);
+        detailsCount += addBool(details, "天气", "ofWeather",
+                "切换雨雪效果。仅对本地世界生效。");
+        detailsCount += addBool(details, "虚空迷雾", "ofVoidFog",
+                "切换低高度（靠近虚空）处的迷雾。", OptionFlag.REQUIRES_RENDERER_RELOAD);
+        detailsCount += addCycle(details, "晕影", "ofVignette", TriState.class,
+                new String[] {"默认", "快速", "高品质"},
+                "控制屏幕边缘的轻微变暗效果。");
+        detailsCount += addCycle(details, "雨雪", "ofRain", QuadState.class,
+                new String[] {"默认", "快速", "极速", "关闭"},
+                "控制雨雪的视觉质量。");
+        detailsCount += addBool(details, "清澈的水", "ofClearWater",
+                "让水变得透明，提升水下可见度。", OptionFlag.REQUIRES_RENDERER_RELOAD);
+        detailsCount += addBool(details, "沼泽颜色", "ofSwampColors",
+                "切换沼泽群系中植物与水体的特殊颜色。", OptionFlag.REQUIRES_RENDERER_RELOAD);
+        detailsCount += addCycle(details, "掉落物", "ofDroppedItems", TriState.class,
+                new String[] {"默认", "快速", "高品质"},
+                "控制掉落物品的渲染方式。");
 
         if (detailsCount > 0) {
             groups.add(details.build());
@@ -226,7 +226,7 @@ public class SodiumOptiFineCompat {
         group.add(OptionImpl.createBuilder(int.class, vanillaOpts)
                 .setName(name)
                 .setTooltip(tooltip)
-                .setControl(option -> new SliderControl(option, 1, 5, 1, ControlValueFormatter.quantity("updates")))
+                .setControl(option -> new SliderControl(option, 1, 5, 1, ControlValueFormatter.quantity("次")))
                 .setBinding((opts, value) -> setFieldValue(opts, field, value),
                         opts -> ((Number) getFieldValue(opts, field)).intValue())
                 .build());

@@ -19,7 +19,7 @@ import java.util.concurrent.ThreadLocalRandom
  */
 object AutoLFix : Module("AutoLFix", Category.COMBAT) {
 
-    private val mode by choices("Mode", arrayOf("Southside", "Xinxin", "Custom"), "Xinxin")
+    private val mode by choices("Mode", arrayOf("Southside", "Xinxin", "Rise", "Custom"), "Xinxin")
     private val fake by boolean("fake", true)
     private val customPrefix by boolean("TargetPrefix", true) { mode == "Custom" }
     private val customMessage by text("CustomMessage", "你已被 AirPlus 客户端击毙") { mode == "Custom" }
@@ -35,6 +35,28 @@ object AutoLFix : Module("AutoLFix", Category.COMBAT) {
         "全网首发空岛破甲 我们也有布吉岛客户端呢 客户端最稳定且最暴力 免费获取点击右边代码",
         "全网首发起床跑吃 我们也有布吉岛客户端呢 客户端最稳定且最暴力 免费获取点击右边代码",
         "全网首发无需盒 我们也有布吉岛客户端呢 免费获取点击右边代码",
+    )
+
+    // Rise 客户端 Insults 嘲讽文本（%s 会被替换为被击杀玩家名）
+    private val riseInsults = arrayOf(
+        "Wow! My combo is Rise'n!",
+        "Why would someone as bad as you %s not use Rise 6.0?",
+        "Here's your ticket to spectator from Rise 6.0, %s!",
+        "I see you're a pay to lose player, %s, huh?",
+        "Do you need some PvP advice, %s? Well Rise 6.0 is all you need.",
+        "Hey %s! Wise up, don't waste another day without Rise.",
+        "%s, you didn't even stand a chance against Rise.",
+        "%s, we regret to inform you that your free trial of life has unfortunately expired.",
+        "RISE against other cheaters by getting Rise, %s!",
+        "You can pay for that loss by getting Rise, %s.",
+        "%s, remember to use hand sanitizer to get rid of bacteria like you!",
+        "Hey %s, try not to drown in your own salt.",
+        "Having problems with forgetting to left click, %s? Rise 6.0 can fix it!",
+        "Come on %s, is that all you have against Rise 6.0?",
+        "Rise up today by getting Rise 6.0, %s!",
+        "Get Rise, %s, you need it.",
+        "how about you rise up to heaven by ending it, %s",
+        "Did you know Watchdog has banned 6346 players in the last 7 days, %s."
     )
 
     private var target: net.minecraft.entity.Entity? = null
@@ -74,6 +96,7 @@ object AutoLFix : Module("AutoLFix", Category.COMBAT) {
             "${prefix}${victimName}你已被 southside 客户端击毙"
         }
         "Xinxin" -> victimName + xinxinMessages[ThreadLocalRandom.current().nextInt(xinxinMessages.size)]
+        "Rise" -> String.format(riseInsults[ThreadLocalRandom.current().nextInt(riseInsults.size)], victimName)
         else -> (if (customPrefix) victimName else "") + customMessage
     }
 

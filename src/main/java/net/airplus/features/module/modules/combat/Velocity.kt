@@ -11,6 +11,7 @@ import net.airplus.features.module.Category
 import net.airplus.features.module.Module
 import net.airplus.features.module.modules.exploit.Disabler
 import net.airplus.features.module.modules.movement.Speed
+import net.airplus.features.module.modules.world.scaffolds.Scaffold
 import net.airplus.utils.attack.EntityUtils.isLookingOnEntities
 import net.airplus.utils.attack.EntityUtils.isSelected
 import net.airplus.utils.client.*
@@ -25,6 +26,7 @@ import net.airplus.utils.rotation.RotationUtils.currentRotation
 import net.airplus.utils.timing.MSTimer
 import net.minecraft.block.BlockAir
 import net.minecraft.entity.Entity
+import net.minecraft.entity.EntityLivingBase
 import net.minecraft.network.Packet
 import net.minecraft.network.play.client.*
 import net.minecraft.network.play.client.C07PacketPlayerDigging.Action.STOP_DESTROY_BLOCK
@@ -34,6 +36,7 @@ import net.minecraft.network.play.server.S27PacketExplosion
 import net.minecraft.network.play.server.S32PacketConfirmTransaction
 import net.minecraft.util.AxisAlignedBB
 import net.minecraft.util.BlockPos
+import net.minecraft.util.EnumChatFormatting
 import net.minecraft.util.EnumFacing.DOWN
 import kotlin.collections.component1
 import kotlin.collections.component2
@@ -53,7 +56,7 @@ object Velocity : Module("Velocity", Category.COMBAT) {
             "Reverse", "SmoothReverse", "Jump", "Glitch", "Legit",
             "GhostBlock", "Vulcan", "S32Packet", "MatrixReduce",
             "IntaveReduce", "Delay", "GrimC03", "Hypixel", "HypixelAir",
-            "Click", "BlocksMC"
+            "Click", "BlocksMC", "OldGrim"
         ), "Simple"
     )
 
@@ -164,6 +167,10 @@ object Velocity : Module("Velocity", Category.COMBAT) {
 
     // Pause On Explosion
     private var pauseTicks = 0
+
+    // OldGrim
+    private const val WARNING_DISTANCE = 2.95
+    private var lastAttackerCheckTime = 0L
 
     override val tag
         get() = if (mode == "Simple" || mode == "Legit") {
@@ -578,6 +585,29 @@ object Velocity : Module("Velocity", Category.COMBAT) {
                     hasReceivedVelocity = true
                     event.cancelEvent()
                 }
+
+                // Ported from SilenceFix Velocity (Grim mode)
+                "oldgrim" -> {
+                    if (packet is S12PacketEntityVelocity && packet.entityID == thePlayer.entityId) {
+                        if (Scaffold.handleEvents()) return@handler
+
+                        val attacker = findRealAttacker()
+                        if (attacker != null) {
+                            showAttackDistance(attacker)
+                        }
+
+                        var target = mc.objectMouseOver?.entityHit as? EntityLivingBase
+
+                        if (KillAura.target != null) {
+                            target = KillAura.target
+                        }
+
+                        if (target != null) {
+                            handleOldGrimVelocity(packet, target)
+                            event.cancelEvent()
+                        }
+                    }
+                }
             }
         }
 
@@ -834,6 +864,65 @@ object Velocity : Module("Velocity", Category.COMBAT) {
                     packet.field_149153_g *= maxYMotion / distY
                 }
             }
+        }
+    }
+
+    /**
+     * OldGrim（Ported from SilenceFix Velocity Grim mode）：
+     * 收到 S12 后取消原始速度包，改用攻击目标 + 手动设置速度的方式补偿击退。
+     * 与原版差异：原 SilenceFix 使用 AttackOrder.sendFixedAttack（ViaMCP 修复后的攻击顺序），
+     * 这里用 C02 攻击包 + C0A 挥动手臂包代替。
+     */
+    private fun findRealAttacker(): EntityLivingBase? {
+        if (System.currentTimeMillis() - lastAttackerCheckTime < 100) return null
+        lastAttackerCheckTime = System.currentTimeMillis()
+
+        val player = mc.thePlayer ?: return null
+        val world = mc.theWorld ?: return null
+
+        return world.getEntitiesWithinAABB(EntityLivingBase::class.java, player.entityBoundingBox.expand(5.0, 3.0, 5.0)) { entity ->
+            entity != null && entity !== player && entity.getDistanceToEntity(player) <= 3.0 && entity.canEntityBeSeen(player)
+        }.minByOrNull { it.getDistanceToEntity(player) }
+    }
+
+    private fun showAttackDistance(attacker: EntityLivingBase) {
+        val player = mc.thePlayer ?: return
+        val playerEyes = player.getPositionEyes(1.0F)
+        val attackerEyes = attacker.getPositionEyes(1.0F)
+        val distance = playerEyes.distanceTo(attackerEyes)
+
+        if (distance > WARNING_DISTANCE) {
+            val message = "${EnumChatFormatting.GRAY}[对方封号距离] ${EnumChatFormatting.RED}" +
+                String.format("%.2f", distance) + "m" +
+                "${EnumChatFormatting.GRAY} (安全: ${WARNING_DISTANCE}m)"
+            chat(message)
+        }
+    }
+
+    private fun handleOldGrimVelocity(packet: S12PacketEntityVelocity, target: EntityLivingBase) {
+        val player = mc.thePlayer ?: return
+
+        val needToggleSprint = !player.serverSprintState
+        if (needToggleSprint) {
+            sendPacket(C0BPacketEntityAction(player, C0BPacketEntityAction.Action.START_SPRINTING), false)
+        }
+
+        // 模拟 AttackOrder.sendFixedAttack：按固定顺序发送攻击与挥动手臂包
+        repeat(6) {
+            sendPacket(C02PacketUseEntity(target, C02PacketUseEntity.Action.ATTACK), false)
+            sendPacket(C0APacketAnimation(), false)
+        }
+
+        player.isSprinting = true
+
+        val motionX = packet.realMotionX * 0.07765
+        val motionY = packet.realMotionY
+        val motionZ = packet.realMotionZ * 0.07765
+
+        player.setVelocity(motionX, motionY, motionZ)
+
+        if (needToggleSprint) {
+            sendPacket(C0BPacketEntityAction(player, C0BPacketEntityAction.Action.STOP_SPRINTING), false)
         }
     }
 

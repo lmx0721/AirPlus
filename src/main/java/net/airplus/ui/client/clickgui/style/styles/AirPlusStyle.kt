@@ -857,7 +857,7 @@ object AirPlusStyle : Style() {
 
                         else -> {
                             val startText = value.name + "§f: "
-                            var valueText = "${value.get()}"
+                            var valueText = value.toText()
 
                             val combinedWidth = fontSemibold35.getStringWidth(startText + valueText)
 

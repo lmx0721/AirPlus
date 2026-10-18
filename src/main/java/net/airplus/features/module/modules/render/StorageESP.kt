@@ -242,7 +242,8 @@ object StorageESP : Module("StorageESP", Category.RENDER) {
         }
     }
 
-    val onRender2D = handler<Render2DEvent> { event ->
+    // 优先级低于 0：glow 全屏合成 pass 先于 HUD 绘制，避免辉光盖在 HUD 界面上
+    val onRender2D = handler<Render2DEvent>(priority = (Byte.MIN_VALUE + 1).toByte()) { event ->
         if (mc.theWorld == null || mode != "Glow")
             return@handler
 

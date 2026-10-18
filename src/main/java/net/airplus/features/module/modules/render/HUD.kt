@@ -11,6 +11,7 @@ import net.airplus.event.*
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
 import net.airplus.ui.client.hud.designer.GuiHudDesigner
+import net.airplus.ui.font.Fonts
 import net.airplus.ui.client.hud.element.Element.Companion.MAX_GRADIENT_COLORS
 import net.airplus.utils.render.ColorSettingsFloat
 import net.airplus.utils.render.ColorSettingsInteger
@@ -52,6 +53,9 @@ object HUD : Module("HUD", Category.RENDER, gameDetecting = false, defaultState 
     private val blur by boolean("Blur", false)
     private val fontChat by boolean("FontChat", false)
 
+    // FontChat 自定义字体：开启 FontChat 后聊天使用的字体（可循环/点选）
+    val chatFont by font("Chat-Font", Fonts.fontSemibold40) { fontChat }
+
     // 聊天栏自定义
     val chatCustom by boolean("Chat-Custom", true)
     val chatAnimation by boolean("Chat-Animation", true) { chatCustom }
@@ -63,6 +67,10 @@ object HUD : Module("HUD", Category.RENDER, gameDetecting = false, defaultState 
     val chatRoundedRadius by float("Chat-Rounded-Radius", 3F, 0F..5F) { chatCustom && chatBackground }
     val chatCustomWidth by boolean("Chat-Custom-Width", false) { chatCustom }
     val chatWidth by float("Chat-Width", 120F, 40F..1000F) { chatCustom && chatCustomWidth }
+    // 聊天栏位置偏移（相对原版聊天原点）与最大高度（背景/文本向上最多延伸 Max px，超出裁剪）
+    val chatPosX by float("Chat-Pos-X", 0F, -1000F..1000F) { chatCustom }
+    val chatPosY by float("Chat-Pos-Y", 0F, -1000F..1000F) { chatCustom }
+    val chatHeightMax by float("Chat-Height-Max", 110F, 9F..400F) { chatCustom }
     val chatBackgroundBlur by boolean("Chat-Background-Blur", true) { chatCustom && chatBackground }
     val chatBlurStrength by float("Chat-Blur-Strength", 8F, 1F..30F) { chatCustom && chatBackground && chatBackgroundBlur }
     val chatBlurMode by choices("Chat-Blur-Mode", HudBlur.MODES, "InternalBlur") { chatCustom && chatBackground && chatBackgroundBlur }

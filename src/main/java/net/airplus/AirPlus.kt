@@ -5,7 +5,6 @@
  */
 package net.airplus
 
-import com.formdev.flatlaf.themes.FlatMacLightLaf
 import kotlinx.coroutines.launch
 import net.airplus.api.ClientUpdate
 import net.airplus.api.ClientUpdate.gitInfo
@@ -32,7 +31,6 @@ import net.airplus.script.ScriptManager
 import net.airplus.script.ScriptManager.enableScripts
 import net.airplus.script.ScriptManager.loadScripts
 import net.airplus.script.remapper.Remapper
-import net.airplus.script.remapper.Remapper.loadSrg
 import net.airplus.tabs.BlocksTab
 import net.airplus.tabs.ExploitsTab
 import net.airplus.tabs.HeadsTab
@@ -60,10 +58,10 @@ import net.airplus.utils.rotation.RotationUtils
 import net.airplus.utils.timing.TickedActions
 import net.airplus.utils.timing.WaitTickUtils
 import net.airplus.viaversion.viamcp.ViaMCP
+import java.util.Properties
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Future
-import javax.swing.UIManager
-import java.util.Properties
+import kotlin.system.measureTimeMillis
 
 object AirPlus {
 
@@ -119,13 +117,13 @@ object AirPlus {
 
     /**
      * Start IO tasks
+     *
+     * 只有本地快速任务（语言文件）在 [future] 中阻塞等待；
+     * 网络任务（更新检查 / alt 生成器）完全异步，不阻塞 MC 启动主线程。
      */
     fun preload(): Future<*> {
 
         net.airplus.utils.client.javaVersion
-
-        // Change theme of Swing
-        UIManager.setLookAndFeel(FlatMacLightLaf())
 
         val future = CompletableFuture<Unit>()
 
@@ -133,23 +131,28 @@ object AirPlus {
             try {
                 LOGGER.info("Starting preload tasks of $CLIENT_NAME")
 
-                // Check update
-                ClientUpdate.reloadNewestVersion()
-
-                // Load languages
+                // Load languages（本地资源，启动早期 UI 可能需要）
                 loadLanguages()
-
-                // Load alt generators
-                loadActiveGenerators()
-
-                // Load SRG file
-                loadSrg()
 
                 LOGGER.info("Preload tasks of $CLIENT_NAME are completed!")
 
                 future.complete(Unit)
             } catch (e: Exception) {
                 future.completeExceptionally(e)
+            }
+        }
+
+        // 更新检查：纯网络任务，失败不影响启动（ClientUpdate 内部已兜底）
+        SharedScopes.IO.launch {
+            ClientUpdate.reloadNewestVersion()
+        }
+
+        // Alt 生成器列表：纯网络任务，alt 管理器打开时才真正需要
+        SharedScopes.IO.launch {
+            runCatching {
+                loadActiveGenerators()
+            }.onFailure {
+                LOGGER.error("Failed to load enabled generators.", it)
             }
         }
 
@@ -206,21 +209,24 @@ object AirPlus {
             registerCommands()
 
             // Setup module manager and register modules
-            registerModules()
+            val moduleTime = measureTimeMillis { registerModules() }
+            LOGGER.info("Registered modules in ${moduleTime}ms")
 
-            runCatching {
-                // Remapper
-                loadSrg()
+            // Scripts（含 SRG 映射）：仅在存在脚本时按需加载，无脚本则完全不下载/解析映射
+            if (ScriptManager.availableScriptFiles.isNotEmpty()) {
+                runCatching {
+                    Remapper.loadSrg()
 
-                if (!Remapper.mappingsLoaded) {
-                    error("Failed to load SRG mappings.")
+                    if (!Remapper.mappingsLoaded) {
+                        error("Failed to load SRG mappings.")
+                    }
+
+                    // ScriptManager
+                    loadScripts()
+                    enableScripts()
+                }.onFailure {
+                    LOGGER.error("Failed to load scripts.", it)
                 }
-
-                // ScriptManager
-                loadScripts()
-                enableScripts()
-            }.onFailure {
-                LOGGER.error("Failed to load scripts.", it)
             }
 
             // Load configs
@@ -267,9 +273,6 @@ object AirPlus {
             CapeService.refreshCapeCarriers {
                 LOGGER.info("Successfully loaded ${it.size} cape carriers.")
             }
-
-            // Load background
-            FileManager.loadBackground()
         } catch (e: Exception) {
             LOGGER.error("Failed to start client: ${e.message}")
             e.showErrorPopup()

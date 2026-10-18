@@ -92,32 +92,35 @@ object ShadowUtils : MinecraftInstance {
         GlStateManager.colorMask(true, true, true, true)
 
         Stencil.write(false)
-        cutMethod()
-        Stencil.erase(false)
+        try {
+            cutMethod()
+            Stencil.erase(false)
 
-        GlStateManager.enableBlend()
-        GlStateManager.blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        GlStateManager.color(1F, 1F, 1F, 1F)
+            GlStateManager.enableBlend()
+            GlStateManager.blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            GlStateManager.color(1F, 1F, 1F, 1F)
 
-        resultBuffer!!.bindFramebufferTexture()
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+            resultBuffer!!.bindFramebufferTexture()
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
 
-        worldrenderer.begin(7, DefaultVertexFormats.POSITION_TEX_COLOR)
-        worldrenderer.pos(0.0, height.toDouble(), 0.0).tex(0.0, 0.0).color(255, 255, 255, 255).endVertex()
-        worldrenderer.pos(width.toDouble(), height.toDouble(), 0.0).tex(fr_width, 0.0).color(255, 255, 255, 255).endVertex()
-        worldrenderer.pos(width.toDouble(), 0.0, 0.0).tex(fr_width, fr_height).color(255, 255, 255, 255).endVertex()
-        worldrenderer.pos(0.0, 0.0, 0.0).tex(0.0, fr_height).color(255, 255, 255, 255).endVertex()
+            worldrenderer.begin(7, DefaultVertexFormats.POSITION_TEX_COLOR)
+            worldrenderer.pos(0.0, height.toDouble(), 0.0).tex(0.0, 0.0).color(255, 255, 255, 255).endVertex()
+            worldrenderer.pos(width.toDouble(), height.toDouble(), 0.0).tex(fr_width, 0.0).color(255, 255, 255, 255).endVertex()
+            worldrenderer.pos(width.toDouble(), 0.0, 0.0).tex(fr_width, fr_height).color(255, 255, 255, 255).endVertex()
+            worldrenderer.pos(0.0, 0.0, 0.0).tex(0.0, fr_height).color(255, 255, 255, 255).endVertex()
 
-        tessellator.draw()
-        resultBuffer!!.unbindFramebufferTexture()
+            tessellator.draw()
+            resultBuffer!!.unbindFramebufferTexture()
 
-        GlStateManager.disableBlend()
-        GlStateManager.enableAlpha()
-        GlStateManager.enableDepth()
-        GlStateManager.depthMask(true)
-
-        Stencil.dispose()
+            GlStateManager.disableBlend()
+            GlStateManager.enableAlpha()
+            GlStateManager.enableDepth()
+            GlStateManager.depthMask(true)
+        } finally {
+            // 异常路径也必须 dispose，否则 stencil/colorMask 残留会导致后续渲染错乱
+            Stencil.dispose()
+        }
         glPopMatrix()
 
         GlStateManager.resetColor()

@@ -5,6 +5,7 @@
  */
 package net.airplus.ui.client.hud.element.elements
 
+import net.airplus.event.AttackEvent
 import net.airplus.event.Listenable
 import net.airplus.event.PacketEvent
 import net.airplus.event.handler
@@ -66,6 +67,9 @@ class KillFeed(
     // 死亡状态包挂起：victim -> 收包时间
     private val pendingDeaths = linkedMapOf<String, Long>()
 
+    // 攻击记录：victim -> 最后一次被我方攻击的时间（死亡包先查这里，命中则立即播报击杀）
+    private val attackRecords = linkedMapOf<String, Long>()
+
     // 聊天源最近播报：victim -> 时间（用于死亡包晚到时去重）
     private val recentChatDeaths = hashMapOf<String, Long>()
 
@@ -113,14 +117,33 @@ class KillFeed(
             is S01PacketJoinGame -> {
                 entries.clear()
                 pendingDeaths.clear()
+                attackRecords.clear()
                 recentChatDeaths.clear()
+            }
+        }
+    }
+
+    /**
+     * 玩家受击记录：本地玩家攻击了谁（AttackEvent 只在本客户端发起攻击时触发，
+     * 因此攻击者固定是本地玩家）。目标随后死亡时优先按 "我 击杀 目标" 播报。
+     */
+    @Suppress("unused")
+    private val onAttack = handler<AttackEvent> { event ->
+        val self = mc.thePlayer ?: return@handler
+        val target = event.targetEntity as? EntityPlayer ?: return@handler
+        if (target === self) return@handler
+        val name = cleanTag(EnumChatFormatting.getTextWithoutFormattingCodes(target.name) ?: target.name)
+        if (name.isNotBlank()) {
+            attackRecords[name] = System.currentTimeMillis()
+            if (attackRecords.size > 64) {
+                attackRecords.entries.removeAll { System.currentTimeMillis() - it.value > ATTACK_KILL_WINDOW }
             }
         }
     }
 
     // ---------------- 数据源处理 ----------------
 
-    /** entity_event 死亡包：先挂起，等待聊天佐证 */
+    /** entity_event 死亡包：先查攻击记录（命中则立即播报击杀），否则挂起等待聊天佐证 */
     private fun onDeathPacket(victim: String) {
         if (victim.isBlank()) return
         val now = System.currentTimeMillis()
@@ -129,6 +152,14 @@ class KillFeed(
         recentChatDeaths[victim]?.let { if (now - it <= MERGE_WINDOW) return }
         // 重复的死亡状态包 → 跳过
         pendingDeaths[victim]?.let { if (now - it <= MERGE_WINDOW) return }
+
+        // 不久前攻击过该玩家 → 无需等聊天佐证，立即播报 "我 击杀 目标"
+        val attackedAt = attackRecords[victim]
+        if (attackedAt != null && now - attackedAt <= ATTACK_KILL_WINDOW) {
+            attackRecords.remove(victim)
+            addEntry(mc.thePlayer?.name ?: "", victim, now)
+            return
+        }
 
         pendingDeaths[victim] = now
     }
@@ -148,7 +179,7 @@ class KillFeed(
         addEntry(killer, victim, now)
     }
 
-    /** 挂起超时的死亡包：仍无聊天佐证 → 播报无凶手版本 */
+    /** 挂起超时的死亡包：仍无聊天佐证且未记录到攻击者 → 播报死亡 */
     private fun resolvePending() {
         val now = System.currentTimeMillis()
 
@@ -159,6 +190,7 @@ class KillFeed(
 
         // 清理过期缓存
         recentChatDeaths.entries.removeAll { now - it.value > MERGE_WINDOW * 2 }
+        attackRecords.entries.removeAll { now - it.value > ATTACK_KILL_WINDOW * 2 }
     }
 
     /** 合并去重后添加播报条目 */
@@ -296,7 +328,7 @@ class KillFeed(
             } else {
                 val victimColor = if (entry.victim == selfName) accent else normalText
                 x = drawText(entry.victim, x, textY, victimColor.withAlpha(a), f) + 4F
-                drawText(if (zh) "阵亡" else "died", x, textY, accent.withAlpha(a), f)
+                x = drawText(if (zh) "死亡" else "died", x, textY, accent.withAlpha(a), f)
             }
         }
 
@@ -316,7 +348,7 @@ class KillFeed(
         if (entry.killer.isNotEmpty()) {
             w += f.getStringWidth(entry.killer) + 4F + f.getStringWidth(if (zh) "击杀" else "killed") + 4F
         } else {
-            w += f.getStringWidth(entry.victim) + 4F + f.getStringWidth(if (zh) "阵亡" else "died")
+            w += f.getStringWidth(entry.victim) + 4F + f.getStringWidth(if (zh) "死亡" else "died")
         }
         w += f.getStringWidth(entry.victim)
         return w
@@ -339,6 +371,7 @@ class KillFeed(
         private const val MERGE_WINDOW = 2000L      // 死亡包 ↔ 聊天包合并窗口
         private const val DUPLICATE_CHAT = 1200L    // 重复聊天广播去重窗口
         private const val PENDING_DELAY = 600L      // 死亡包等待聊天佐证的挂起时长
+        private const val ATTACK_KILL_WINDOW = 8000L // 攻击记录视为击杀依据的有效窗口
 
         // 服务器前缀标签（可叠加）：[VIP] [Lvl 12] xxx ...
         private val PREFIX_TAGS = Regex("^(\\[[^\\]]{1,24}]\\s*)+")

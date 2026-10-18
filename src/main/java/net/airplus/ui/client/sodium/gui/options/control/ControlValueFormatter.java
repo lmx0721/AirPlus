@@ -2,23 +2,23 @@ package net.airplus.ui.client.sodium.gui.options.control;
 
 /**
  * Port of me.jellysquid.mods.sodium.client.gui.options.control.ControlValueFormatter (Sodium 0.4.1).
- * TranslatableText replaced with hardcoded strings (English).
+ * TranslatableText replaced with hardcoded strings (Chinese).
  */
 public interface ControlValueFormatter {
     static ControlValueFormatter guiScale() {
-        return (v) -> (v == 0) ? "Auto" : v + "x";
+        return (v) -> (v == 0) ? "自动" : v + "x";
     }
 
     static ControlValueFormatter fpsLimit() {
-        return (v) -> (v == 260) ? "Unlimited" : v + " FPS";
+        return (v) -> (v == 260) ? "无限" : v + " FPS";
     }
 
     static ControlValueFormatter brightness() {
         return (v) -> {
             if (v == 0) {
-                return "Dark";
+                return "昏暗";
             } else if (v == 100) {
-                return "Bright";
+                return "明亮";
             } else {
                 return v + "%";
             }

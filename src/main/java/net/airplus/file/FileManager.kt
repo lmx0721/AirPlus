@@ -194,4 +194,18 @@ object FileManager : MinecraftInstance, Iterable<FileConfig> by FILE_CONFIGS {
             null
         }
     }
+
+    @Volatile
+    private var backgroundLoaded = false
+
+    /**
+     * 延迟加载自定义背景：Background.fromFile 会做 GL 贴图上传，必须在渲染线程调用。
+     * 改为主菜单首次绘制时（drawFluxBackground）触发，而不是客户端启动时，缩短启动耗时。
+     * 只加载一次；未选择自定义背景时开销为一次 existingBackgroundFile() 目录扫描。
+     */
+    fun ensureBackgroundLoaded() {
+        if (backgroundLoaded) return
+        backgroundLoaded = true
+        loadBackground()
+    }
 }

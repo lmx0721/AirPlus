@@ -15,6 +15,7 @@ import net.airplus.features.module.modules.exploit.*
 import net.airplus.features.module.modules.misc.*
 import net.airplus.features.module.modules.movement.*
 import net.airplus.features.module.modules.music.MusicPlayer
+import net.airplus.features.module.modules.music.NetEaseMusic
 import net.airplus.features.module.modules.player.*
 import net.airplus.features.module.modules.render.*
 import net.airplus.features.module.modules.world.*
@@ -82,7 +83,7 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             PointerESP,
             ProjectileAimbot,
             Breadcrumbs,
-            CameraClip,
+            Camera,
             CameraView,
             Cape,
             Chams,
@@ -98,6 +99,7 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             Criticals,
             Damage,
             DamageParticle,
+            DeltaForceStyle,
             Derp,
             ESP,
             Eagle,
@@ -113,6 +115,7 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             Fly,
             Fly2,
             FollowTargetHud,
+            FollowThud,
             ForceUnicodeChat,
             FreeCam,
             FPSBoost,
@@ -135,6 +138,7 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             InventoryMove,
             ItemESP,
             ItemPhysics,
+            Jelly,
             JumpCircle,
             KeepAlive,
             KeepContainer,
@@ -142,13 +146,13 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             KeyPearl,
             Kick,
             KillAura,
+            KillEffect,
             KillEffectV2,
             LiquidWalk,
             LongJump,
             MidClick,
             MoBendsMod,
             MoreCarry,
-            MoreDamage,
             MotionBlur,
             MultiActions,
             NameProtect,
@@ -190,7 +194,6 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             Sound,
             Spammer,
             Speed,
-            Speed2,
             Sprint,
             StaffDetector,
             Step,
@@ -213,7 +216,6 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             TrueSight,
             VehicleOneHit,
             Velocity,
-            Velocity2,
             WallClimb,
             XRay,
             Zoot,
@@ -223,7 +225,8 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             TickBase,
             FreeLook,
             SilentHotbarModule,
-            MusicPlayer
+            MusicPlayer,
+            NetEaseMusic
         )
 
         registerModules(modules = modules)

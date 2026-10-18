@@ -20,6 +20,7 @@ import net.airplus.viaversion.vialoadingbase.ViaLoadingBase;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.renderer.EntityRenderer;
+import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
@@ -49,6 +50,14 @@ public abstract class MixinEntityRenderer {
 
     @Shadow
     private Minecraft mc;
+
+    // Camera: vanilla keeps both at 4.0F (updateRenderer copies distance into temp each frame),
+    // orientCamera interpolates d3 = temp + (distance - temp) * partialTicks
+    @Shadow
+    private float thirdPersonDistance;
+
+    @Shadow
+    private float thirdPersonDistanceTemp;
 
     // @Final marks the target field as final; the Java declaration must not be final, otherwise
     // javac rejects the mixin class (blank final field in the implicit default constructor).
@@ -98,7 +107,9 @@ public abstract class MixinEntityRenderer {
 
     @ModifyConstant(method = "orientCamera", constant = @Constant(intValue = 8))
     private int injectCameraClip(int eight) {
-        return CameraClip.INSTANCE.handleEvents() ? 0 : eight;
+        // 8 is the bound of vanilla's 8-direction third-person camera collision raytrace
+        // loop; 0 skips it entirely (no camera collision)
+        return CameraClip.INSTANCE.handleEvents() || Camera.INSTANCE.handleEvents() ? 0 : eight;
     }
 
     @Inject(at = @At("HEAD"), method = "updateCameraAndRender")
@@ -109,6 +120,73 @@ public abstract class MixinEntityRenderer {
     @Inject(method = "orientCamera", at = @At(value = "HEAD"))
     private void injectFreeLook(float p_orientCamera_1_, CallbackInfo ci) {
         FreeLook.INSTANCE.useModifiedRotation();
+    }
+
+    /**
+     * Camera: replace the vanilla third-person camera distance (4.0F, clamped by the
+     * collision raytrace loop skipped in {@link #injectCameraClip}) with the fixed
+     * Distance value, the equivalent of SetsunaClient's Camera#getMaxZoom hook.
+     */
+    @Inject(method = "orientCamera", at = @At("HEAD"))
+    private void injectCameraDistance(float p_orientCamera_1_, CallbackInfo ci) {
+        final Camera camera = Camera.INSTANCE;
+
+        if (camera.handleEvents() && !FreeCam.INSTANCE.handleEvents() && this.mc.gameSettings.thirdPersonView != 0) {
+            this.thirdPersonDistance = camera.getFixedDistance();
+            this.thirdPersonDistanceTemp = this.thirdPersonDistance;
+        } else {
+            this.thirdPersonDistance = 4.0F;
+            this.thirdPersonDistanceTemp = 4.0F;
+        }
+    }
+
+    /**
+     * Camera: "Action" camera smoothing, the equivalent of SetsunaClient's
+     * Camera#alignWithEntity setPosition hook. Appending a world-space translate at TAIL
+     * post-multiplies the camera matrix, moving the camera from the real anchor (the
+     * interpolated eye position) to the smoothed one returned by
+     * {@link Camera#updateActionCamera}. Non-back third-person views reset the state.
+     */
+    @Inject(method = "orientCamera", at = @At("TAIL"))
+    private void injectCameraAction(float p_orientCamera_1_, CallbackInfo ci) {
+        final Camera camera = Camera.INSTANCE;
+
+        // Only the third-person back view (thirdPersonView == 1) is smoothed
+        if (!camera.handleEvents() || this.mc.gameSettings.thirdPersonView != 1) {
+            camera.resetCameraPos();
+            return;
+        }
+
+        // FreeCam manipulates the camera itself and takes priority
+        if (FreeCam.INSTANCE.handleEvents()) {
+            camera.resetCameraPos();
+            return;
+        }
+
+        if (!camera.isActionEnabled()) {
+            return;
+        }
+
+        final Entity entity = this.mc.getRenderViewEntity();
+        if (entity == null) {
+            camera.resetCameraPos();
+            return;
+        }
+
+        // The camera anchor vanilla uses in orientCamera: the interpolated eye position
+        final Vec3 targetPos = new Vec3(
+                entity.prevPosX + (entity.posX - entity.prevPosX) * (double) p_orientCamera_1_,
+                entity.prevPosY + (entity.posY - entity.prevPosY) * (double) p_orientCamera_1_ + (double) entity.getEyeHeight(),
+                entity.prevPosZ + (entity.posZ - entity.prevPosZ) * (double) p_orientCamera_1_);
+
+        camera.updateActionCamera(targetPos);
+
+        final Vec3 cameraPos = camera.getCameraPos();
+        if (cameraPos != null) {
+            GlStateManager.translate(targetPos.xCoord - cameraPos.xCoord,
+                    targetPos.yCoord - cameraPos.yCoord,
+                    targetPos.zCoord - cameraPos.zCoord);
+        }
     }
 
     /**

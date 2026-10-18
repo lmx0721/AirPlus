@@ -35,21 +35,20 @@ class OrbitMainMenu : AbstractScreen() {
 
     private val timer = MSTimer()
 
-    // glyph：Flux Icon 字形（K=单人 L=多人 M=Alt N=设置 O=退出）；texture：Mods 项使用内置 folder.png 贴图
+    // 统一使用内置贴图图标，保证所有图标视觉尺寸一致（此前字形图标与 folder 贴图混用时大小不一）
     private data class Entry(
-        val glyph: String,
         val label: String,
         val action: () -> Unit,
-        val texture: String? = null
+        val texture: String
     )
 
     private val entries = listOf(
-        Entry("K", "Singleplayer", { mc.displayGuiScreen(GuiSelectWorld(this)) }),
-        Entry("L", "Multiplayer", { mc.displayGuiScreen(GuiMultiplayer(this)) }),
-        Entry("M", "Alt Manager", { mc.displayGuiScreen(GuiAltManager(this)) }),
-        Entry("N", "Options", { mc.displayGuiScreen(GuiOptions(this, mc.gameSettings)) }),
-        Entry("", "Mods", { mc.displayGuiScreen(GuiModsMenu(this)) }, "minecraft:airplus/clickgui/folder.png"),
-        Entry("O", "Quit", { mc.shutdown() })
+        Entry("Singleplayer", { mc.displayGuiScreen(GuiSelectWorld(this)) }, "minecraft:airplus/clickgui/world.png"),
+        Entry("Multiplayer", { mc.displayGuiScreen(GuiMultiplayer(this)) }, "minecraft:airplus/clickgui/online.png"),
+        Entry("Alt Manager", { mc.displayGuiScreen(GuiAltManager(this)) }, "minecraft:airplus/clickgui/player.png"),
+        Entry("Options", { mc.displayGuiScreen(GuiOptions(this, mc.gameSettings)) }, "minecraft:airplus/clickgui/setting.png"),
+        Entry("Mods", { mc.displayGuiScreen(GuiModsMenu(this)) }, "minecraft:airplus/clickgui/folder.png"),
+        Entry("Quit", { mc.shutdown() }, "minecraft:airplus/clickgui/close.png")
     )
 
     private val hoverProgress = FloatArray(entries.size)
@@ -149,23 +148,13 @@ class OrbitMainMenu : AbstractScreen() {
             val btnColor = mixColor(Color(28, 48, 40, 220), Color(168, 197, 160, 230), p)
             RenderUtils.drawRoundedRect(bx - sR, by - sR, bx + sR, by + sR, btnColor.rgb, sR)
 
-            // 按钮内图标（字形或贴图，居中绘制；字形补偿 GameFontRenderer 的 -1.5/-3 内部平移）
-            if (entries[i].texture != null) {
-                val texSize = (20f * scale).toInt()
-                RenderUtils.drawImage(
-                    ResourceLocation(entries[i].texture),
-                    (bx - texSize / 2f).toInt(), (by - texSize / 2f).toInt(),
-                    texSize, texSize
-                )
-            } else {
-                val iconFont = Fonts.fontFluxIcon20
-                iconFont.drawStringWithShadow(
-                    entries[i].glyph,
-                    bx - iconFont.getStringWidth(entries[i].glyph) / 2f + 1.5f,
-                    by - iconFont.height / 2f + 3f,
-                    Color(245, 240, 232).rgb
-                )
-            }
+            // 按钮内图标（统一贴图，居中绘制）
+            val texSize = (20f * scale).toInt()
+            RenderUtils.drawImage(
+                ResourceLocation(entries[i].texture),
+                (bx - texSize / 2f).toInt(), (by - texSize / 2f).toInt(),
+                texSize, texSize
+            )
 
             // 悬停时标签（按钮外侧）
             if (p > 0.1f) {

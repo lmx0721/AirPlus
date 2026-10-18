@@ -5,10 +5,10 @@ package net.airplus.ui.client.sodium.gui.options;
  * TranslatableText replaced with hardcoded color-coded strings.
  */
 public enum OptionImpact implements TextProvider {
-    LOW("\u00a7aLow"),
-    MEDIUM("\u00a7eMedium"),
-    HIGH("\u00a76High"),
-    VARIES("\u00a7fVaries");
+    LOW("\u00a7a低"),
+    MEDIUM("\u00a7e中"),
+    HIGH("\u00a76高"),
+    VARIES("\u00a7f可变");
 
     private final String text;
 

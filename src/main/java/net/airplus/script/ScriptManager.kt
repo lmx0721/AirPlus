@@ -48,6 +48,11 @@ object ScriptManager : List<Script> by scripts {
     fun loadScript(scriptFile: File) {
         try {
             if (!Remapper.mappingsLoaded) {
+                // 按需加载 SRG 映射（脚本系统唯一的映射消费方）
+                Remapper.loadSrg()
+            }
+
+            if (!Remapper.mappingsLoaded) {
                 error("The mappings were not loaded, re-start and check your internet connection.")
             }
 

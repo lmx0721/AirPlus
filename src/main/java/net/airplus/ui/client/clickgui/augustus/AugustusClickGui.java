@@ -10,6 +10,7 @@ import net.airplus.config.BoolValue;
 import net.airplus.config.ColorValue;
 import net.airplus.config.FloatRangeValue;
 import net.airplus.config.FloatValue;
+import net.airplus.config.FontValue;
 import net.airplus.config.IntRangeValue;
 import net.airplus.config.IntValue;
 import net.airplus.config.ListValue;
@@ -534,12 +535,25 @@ public class AugustusClickGui extends GuiScreen {
             return modeY + normalHeight() + 6F;
         }
 
+        if (value instanceof FontValue) {
+            FontValue fontValue = (FontValue) value;
+            float labelWidth = normalWidth(value.getName() + ": ");
+            if (event == GuiEvent.DRAW) {
+                drawNormal(value.getName() + ": ", x, y, new Color(200, 200, 200).getRGB());
+                drawNormal(fontValue.toText(), x + labelWidth, y, new Color(200, 200, 200).getRGB());
+            } else if (event == GuiEvent.CLICK && hovered(mouseX, mouseY, x, y, width - 102F, normalHeight())) {
+                if (mouseButton == 0) fontValue.next();
+                else if (mouseButton == 2) fontValue.previous();
+            }
+            return y + normalHeight() + 5F;
+        }
+
         if (value instanceof ColorValue) {
             return drawColorValue((ColorValue) value, y, mouseX, mouseY, mouseButton, event);
         }
 
         if (event == GuiEvent.DRAW) {
-            drawNormal(value.getName() + ": " + value.get(), x, y, new Color(200, 200, 200).getRGB());
+            drawNormal(value.getName() + ": " + value.toText(), x, y, new Color(200, 200, 200).getRGB());
         }
         return y + normalHeight() + 5F;
     }

@@ -16,6 +16,8 @@ object AutoTool : Module("AutoTool", Category.PLAYER, subjective = true, gameDet
 
     private val switchBack by boolean("SwitchBack", false)
     private val onlySneaking by boolean("OnlySneaking", false)
+    // 静默切换：开启后切换 AutoTool 时不展示真实的模式物品（客户端视角保持原物品）
+    private val silent by boolean("Silent", false)
 
     val onGameTick = handler<GameTickEvent> {
         if (!switchBack || mc.gameSettings.keyBindAttack.isKeyDown)
@@ -43,7 +45,7 @@ object AutoTool : Module("AutoTool", Category.PLAYER, subjective = true, gameDet
         if (fastest == (player.currentEquippedItem?.getStrVsBlock(block) ?: 1f))
             return@handler
 
-        SilentHotbar.selectSlotSilently(this, slot, render = false, resetManually = true)
+        SilentHotbar.selectSlotSilently(this, slot, render = !silent, resetManually = true)
     }
 
 }

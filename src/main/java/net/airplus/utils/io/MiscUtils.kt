@@ -7,7 +7,9 @@ package net.airplus.utils.io
 
 import net.airplus.AirPlus
 import net.airplus.file.FileManager
+import net.airplus.utils.client.ClientUtils.LOGGER
 import net.airplus.utils.client.MinecraftInstance
+import com.formdev.flatlaf.themes.FlatMacLightLaf
 import java.awt.Desktop
 import java.awt.Font
 import java.awt.Toolkit
@@ -23,6 +25,26 @@ import javax.swing.filechooser.FileFilter
 import javax.swing.filechooser.FileNameExtensionFilter
 
 object MiscUtils : MinecraftInstance {
+
+    @Volatile
+    private var swingThemeInitialized = false
+
+    /**
+     * Swing 主题延迟初始化：FlatLaf 只在真正需要弹 Swing 对话框（错误弹窗 / 文件选择器）
+     * 时才初始化，避免启动时为 Swing 全套类加载付出时间。
+     */
+    private fun ensureSwingTheme() {
+        if (swingThemeInitialized) return
+        synchronized(this) {
+            if (swingThemeInitialized) return
+            runCatching {
+                UIManager.setLookAndFeel(FlatMacLightLaf())
+            }.onFailure {
+                LOGGER.error("Failed to set Swing look and feel.", it)
+            }
+            swingThemeInitialized = true
+        }
+    }
 
     @JvmStatic
     fun copy(content: String) {
@@ -65,14 +87,17 @@ object MiscUtils : MinecraftInstance {
     }
 
     @JvmStatic
-    fun showMessageDialog(title: String, message: Any, messageType: Int = JOptionPane.ERROR_MESSAGE) =
+    fun showMessageDialog(title: String, message: Any, messageType: Int = JOptionPane.ERROR_MESSAGE) {
+        ensureSwingTheme()
         JOptionPane.showMessageDialog(null, message, title, messageType)
+    }
 
     @JvmStatic
     fun Throwable.showErrorPopup(
         titlePrefix: String = "Exception occurred: ",
         extraContent: String = LocalDateTime.now().toString() + '\n'
     ) {
+        ensureSwingTheme()
         if (mc.isFullScreen) mc.toggleFullscreen()
 
         val exceptionType = javaClass.simpleName
@@ -137,6 +162,7 @@ object MiscUtils : MinecraftInstance {
         action: JFileChooser.(JFrame) -> Int
     ): File? {
         if (mc.isFullScreen) mc.toggleFullscreen()
+        ensureSwingTheme()
 
         val fileChooser = JFileChooser()
         fileChooser.currentDirectory = FileManager.dir

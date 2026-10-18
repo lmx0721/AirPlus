@@ -1,0 +1,12 @@
+// skid SetsunaClient
+package net.airplus.music.ncm.audio.org.kc7bfi.jflac;
+
+import java.io.IOException;
+
+public class DecodeError extends IOException {
+
+    public DecodeError(String message) {
+        super(message);
+    }
+
+}

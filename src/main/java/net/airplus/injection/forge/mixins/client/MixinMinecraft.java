@@ -15,7 +15,6 @@ import net.airplus.features.module.modules.render.BetterFPS;
 import net.airplus.features.module.modules.render.MotionBlur;
 import net.airplus.features.module.modules.world.FastPlace;
 import net.airplus.file.configs.models.ClientConfiguration;
-import net.airplus.injection.forge.SplashProgressLock;
 import net.airplus.injection.implementations.IMinecraft;
 import net.airplus.ui.client.GuiMainMenu;
 import net.airplus.utils.attack.CPSCounter;
@@ -137,20 +136,9 @@ public abstract class MixinMinecraft implements IMinecraft {
         AirPlus.INSTANCE.startClient();
     }
 
-    @Inject(method = "startGame", at = @At(value = "NEW", target = "net/minecraft/client/renderer/texture/TextureManager"))
-    private void waitForLock(CallbackInfo ci) {
-        long end = System.currentTimeMillis() + 20000;
-
-        while (end < System.currentTimeMillis() && SplashProgressLock.INSTANCE.isAnimationRunning()) {
-            synchronized (SplashProgressLock.INSTANCE) {
-                try {
-                    SplashProgressLock.INSTANCE.wait(10000);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-        }
-    }
+    // 原 waitForLock 注入已删除：SplashProgressLock 是死代码（isAnimationRunning 从未置回 false、
+    // 无任何 notify），其等待条件曾写反导致实际从不等待；若"修好"条件反而会让主线程无谓等满 20s。
+    // splash 动画与主菜单的真实状态桥是 StartupSplash（见 MixinSplashProgress）。
 
     @Inject(method = "createDisplay", at = @At(value = "INVOKE", target = "Lorg/lwjgl/opengl/Display;setTitle(Ljava/lang/String;)V", shift = At.Shift.AFTER))
     private void createDisplay(CallbackInfo callbackInfo) {

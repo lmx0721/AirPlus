@@ -6,7 +6,7 @@
 package net.airplus.injection.forge.mixins.gui;
 
 import net.airplus.features.module.modules.render.HUD;
-import net.airplus.ui.font.Fonts;
+import net.airplus.ui.font.GameFontRenderer;
 import net.airplus.utils.render.ChatHudRenderer;
 import net.minecraft.client.gui.ChatLine;
 import net.minecraft.client.gui.FontRenderer;
@@ -47,17 +47,21 @@ public abstract class MixinGuiNewChat {
 
     @Redirect(method = {"getChatComponent", "drawChat"}, at = @At(value = "FIELD", target = "Lnet/minecraft/client/gui/FontRenderer;FONT_HEIGHT:I"))
     private int injectFontChat(FontRenderer instance) {
-        return HUD.INSTANCE.shouldModifyChatFont() ? Fonts.fontSemibold40.getHeight() : instance.FONT_HEIGHT;
+        FontRenderer font = HUD.INSTANCE.getChatFont();
+        if (HUD.INSTANCE.shouldModifyChatFont() && font instanceof GameFontRenderer) {
+            return ((GameFontRenderer) font).getHeight();
+        }
+        return instance.FONT_HEIGHT;
     }
 
     @Redirect(method = "drawChat", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/FontRenderer;drawStringWithShadow(Ljava/lang/String;FFI)I"))
     private int injectFontChatB(FontRenderer instance, String text, float x, float y, int color) {
-        return HUD.INSTANCE.shouldModifyChatFont() ? Fonts.fontSemibold40.drawStringWithShadow(text, x, y, color) : instance.drawStringWithShadow(text, x, y, color);
+        return HUD.INSTANCE.shouldModifyChatFont() ? HUD.INSTANCE.getChatFont().drawStringWithShadow(text, x, y, color) : instance.drawStringWithShadow(text, x, y, color);
     }
 
     @Redirect(method = "getChatComponent", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/FontRenderer;getStringWidth(Ljava/lang/String;)I"))
     private int injectFontChatC(FontRenderer instance, String text) {
-        return HUD.INSTANCE.shouldModifyChatFont() ? Fonts.fontSemibold40.getStringWidth(text) : instance.getStringWidth(text);
+        return HUD.INSTANCE.shouldModifyChatFont() ? HUD.INSTANCE.getChatFont().getStringWidth(text) : instance.getStringWidth(text);
     }
 
     /**

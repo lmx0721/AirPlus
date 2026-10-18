@@ -18,6 +18,8 @@ import net.airplus.utils.movement.MovementUtils
 import net.airplus.utils.render.ColorUtils.stripColor
 import net.airplus.utils.rotation.Rotation
 import net.airplus.utils.rotation.RotationUtils.getFixedSensitivityAngle
+import net.airplus.viaversion.vialoadingbase.ViaLoadingBase
+import com.viaversion.viaversion.api.protocol.version.ProtocolVersion
 import net.minecraft.client.entity.EntityPlayerSP
 import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityLivingBase
@@ -228,10 +230,27 @@ infix fun EntityLivingBase.setSprintSafely(new: Boolean) {
  * validated against a stale rotation, which stacks violations and ends in swallowed blocks on cross-version.
  *
  * Deferring the placement and flushing it right before the rotation packet keeps both next to each other.
+ *
+ * 仅在 Via 目标协议为 1.12 - 1.12.2 时启用（见 [grimDeferredPlacementActive]），
+ * 其余版本直接发包（[queueDeferredPlacement] 内部回落）。
  */
 private val deferredPlacements = ArrayDeque<Packet<*>>()
 
+/**
+ * Grim 延迟放置适配只在 Via 目标协议为 1.12 - 1.12.2 时生效：
+ * 原生 1.8 或其他跨版本协议没有 Grim 的「放置包必须紧邻飞行包」校验差异，
+ * 保持直接发包的上游行为。
+ */
+private val grimDeferredPlacementActive: Boolean
+    get() = ViaLoadingBase.getInstance().targetVersion.let {
+        it.isNewerThanOrEqualTo(ProtocolVersion.v1_12) && it.isOlderThanOrEqualTo(ProtocolVersion.v1_12_2)
+    }
+
 fun queueDeferredPlacement(packet: Packet<*>) {
+    if (!grimDeferredPlacementActive) {
+        sendPacket(packet)
+        return
+    }
     deferredPlacements.add(packet)
 }
 

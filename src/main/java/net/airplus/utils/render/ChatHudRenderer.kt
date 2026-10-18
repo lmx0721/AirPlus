@@ -6,7 +6,7 @@
 package net.airplus.utils.render
 
 import net.airplus.features.module.modules.render.HUD
-import net.airplus.ui.font.Fonts
+import net.airplus.ui.font.GameFontRenderer
 import net.airplus.utils.client.MinecraftInstance
 import net.airplus.utils.render.RenderUtils.drawRoundedRect
 import net.minecraft.client.gui.ChatLine
@@ -114,11 +114,14 @@ object ChatHudRenderer : MinecraftInstance {
             entranceOffset = 0F
         }
 
-        // --- 字体（复用 HUD 的 FontChat 设置） ---
+        // --- 字体（复用 HUD 的 FontChat 设置，字体可在 HUD 设置中选择） ---
         val customFont = hud.shouldModifyChatFont()
-        val font = if (customFont) Fonts.fontSemibold40 else null
+        val font = if (customFont) hud.chatFont else null
         val vanillaFont = mc.fontRendererObj
-        val fontHeight = if (font != null) font.height else vanillaFont.FONT_HEIGHT
+        val fontHeight = when (font) {
+            is GameFontRenderer -> font.height
+            else -> vanillaFont.FONT_HEIGHT
+        }
         val lineH = max(LINE_HEIGHT, fontHeight.toFloat())
         val stringWidth = { s: String ->
             (font?.getStringWidth(s) ?: vanillaFont.getStringWidth(s)).toFloat()
@@ -145,7 +148,9 @@ object ChatHudRenderer : MinecraftInstance {
             if (index >= drawnChatLines.size) break
             val chatLine = drawnChatLines[index] ?: continue
 
-            val age = updateCounter - chatLine.getUpdatedCounter()
+            // 原版 age 为 tick 计数（50ms 一跳，淡出只有 20Hz），
+            // 叠加 partialTicks 插值到帧率级平滑；时间轴方向不变，仅消除台阶感
+            val age = (updateCounter - chatLine.getUpdatedCounter()) + mc.timer.renderPartialTicks
 
             var alpha = 1F
             var yOff = 0F   // 每行的额外纵向偏移（入场 / 退场动画）
@@ -194,7 +199,10 @@ object ChatHudRenderer : MinecraftInstance {
         // 自定义宽度不小于最长消息 + 4px（pad + 1）
         val blockX2 = max(maxTextWidth + pad + 1F, if (hud.chatCustomWidth) hud.chatWidth else 0F)
         val blockY1 = infos[infos.size - 1].y - lineH
-        val blockY2 = infos[0].y
+        var blockY2 = infos[0].y
+
+        // 最大高度：背景块向上最多延伸 chatHeightMax px（历史过多时顶部被裁剪）
+        blockY2 = blockY2.coerceAtLeast(blockY1 - hud.chatHeightMax)
 
         // --- 背景弹簧缩放（历史行数 / 内容宽度变化时弹性放大或缩小） ---
         val dt = deltaMs / 1000F
@@ -224,7 +232,10 @@ object ChatHudRenderer : MinecraftInstance {
 
         GlStateManager.pushMatrix()
         try {
-            GlStateManager.translate(2F, 20F, 0F)
+            // 位置偏移：在原版聊天原点 (2, h-28) 基础上叠加自定义 X/Y 偏移
+            val originX = 2F + hud.chatPosX
+            val originY = 20F + hud.chatPosY
+            GlStateManager.translate(originX, originY, 0F)
             val chatScale = mc.gameSettings.chatScale
             GlStateManager.scale(chatScale, chatScale, 1F)
 
@@ -234,15 +245,15 @@ object ChatHudRenderer : MinecraftInstance {
                 val bgARGB = ((bgAlpha * 255F).toInt() shl 24) or
                         (bgColor.red shl 16) or (bgColor.green shl 8) or bgColor.blue
 
-                // 模糊 AABB 换算为屏幕绝对坐标：origin = (2, h-28)，跟随弹簧后的实际背景
+                // 模糊 AABB 换算为屏幕绝对坐标：origin = (2+posX, h-28+posY)，跟随弹簧后的实际背景
                 // blur 状态随内容透明度管理：背景几乎完全淡出时跳过模糊，避免模糊区域残留
                 if (hud.chatBackgroundBlur && bgAlpha > 0.02F) {
                     val sr = ScaledResolution(mc)
-                    val originY = sr.scaledHeight - 28F
-                    val absX1 = 2F + blockX1 * chatScale
-                    val absY1 = originY + animBlockY1 * chatScale
-                    val absX2 = 2F + animBlockX2 * chatScale
-                    val absY2 = originY + animBlockY2 * chatScale
+                    val absOriginY = sr.scaledHeight - 28F + hud.chatPosY
+                    val absX1 = originX + blockX1 * chatScale
+                    val absY1 = absOriginY + animBlockY1 * chatScale
+                    val absX2 = originX + animBlockX2 * chatScale
+                    val absY2 = absOriginY + animBlockY2 * chatScale
 
                     // 遮罩在当前矩阵下按局部坐标绘制，自动跟随 scale 与位置
                     HudBlur.blur(absX1, absY1, absX2, absY2, hud.chatBlurStrength, hud.chatBlurMode, radius) {
@@ -258,11 +269,11 @@ object ChatHudRenderer : MinecraftInstance {
             if (clipText) {
                 val sr = ScaledResolution(mc)
                 val factor = sr.scaleFactor
-                val originY = sr.scaledHeight - 28F
-                val clipTop = originY + animBlockY1 * chatScale
-                val clipBottom = originY + animBlockY2 * chatScale
+                val absOriginY = sr.scaledHeight - 28F + hud.chatPosY
+                val clipTop = absOriginY + animBlockY1 * chatScale
+                val clipBottom = absOriginY + animBlockY2 * chatScale
                 GL11.glScissor(
-                    ((2F + blockX1 * chatScale) * factor).toInt(),
+                    ((originX + blockX1 * chatScale) * factor).toInt(),
                     (mc.displayHeight - clipBottom * factor).toInt(),
                     (((animBlockX2 - blockX1) * chatScale) * factor).toInt().coerceAtLeast(0),
                     ((clipBottom - clipTop) * factor).toInt().coerceAtLeast(0)

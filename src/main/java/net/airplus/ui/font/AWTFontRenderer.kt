@@ -123,6 +123,21 @@ class AWTFontRenderer(
     val height: Int
         get() = (fontHeight - 8) / 2
 
+    /**
+     * 视觉行高（调用方坐标系，即 GameFontRenderer.drawString 使用的坐标）。
+     * 管线内部 glScaled(0.25)，AWT fm.height 像素映射为 fm.height × 0.25。
+     * 垂直居中公式：drawY = top + (boxHeight - visualLineHeight) / 2 + 2.75f
+     * （+2.75 补偿 drawString 的 baseY(y-3) 与内部平移，使 em 行盒在盒子内居中）。
+     */
+    val visualLineHeight: Float by lazy {
+        val img = BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB)
+        val g = img.createGraphics()
+        g.font = font
+        val fm = g.fontMetrics
+        g.dispose()
+        fm.height * 0.25f
+    }
+
     init {
         renderBitmap(startChar, minOf(stopChar, 256))
         activeFontRenderers += this

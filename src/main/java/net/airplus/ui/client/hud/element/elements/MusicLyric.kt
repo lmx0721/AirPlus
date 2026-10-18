@@ -1,6 +1,6 @@
-﻿package net.airplus.ui.client.hud.element.elements
+package net.airplus.ui.client.hud.element.elements
 
-import net.airplus.features.module.modules.music.MusicPlayer
+import net.airplus.features.module.modules.music.MusicHub
 import net.airplus.ui.client.hud.element.Border
 import net.airplus.ui.client.hud.element.Element
 import net.airplus.ui.client.hud.element.ElementInfo
@@ -109,13 +109,13 @@ class MusicLyric(x: Double = 10.0, y: Double = 100.0, scale: Float = 1F, side: S
     private var lastMusicName = ""
 
     private val currentLyric: String
-        get() = MusicPlayer.currentLyricDisplay
+        get() = MusicHub.currentLyricDisplay
 
     private val currentMusicName: String
-        get() = MusicPlayer.currentMusicName
+        get() = MusicHub.currentMusicName
 
     private val isPlaying: Boolean
-        get() = MusicPlayer.isCurrentlyPlaying
+        get() = MusicHub.isCurrentlyPlaying
 
     private fun spring(current: Float, target: Float, velocity: Float, tension: Float = animTension, friction: Float = animFriction): Pair<Float, Float> {
         val displacement = target - current

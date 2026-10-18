@@ -33,21 +33,20 @@ class DockMainMenu : AbstractScreen() {
 
     private val timer = MSTimer()
 
-    // glyph：Flux Icon 字形（K=单人 L=多人 M=Alt N=设置 O=退出）；texture：Mods 项使用内置 folder.png 贴图
+    // 统一使用内置贴图图标，保证所有图标视觉尺寸一致（此前字形图标与 folder 贴图混用时大小不一）
     private data class DockItem(
-        val glyph: String,
         val label: String,
         val action: () -> Unit,
-        val texture: String? = null
+        val texture: String
     )
 
     private val items = listOf(
-        DockItem("K", "Singleplayer", { mc.displayGuiScreen(GuiSelectWorld(this)) }),
-        DockItem("L", "Multiplayer", { mc.displayGuiScreen(GuiMultiplayer(this)) }),
-        DockItem("M", "Alt Manager", { mc.displayGuiScreen(GuiAltManager(this)) }),
-        DockItem("N", "Options", { mc.displayGuiScreen(GuiOptions(this, mc.gameSettings)) }),
-        DockItem("", "Mods", { mc.displayGuiScreen(GuiModsMenu(this)) }, "minecraft:airplus/clickgui/folder.png"),
-        DockItem("O", "Quit", { mc.shutdown() })
+        DockItem("Singleplayer", { mc.displayGuiScreen(GuiSelectWorld(this)) }, "minecraft:airplus/clickgui/world.png"),
+        DockItem("Multiplayer", { mc.displayGuiScreen(GuiMultiplayer(this)) }, "minecraft:airplus/clickgui/online.png"),
+        DockItem("Alt Manager", { mc.displayGuiScreen(GuiAltManager(this)) }, "minecraft:airplus/clickgui/player.png"),
+        DockItem("Options", { mc.displayGuiScreen(GuiOptions(this, mc.gameSettings)) }, "minecraft:airplus/clickgui/setting.png"),
+        DockItem("Mods", { mc.displayGuiScreen(GuiModsMenu(this)) }, "minecraft:airplus/clickgui/folder.png"),
+        DockItem("Quit", { mc.shutdown() }, "minecraft:airplus/clickgui/close.png")
     )
 
     private val hoverProgress = FloatArray(items.size)
@@ -155,23 +154,13 @@ class DockMainMenu : AbstractScreen() {
                 cx - halfS, cy - halfS, cx + halfS, cy + halfS,
                 iconColor.rgb, 12f * scale
             )
-            // 图标（字形或贴图，居中绘制；字形补偿 GameFontRenderer 的 -1.5/-3 内部平移）
-            if (it.texture != null) {
-                val texSize = 22f * scale
-                RenderUtils.drawImage(
-                    ResourceLocation(it.texture),
-                    (cx - texSize / 2f).toInt(), (cy - texSize / 2f).toInt(),
-                    texSize.toInt(), texSize.toInt()
-                )
-            } else {
-                val iconFont = Fonts.fontFluxIcon20
-                iconFont.drawStringWithShadow(
-                    it.glyph,
-                    cx - iconFont.getStringWidth(it.glyph) / 2f + 1.5f,
-                    cy - iconFont.height / 2f + 3f,
-                    Color(245, 240, 232).rgb
-                )
-            }
+            // 图标（统一贴图，居中绘制）
+            val texSize = 22f * scale
+            RenderUtils.drawImage(
+                ResourceLocation(it.texture),
+                (cx - texSize / 2f).toInt(), (cy - texSize / 2f).toInt(),
+                texSize.toInt(), texSize.toInt()
+            )
 
             // 悬停时底部小圆点指示
             if (p > 0.1f) {

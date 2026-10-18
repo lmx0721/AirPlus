@@ -19,7 +19,7 @@ import net.airplus.event.UpdateEvent
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
 import net.airplus.event.handler
-import net.airplus.features.module.modules.music.MusicPlayer
+import net.airplus.features.module.modules.music.MusicHub
 import net.airplus.ui.client.hud.designer.GuiHudDesigner
 import net.airplus.ui.font.Fonts
 import net.airplus.utils.GlowUtils
@@ -42,6 +42,7 @@ import net.minecraft.client.gui.inventory.GuiChest
 import net.minecraft.inventory.Slot
 import net.minecraft.item.ItemBlock
 import net.minecraft.item.ItemStack
+import net.minecraft.client.renderer.texture.DynamicTexture
 import net.minecraft.client.shader.Framebuffer
 import net.minecraft.client.network.NetworkPlayerInfo
 import net.minecraft.client.gui.Gui
@@ -59,6 +60,9 @@ import org.lwjgl.opengl.GL11
 import org.lwjgl.opengl.GL11.*
 import org.lwjgl.opengl.GL20
 import org.lwjgl.opengl.EXTFramebufferObject
+import java.net.URL
+import java.util.concurrent.CompletableFuture
+import javax.imageio.ImageIO
 import org.lwjgl.opengl.EXTPackedDepthStencil
 import java.awt.Color
 import java.util.*
@@ -95,11 +99,14 @@ object Island : Module("Island", Category.RENDER) {
 
     private val customip by boolean("customIP", false) { style == "legacy" }
     private val ip by text("IP", "hidden.ip") { customip }
-    private val ColorA_ by int("Red", 255, 0..255) { style == "legacy" }
-    private val ColorB_ by int("Green", 255, 0..255) { style == "legacy" }
-    private val ColorC_ by int("Blue", 255, 0..255) { style == "legacy" }
 
-    private val BackgroundAlpha by int("BackGroundAlpha", 160, 0..255)
+    // legacy 样式背景：颜色与透明度统一由 color 类型设置控制（alpha 通道即透明度）
+    private val legacyBackground by color("Background", Color(0, 0, 0, 160)) { style == "legacy" }
+    // legacy 样式品牌色（图标染色 / 客户端名文字等）
+    private val legacyAccent by color("Accent", Color(255, 255, 255)) { style == "legacy" }
+
+    // iOS 样式背景自定义颜色（含 alpha 通道，透明度直接由颜色 alpha 控制）
+    private val iosBackgroundColor by color("iOS-Background", Color(0, 0, 0)) { style == "ios" }
 
     private val ShadowCheck by boolean("Shadow", false) { style == "legacy" }
     private val shadowRadiusValue by float("Shadow-Radius", 15F, 1F..50F) { ShadowCheck }
@@ -735,10 +742,10 @@ object Island : Module("Island", Category.RENDER) {
         var targetY = start_y
         var renderMode = "NONE"
 
-        if (style == "legacy" && showLyricOnIsland && lyricDisplayMode == "Full" && MusicPlayer.currentLyricDisplay.isNotEmpty()) {
+        if (style == "legacy" && showLyricOnIsland && lyricDisplayMode == "Full" && MusicHub.currentLyricDisplay.isNotEmpty()) {
             renderMode = "LYRIC_FULL"
             val textFont = getLyricTextFont()
-            val currentLyric = MusicPlayer.currentLyricDisplay
+            val currentLyric = MusicHub.currentLyricDisplay
             val textWidth = textFont.getStringWidth(currentLyric).toFloat()
             targetWidth = (textWidth + 40F).coerceIn(100F, lyricFullWidth.toFloat())
             targetHeight = if (lyricShowProgress) 50F else 35F
@@ -807,7 +814,7 @@ object Island : Module("Island", Category.RENDER) {
             when (style) {
                 "ios" -> {
                     val scaffoldOn = isScaffold && (scaffoldModuleRef?.state == true || scaffold2ModuleRef?.state == true)
-                    val musicOn = MusicPlayer.isCurrentlyPlaying && (MusicPlayer.currentLyricDisplay.isNotEmpty() || MusicPlayer.currentMusicName != "None")
+                    val musicOn = MusicHub.isCurrentlyPlaying && (MusicHub.currentLyricDisplay.isNotEmpty() || MusicHub.currentMusicName != "None")
                     val toggleActive = ModuleNotify && notifications.isNotEmpty()
                     val gappleOn = showGappleProgress && animatedGappleProgress > 0.01f && gappleModuleRef?.state == true
                     val tabListOn = showTabList && playerList.isNotEmpty()
@@ -851,23 +858,23 @@ object Island : Module("Island", Category.RENDER) {
                             targetHeight = 34f
                             targetX = (width - targetWidth) / 2
                         }
-                        toggleActive -> {
-                            renderMode = "IOS_TOGGLE"
-                            val borderInfo = calcMaxNotificationWidth()
-                            targetWidth = borderInfo.coerceAtLeast(180F)
-                            targetHeight = 34f
-                            targetX = (width - targetWidth) / 2
-                        }
                         musicOn -> {
                             renderMode = "IOS_MUSIC"
-                            val musicName = MusicPlayer.currentMusicName
-                            val lyricText = MusicPlayer.currentLyricDisplay.take(20)
+                            val musicName = MusicHub.currentMusicName
+                            val lyricText = MusicHub.currentLyricDisplay.take(20)
                             // iOS Dynamic Island music: compact pill with album art + text
                             val coverSize = 36f
                             val pad = 8f
                             val textAreaW = Fonts.fontSemibold35.getStringWidth(musicName).toFloat().coerceAtMost(160f) + pad * 2
                             targetWidth = (pad + coverSize + 6f + textAreaW + pad).coerceIn(200f, 360f)
                             targetHeight = 52f
+                            targetX = (width - targetWidth) / 2
+                        }
+                        toggleActive -> {
+                            renderMode = "IOS_TOGGLE"
+                            val borderInfo = calcMaxNotificationWidth()
+                            targetWidth = borderInfo.coerceAtLeast(180F)
+                            targetHeight = 34f
                             targetX = (width - targetWidth) / 2
                         }
                         else -> {
@@ -972,10 +979,12 @@ object Island : Module("Island", Category.RENDER) {
                     applyBlur(drawX, drawY, drawW, drawH)
                 }
 
+                // 样式背景透明度直接取颜色自带的 alpha 通道（Background / iOS-Background 颜色设置）
+                val bgColor = if (isIosMode) iosBackgroundColor else legacyBackground
                 RenderUtils.drawRoundedRect(
                     drawX, drawY,
                     drawX + drawW, drawY + drawH,
-                    Color(0, 0, 0, BackgroundAlpha).rgb,
+                    bgColor.rgb,
                     currentRadius,
                     islandCorners
                 )
@@ -1016,7 +1025,7 @@ object Island : Module("Island", Category.RENDER) {
                         )
                     }
                 }
-                RenderUtils.drawRoundedRect(drawX, drawY, drawX + drawW, drawY + drawH, Color(0,0,0,BackgroundAlpha).rgb, currentRadius, islandCorners)
+                RenderUtils.drawRoundedRect(drawX, drawY, drawX + drawW, drawY + drawH, (if (isIosMode) iosBackgroundColor else legacyBackground).rgb, currentRadius, islandCorners) // 异常回退保持原色
                 glEnable(GL_BLEND)
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             } finally {
@@ -1024,24 +1033,20 @@ object Island : Module("Island", Category.RENDER) {
                 EmbeddedStencil.dispose()
             }
 
-            when (renderMode) {
-                "LYRIC_FULL" -> renderLyricFullContent(drawX, drawY, drawW, drawH)
-                "SCAFFOLD" -> renderScaffoldContent(drawX, drawY, drawW, drawH)
-                "NOTIFY_STACK" -> renderNotificationStack(drawX, drawY, drawW, drawH)
-                "NORMAL_OPAI" -> renderNormal3Content(drawX, drawY, drawW, drawH)
-                "CHEST" -> renderChestContent(drawX, drawY, drawW, drawH, chestSlots)
-                "TABLIST" -> renderTabListContent(drawX, drawY, drawW, drawH, playerList, headerLines, footerLines)
-                "BREAK_PROGRESS" -> renderBreakProgressContent(drawX, drawY, drawW, drawH)
-                "GAPPLE_PROGRESS" -> renderGappleProgressContent(drawX, drawY, drawW, drawH)
-                "PEARL" -> renderPearlContent(drawX, drawY, drawW, drawH)
-                "IOS_PEARL" -> renderIosPearl(drawX, drawY, drawW, drawH)
-                "IOS_WATERMARK" -> renderIosWatermark(drawX, drawY, drawW, drawH)
-                "IOS_TOGGLE" -> renderIosToggle(drawX, drawY, drawW, drawH)
-                "IOS_SCAFFOLD" -> renderIosScaffold(drawX, drawY, drawW, drawH)
-                "IOS_MUSIC" -> renderIosMusic(drawX, drawY, drawW, drawH)
-                "IOS_CHEST" -> renderIosChest(drawX, drawY, drawW, drawH, chestSlots)
-                "IOS_GAPPLE" -> renderIosGapple(drawX, drawY, drawW, drawH)
-                "IOS_TABLIST" -> renderIosTabList(drawX, drawY, drawW, drawH, playerList, headerLines, footerLines)
+            // 内容裁剪：用动画中的圆角岛形作为模板，把内容渲染限制在岛内，
+            // 避免背景未抵达目标尺寸时 tablist 等元素溢出到岛外
+            try {
+                EmbeddedStencil.checkSetupFBO(mc.framebuffer)
+                EmbeddedStencil.write(false)
+                RenderUtils.drawRoundedRect(drawX, drawY, drawX + drawW, drawY + drawH, Color.WHITE.rgb, currentRadius, islandCorners)
+                EmbeddedStencil.erase(true)
+                renderIslandContent(renderMode, drawX, drawY, drawW, drawH, playerList, headerLines, footerLines, chestSlots)
+            } catch (e: Exception) {
+                // 裁剪失败时按原样（无裁剪）兜底渲染，避免整块内容消失
+                EmbeddedStencil.dispose()
+                renderIslandContent(renderMode, drawX, drawY, drawW, drawH, playerList, headerLines, footerLines, chestSlots)
+            } finally {
+                EmbeddedStencil.dispose()
             }
         }
 
@@ -1056,6 +1061,36 @@ object Island : Module("Island", Category.RENDER) {
         glEnable(GL_TEXTURE_2D)
         glDisable(GL_BLEND)
         glPopMatrix()
+    }
+
+    /** 按渲染模式分发岛内容（外层由圆角模板裁剪） */
+    private fun renderIslandContent(
+        renderMode: String,
+        drawX: Float, drawY: Float, drawW: Float, drawH: Float,
+        playerList: List<NetworkPlayerInfo>,
+        headerLines: List<String>,
+        footerLines: List<String>,
+        chestSlots: List<Slot>
+    ) {
+        when (renderMode) {
+            "LYRIC_FULL" -> renderLyricFullContent(drawX, drawY, drawW, drawH)
+            "SCAFFOLD" -> renderScaffoldContent(drawX, drawY, drawW, drawH)
+            "NOTIFY_STACK" -> renderNotificationStack(drawX, drawY, drawW, drawH)
+            "NORMAL_OPAI" -> renderNormal3Content(drawX, drawY, drawW, drawH)
+            "CHEST" -> renderChestContent(drawX, drawY, drawW, drawH, chestSlots)
+            "TABLIST" -> renderTabListContent(drawX, drawY, drawW, drawH, playerList, headerLines, footerLines)
+            "BREAK_PROGRESS" -> renderBreakProgressContent(drawX, drawY, drawW, drawH)
+            "GAPPLE_PROGRESS" -> renderGappleProgressContent(drawX, drawY, drawW, drawH)
+            "PEARL" -> renderPearlContent(drawX, drawY, drawW, drawH)
+            "IOS_PEARL" -> renderIosPearl(drawX, drawY, drawW, drawH)
+            "IOS_WATERMARK" -> renderIosWatermark(drawX, drawY, drawW, drawH)
+            "IOS_TOGGLE" -> renderIosToggle(drawX, drawY, drawW, drawH)
+            "IOS_SCAFFOLD" -> renderIosScaffold(drawX, drawY, drawW, drawH)
+            "IOS_MUSIC" -> renderIosMusic(drawX, drawY, drawW, drawH)
+            "IOS_CHEST" -> renderIosChest(drawX, drawY, drawW, drawH, chestSlots)
+            "IOS_GAPPLE" -> renderIosGapple(drawX, drawY, drawW, drawH)
+            "IOS_TABLIST" -> renderIosTabList(drawX, drawY, drawW, drawH, playerList, headerLines, footerLines)
+        }
     }
 
     private fun renderGappleProgressContent(x: Float, y: Float, w: Float, h: Float) {
@@ -1721,7 +1756,7 @@ object Island : Module("Island", Category.RENDER) {
         val iconY = y + (h - iconSize) / 2
         var cx = x + info.padding
 
-        val colorRGB = Color(ColorA_, ColorB_, ColorC_, 255)
+        val colorRGB = legacyAccent
         drawImage(getLogoResource(), cx, iconY, 15, 15, colorRGB)
         cx += 15F + info.elementSpacing
         Fonts.fontSemibold40.drawString(ClientName, cx, textBaseY, colorRGB.rgb)
@@ -1734,12 +1769,12 @@ object Island : Module("Island", Category.RENDER) {
         cx += info.usernameWidth + info.dotSpacing
         
         val showInsideLyric = showLyricOnIsland && lyricDisplayMode == "Inside" && 
-            MusicPlayer.isCurrentlyPlaying && 
-            (MusicPlayer.currentLyricDisplay.isNotEmpty() || MusicPlayer.currentMusicName != "None")
+            MusicHub.isCurrentlyPlaying && 
+            (MusicHub.currentLyricDisplay.isNotEmpty() || MusicHub.currentMusicName != "None")
         
         if (showInsideLyric) {
-            val currentLyric = MusicPlayer.currentLyricDisplay
-            val currentMusicName = MusicPlayer.currentMusicName
+            val currentLyric = MusicHub.currentLyricDisplay
+            val currentMusicName = MusicHub.currentMusicName
             val displayText = if (lyricShowMusicName && currentMusicName != "None") {
                 currentMusicName
             } else if (currentLyric.isNotEmpty()) {
@@ -1888,12 +1923,12 @@ object Island : Module("Island", Category.RENDER) {
         
         var lyricWidthExtra = 0F
         val showInsideLyric = showLyricOnIsland && lyricDisplayMode == "Inside" && 
-            MusicPlayer.isCurrentlyPlaying && 
-            (MusicPlayer.currentLyricDisplay.isNotEmpty() || MusicPlayer.currentMusicName != "None")
+            MusicHub.isCurrentlyPlaying && 
+            (MusicHub.currentLyricDisplay.isNotEmpty() || MusicHub.currentMusicName != "None")
         
         if (showInsideLyric) {
-            val currentLyric = MusicPlayer.currentLyricDisplay
-            val currentMusicName = MusicPlayer.currentMusicName
+            val currentLyric = MusicHub.currentLyricDisplay
+            val currentMusicName = MusicHub.currentMusicName
             val displayText = if (lyricShowMusicName && currentMusicName != "None") {
                 currentMusicName
             } else if (currentLyric.isNotEmpty()) {
@@ -1939,7 +1974,7 @@ object Island : Module("Island", Category.RENDER) {
             val dW = Fonts.fontRegular35.getStringWidth(notify.message)
             val w = 35F + max(tW, dW) + 20F
             val x = (width - w)/2
-            drawRoundedBorderRect(x, currentY, x+w, currentY+ITEM_NOTIFY_HEIGHT, 0.2F, Color(0,0,0,BackgroundAlpha).rgb, Color(0,0,0,BackgroundAlpha).rgb, 10F)
+            drawRoundedBorderRect(x, currentY, x+w, currentY+ITEM_NOTIFY_HEIGHT, 0.2F, legacyBackground.rgb, legacyBackground.rgb, 10F)
             notify.draw(x + padding, currentY + 5F)
             currentY += ITEM_NOTIFY_HEIGHT + 2F
         }
@@ -1949,7 +1984,7 @@ object Island : Module("Island", Category.RENDER) {
         val username = mc.session.username
         val fps = Minecraft.getDebugFPS()
         val pings = getSafePing()
-        val colorRGB = Color(ColorA_, ColorB_, ColorC_, 255)
+        val colorRGB = legacyAccent
         val text = " | $username | ${fps}fps | ${pings}ms"
         val mainText = ClientName
         val h = 38F
@@ -1959,7 +1994,7 @@ object Island : Module("Island", Category.RENDER) {
         val (nX, _) = spring(AnimGlobalX, x, VelGlobalX)
         AnimGlobalX = nX
         ShowShadow(x, y, wCalc, h)
-        drawRoundedBorderRect(x, y, x+wCalc, y+h, 0.5F, Color(10,10,10,BackgroundAlpha).rgb, Color(30,30,30,BackgroundAlpha).rgb, h/2)
+        drawRoundedBorderRect(x, y, x+wCalc, y+h, 0.5F, legacyBackground.rgb, legacyBackground.rgb, h/2)
         drawImage(ResourceLocation("airplus/logo_icon.png"), (x+5).toInt(), (y + (h-18)/2).toInt(), 18, 18, colorRGB)
         Fonts.fontSemibold40.drawString(mainText, x + 28, y + (h-9)/2+1, colorRGB.rgb)
         Fonts.fontSemibold40.drawString(text, x + 28 + Fonts.fontSemibold40.getStringWidth(mainText), y + (h-9)/2+1, -1)
@@ -2119,9 +2154,9 @@ object Island : Module("Island", Category.RENDER) {
     private fun renderLyricDisplay() {
         if (lyricDisplayMode == "Full") return
         
-        val isPlaying = MusicPlayer.isCurrentlyPlaying
-        val currentLyric = MusicPlayer.currentLyricDisplay
-        val currentMusicName = MusicPlayer.currentMusicName
+        val isPlaying = MusicHub.isCurrentlyPlaying
+        val currentLyric = MusicHub.currentLyricDisplay
+        val currentMusicName = MusicHub.currentMusicName
 
         if (!isPlaying || (currentLyric.isEmpty() && currentMusicName == "None")) {
             if (lyricBounce) {
@@ -2150,10 +2185,10 @@ object Island : Module("Island", Category.RENDER) {
     }
 
     private fun renderLyricBelow() {
-        val currentLyric = MusicPlayer.currentLyricDisplay
-        val previousLyric = MusicPlayer.previousLyricDisplay
-        val nextLyric = MusicPlayer.nextLyricDisplay
-        val currentMusicName = MusicPlayer.currentMusicName
+        val currentLyric = MusicHub.currentLyricDisplay
+        val previousLyric = MusicHub.previousLyricDisplay
+        val nextLyric = MusicHub.nextLyricDisplay
+        val currentMusicName = MusicHub.currentMusicName
         val musicFont = getMusicNameFont()
         val textFont = getLyricTextFont()
         
@@ -2288,8 +2323,8 @@ object Island : Module("Island", Category.RENDER) {
         }
         
         if (lyricShowProgress) {
-            val progress = MusicPlayer.progress.coerceIn(0F, 1F)
-            val timeStr = MusicPlayer.timeDisplayString
+            val progress = MusicHub.progress.coerceIn(0F, 1F)
+            val timeStr = MusicHub.timeDisplayString
             val barHeight = 3F
             val barY = bubbleY + animBubbleHeight - barHeight - 6F
             val barPadding = 8F
@@ -2317,10 +2352,10 @@ object Island : Module("Island", Category.RENDER) {
     }
 
     private fun renderLyricFloat() {
-        val currentLyric = MusicPlayer.currentLyricDisplay
-        val previousLyric = MusicPlayer.previousLyricDisplay
-        val nextLyric = MusicPlayer.nextLyricDisplay
-        val currentMusicName = MusicPlayer.currentMusicName
+        val currentLyric = MusicHub.currentLyricDisplay
+        val previousLyric = MusicHub.previousLyricDisplay
+        val nextLyric = MusicHub.nextLyricDisplay
+        val currentMusicName = MusicHub.currentMusicName
         val musicFont = getMusicNameFont()
         val textFont = getLyricTextFont()
         
@@ -2459,8 +2494,8 @@ object Island : Module("Island", Category.RENDER) {
         }
         
         if (lyricShowProgress) {
-            val progress = MusicPlayer.progress.coerceIn(0F, 1F)
-            val timeStr = MusicPlayer.timeDisplayString
+            val progress = MusicHub.progress.coerceIn(0F, 1F)
+            val timeStr = MusicHub.timeDisplayString
             val barHeight = 3F
             val barY = bubbleY + animBubbleHeight - barHeight - 6F
             val barPadding = 8F
@@ -2492,7 +2527,7 @@ object Island : Module("Island", Category.RENDER) {
     private var fullLyricAnimProgress = 0F
 
     private fun renderLyricFullContent(x: Float, y: Float, w: Float, h: Float) {
-        val currentLyric = MusicPlayer.currentLyricDisplay ?: ""
+        val currentLyric = MusicHub.currentLyricDisplay ?: ""
         val textFont = getLyricTextFont() ?: return
         val themeColor = ClientThemesUtils.getColor() ?: return
         
@@ -2568,8 +2603,8 @@ object Island : Module("Island", Category.RENDER) {
         glPopMatrix()
         
         if (lyricShowProgress) {
-            val progress = MusicPlayer.progress.coerceIn(0F, 1F)
-            val timeStr = MusicPlayer.timeDisplayString ?: "0:00 / 0:00"
+            val progress = MusicHub.progress.coerceIn(0F, 1F)
+            val timeStr = MusicHub.timeDisplayString ?: "0:00 / 0:00"
             val barHeight = 3F
             val barY = y + h - barHeight - 8F
             val barPadding = 8F
@@ -2597,10 +2632,10 @@ object Island : Module("Island", Category.RENDER) {
     }
 
     private fun renderLyricFull() {
-        val currentLyric = MusicPlayer.currentLyricDisplay ?: ""
-        val previousLyric = MusicPlayer.previousLyricDisplay ?: ""
-        val nextLyric = MusicPlayer.nextLyricDisplay ?: ""
-        val currentMusicName = MusicPlayer.currentMusicName ?: "None"
+        val currentLyric = MusicHub.currentLyricDisplay ?: ""
+        val previousLyric = MusicHub.previousLyricDisplay ?: ""
+        val nextLyric = MusicHub.nextLyricDisplay ?: ""
+        val currentMusicName = MusicHub.currentMusicName ?: "None"
         val musicFont = getMusicNameFont() ?: return
         val textFont = getLyricTextFont() ?: return
         
@@ -2791,10 +2826,10 @@ object Island : Module("Island", Category.RENDER) {
      */
     private fun renderIosMusic(x: Float, y: Float, w: Float, h: Float) {
         val pad = 8f
-        val musicName = MusicPlayer.currentMusicName
-        val lyric = MusicPlayer.currentLyricDisplay
+        val musicName = MusicHub.currentMusicName
+        val lyric = MusicHub.currentLyricDisplay
         val displayText = if (musicName != "None" && musicName != "无") musicName else lyric.take(30)
-        val progress = MusicPlayer.progress.coerceIn(0f, 1f)
+        val progress = MusicHub.progress.coerceIn(0f, 1f)
 
         // --- Cover icon (left side, vertically centered) ---
         val coverSize = 32f  // Larger
@@ -2806,12 +2841,20 @@ object Island : Module("Island", Category.RENDER) {
         drawRoundedRect(coverX, coverY, coverX + coverSize, coverY + coverSize,
             Color(30, 30, 30, 220).rgb, coverRadius)
 
-        // Music icon centered in cover
-        val iconSz = (coverSize * 0.6f).toInt()
-        val iconOffsetX = coverX + (coverSize - iconSz) / 2f
-        val iconOffsetY = coverY + (coverSize - iconSz) / 2f
-        drawImage(ResourceLocation("airplus/watermark_images/music.png"),
-            iconOffsetX.toInt(), iconOffsetY.toInt(), iconSz, iconSz, Color.WHITE)
+        // 有音乐封面则铺满封面区块（圆角），否则回退音符图标
+        val coverTexture = MusicCoverCache.get(MusicHub.currentCoverUrl)
+        if (coverTexture != null) {
+            GlStateManager.color(1f, 1f, 1f, 1f)
+            drawImage(coverTexture, coverX, coverY, coverSize.toInt(), coverSize.toInt(),
+                Color.WHITE, coverRadius)
+        } else {
+            // Music icon centered in cover
+            val iconSz = (coverSize * 0.6f).toInt()
+            val iconOffsetX = coverX + (coverSize - iconSz) / 2f
+            val iconOffsetY = coverY + (coverSize - iconSz) / 2f
+            drawImage(ResourceLocation("airplus/watermark_images/music.png"),
+                iconOffsetX.toInt(), iconOffsetY.toInt(), iconSz, iconSz, Color.WHITE)
+        }
 
         // --- Text area (right of cover) ---
         val textX = coverX + coverSize + 8f
@@ -3035,6 +3078,47 @@ object Island : Module("Island", Category.RENDER) {
         font.drawString(text, x1 + pad + 14f, pivotY - font.FONT_HEIGHT / 2f + 1f, Color(255, 255, 255, (255 * alphaF).toInt()).rgb)
 
         glPopMatrix()
+    }
+
+    /**
+     * 网易云封面异步下载缓存：url -> ResourceLocation（LRU 上限 32）。
+     * 下载失败 60 秒内不重试；超出容量时释放最旧纹理。
+     */
+    private object MusicCoverCache {
+        private const val MAX_CACHE = 32
+        private val cache = LinkedHashMap<String, ResourceLocation>(16, 0.75f, true)
+        private val loading = HashSet<String>()
+        private val retryAt = HashMap<String, Long>()
+
+        fun get(url: String?): ResourceLocation? {
+            if (url.isNullOrEmpty()) return null
+            cache[url]?.let { return it }
+            if (url in loading) return null
+            val now = System.currentTimeMillis()
+            retryAt[url]?.let { if (now < it) return null }
+            loading.add(url)
+            CompletableFuture.supplyAsync { ImageIO.read(URL(url)) }
+                .whenComplete { image, error ->
+                    Minecraft.getMinecraft().addScheduledTask {
+                        loading.remove(url)
+                        if (error != null || image == null) {
+                            retryAt[url] = System.currentTimeMillis() + 60_000L
+                            return@addScheduledTask
+                        }
+                        val texture = DynamicTexture(image)
+                        val loc = Minecraft.getMinecraft().textureManager
+                            .getDynamicTextureLocation("airplus-music-cover", texture)
+                        cache[url] = loc
+                        while (cache.size > MAX_CACHE) {
+                            val eldest = cache.entries.iterator()
+                            val entry = eldest.next()
+                            Minecraft.getMinecraft().textureManager.deleteTexture(entry.value)
+                            eldest.remove()
+                        }
+                    }
+                }
+            return null
+        }
     }
 
 }

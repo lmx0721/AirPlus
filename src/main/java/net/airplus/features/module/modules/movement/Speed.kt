@@ -92,6 +92,7 @@ object Speed : Module("Speed", Category.MOVEMENT) {
         OnGround,
         SlowHop,
         Legit,
+        OldGrim,
         CustomSpeed
     )
 
@@ -177,6 +178,13 @@ object Speed : Module("Speed", Category.MOVEMENT) {
     val bmcDamageBoost by boolean("DamageBoost", true) { mode.get() == "BlocksMCHop" }
     val damageLowHop by boolean("DamageLowHop", false) { mode.get() == "BlocksMCHop" }
     val safeY by boolean("SafeY", true) { mode.get() == "BlocksMCHop" }
+
+    // OldGrim Speed（触碰实体加速，Ported from SilenceFix）
+    val oldGrimSpeed by float("OldGrim-Speed", 5f, 1f..8f) { mode.get() == "OldGrim" }
+    val oldGrimTargetStrafe by boolean("OldGrim-TargetStrafe", true) { mode.get() == "OldGrim" }
+    val oldGrimOnlyJump by boolean("OldGrim-OnlyJump", true) { oldGrimTargetStrafe && mode.get() == "OldGrim" }
+    val oldGrimHurtTimeCheck by boolean("OldGrim-HurtTimeCheck", false) { mode.get() == "OldGrim" }
+    val oldGrimBehindTarget by boolean("OldGrim-BehindTarget", false) { mode.get() == "OldGrim" }
 
     val onUpdate = handler<UpdateEvent> {
         val thePlayer = mc.thePlayer ?: return@handler

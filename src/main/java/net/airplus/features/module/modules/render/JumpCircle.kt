@@ -109,8 +109,12 @@ object JumpCircle : Module("JumpCircle", Category.RENDER, gameDetecting = false)
     val onRender3D = handler<Render3DEvent> {
         // Onyx 样式：起跳检测 + 环线/环形文字渲染，与 Classic 路径互不干扰
         if (style == "Onyx") {
-            updateOnyxRings()
-            renderOnyxRings()
+            try {
+                updateOnyxRings()
+                renderOnyxRings()
+            } finally {
+                forceRenderStateSync()
+            }
             return@handler
         }
         if(mc.thePlayer.onGround && hasJumped){
@@ -132,39 +136,58 @@ object JumpCircle : Module("JumpCircle", Category.RENDER, gameDetecting = false)
         // blend 必须无条件关闭：Render3DEvent 触发点在 renderHand 之前，半透明地形渲染遗留的开启状态
         // 若被还原回去，第一人称手部物品会被混合渲染而呈半透明（与 AirClient 原版一致）。
         val lightingEnabled = glIsEnabled(GL_LIGHTING)
-        setupDrawCircles {
-            // 复用缓冲：先渲染所有圆，再一次性重建列表，避免每帧分配新的 ArrayList
-            circlesRemaining.clear()
-            var anyExpired = false
-            circles.forEach {
-                val progress = ((runTimeTicks + partialTick) - it.endTime) / lifeTime
-                if (progress >= 1F) {
-                    anyExpired = true
-                    return@forEach
+        try {
+            setupDrawCircles {
+                // 复用缓冲：先渲染所有圆，再一次性重建列表，避免每帧分配新的 ArrayList
+                circlesRemaining.clear()
+                var anyExpired = false
+                circles.forEach {
+                    val progress = ((runTimeTicks + partialTick) - it.endTime) / lifeTime
+                    if (progress >= 1F) {
+                        anyExpired = true
+                        return@forEach
+                    }
+                    val radius = circleRadius.lerpWith(progress)
+                    if(useTexture){
+                        renderTexturedCircle(
+                            it.pos,
+                            radius.toDouble(),
+                            1f - progress,
+                            lightFactor,
+                            effectStrength
+                        )
+                    } else {
+                        renderSimpleCircle(it.pos, radius, progress)
+                    }
+                    circlesRemaining.add(it)
                 }
-                val radius = circleRadius.lerpWith(progress)
-                if(useTexture){
-                    renderTexturedCircle(
-                        it.pos,
-                        radius.toDouble(),
-                        1f - progress,
-                        lightFactor,
-                        effectStrength
-                    )
-                } else {
-                    renderSimpleCircle(it.pos, radius, progress)
+                if (anyExpired) {
+                    circles.clear()
+                    circles.addAll(circlesRemaining)
                 }
-                circlesRemaining.add(it)
             }
-            if (anyExpired) {
-                circles.clear()
-                circles.addAll(circlesRemaining)
-            }
+        } finally {
+            GlStateManager.color(1f, 1f, 1f, 1f)
+            GlStateManager.depthMask(true)
+            GlStateManager.disableBlend()
+            if (lightingEnabled) GlStateManager.enableLighting() else GlStateManager.disableLighting()
+            forceRenderStateSync()
         }
+    }
+
+    /**
+     * Render3DEvent 之后紧接着就是 renderHand，而 1.8.9 的 setupOverlayRendering 只恢复矩阵
+     * 不恢复混合状态。上游任何裸 GL 调用（字体渲染、attribute 栈弹出等）造成的 GlStateManager
+     * 缓存失同步，都会让上面的 disableBlend() 被跳过 → 实际 blend 残留开启，
+     * 第一人称手持物品被混合渲染而呈半透明。
+     * enable→disable 各走一遍：无论缓存当前值如何都会真实执行一次 glDisable，
+     * 强制把缓存与实际状态拉回已知的关闭态。
+     */
+    private fun forceRenderStateSync() {
+        GlStateManager.enableBlend()
+        GlStateManager.disableBlend()
         GlStateManager.color(1f, 1f, 1f, 1f)
         GlStateManager.depthMask(true)
-        GlStateManager.disableBlend()
-        if (lightingEnabled) GlStateManager.enableLighting() else GlStateManager.disableLighting()
     }
 
     override fun onDisable() {
@@ -324,13 +347,15 @@ object JumpCircle : Module("JumpCircle", Category.RENDER, gameDetecting = false)
         val lightingEnabled = glIsEnabled(GL_LIGHTING)
         val cullEnabled = glIsEnabled(GL_CULL_FACE)
         val lastLineWidth = glGetFloat(GL_LINE_WIDTH)
+        // 纹理开关必须走 GlStateManager：裸 glDisable 绕过缓存，Ring 模式结束后纹理实际仍关闭
+        // 而缓存认为开启，后续 enableTexture2D 全部被跳过 → 手持物品无纹理 + 残留当前色（半透明）
         glPushMatrix()
         GlStateManager.enableBlend()
         GlStateManager.blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         GlStateManager.depthMask(false)
         if (lightingEnabled) GlStateManager.disableLighting()
         if (cullEnabled) GlStateManager.disableCull()
-        glDisable(GL_TEXTURE_2D)
+        GlStateManager.disableTexture2D()
         glLineWidth(2F)
 
         // 第一遍：细环线（Ring/Text 模式都画）
@@ -340,7 +365,7 @@ object JumpCircle : Module("JumpCircle", Category.RENDER, gameDetecting = false)
         }
         // 第二遍：环形文字（Text 模式，字体内部会自行开启纹理/混合）
         if (ringMode == "Text") {
-            glEnable(GL_TEXTURE_2D)
+            GlStateManager.enableTexture2D()
             for (ring in onyxCircles) {
                 val color = onyxColor(ring, now, lifeMs) ?: continue
                 renderOnyxRingText(ring, rm.renderPosX, rm.renderPosY, rm.renderPosZ, color, now)
@@ -369,7 +394,9 @@ object JumpCircle : Module("JumpCircle", Category.RENDER, gameDetecting = false)
 
     // Onyx 细环线：固定 Radius，贴地 y+0.01
     private fun renderOnyxRingLine(pos: Vec3, renderX: Double, renderY: Double, renderZ: Double, color: Color) {
-        glColor4f(color.red / 255f, color.green / 255f, color.blue / 255f, color.alpha / 255f)
+        // 同上：裸 glColor4f 会绕过 GlStateManager 的颜色缓存，残留的带 alpha 当前色
+        // 会让后续 fixed-function 绘制（如第一人称手部）以半透明渲染
+        GlStateManager.color(color.red / 255f, color.green / 255f, color.blue / 255f, color.alpha / 255f)
         worldRenderer.begin(GL_LINE_LOOP, DefaultVertexFormats.POSITION)
         for (i in 0 until ONYX_RING_STEPS) {
             val angle = 2.0 * PI * i / ONYX_RING_STEPS

@@ -160,6 +160,10 @@ class GuiMainMenu : AbstractScreen() {
             // 右下 Welcome（Flux 显示登录用户名，这里显示当前游戏会话玩家名）
             val welcome = "Welcome, " + (mc.session?.username ?: "Player")
             Fonts.fontFluxRobotoL.drawStringWithShadow(welcome, width - Fonts.fontFluxRobotoL.getStringWidth(welcome) - 11f, height - 35f, infoColor)
+
+            // 启动淡入：splash 欢迎画面（无淡出）交还主线程后，主菜单从黑罩淡入
+            //（所有风格通用逻辑在 MainMenuStyles.drawStartupFade，2000ms / 30 帧下限）
+            MainMenuStyles.drawStartupFade(width, height)
         } catch (e: Throwable) {
             e.printStackTrace()
         }

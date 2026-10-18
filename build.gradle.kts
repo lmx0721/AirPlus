@@ -116,6 +116,9 @@ dependencies {
 
     shadowImpl("com.jhlabs:filters:2.0.235-1")
 
+    // QR code rendering for the NetEase / QQ music login flows
+    shadowImpl("com.google.zxing:core:3.5.1")
+
     // Nashorn (JS engine for the script system) - only available on the JDK 8 toolchain
     shadowImpl(files("libs/nashorn.jar"))
 
