@@ -18,37 +18,104 @@ import net.minecraftforge.fml.relauncher.Side
 import net.minecraftforge.fml.relauncher.SideOnly
 import org.lwjgl.opengl.GL11.*
 import org.lwjgl.opengl.GL12.*
+import java.awt.BasicStroke
 import java.awt.Color
 import java.awt.Font
+import java.awt.FontMetrics
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 @SideOnly(Side.CLIENT)
-class AWTFontRenderer(
+class AWTFontRenderer @JvmOverloads constructor(
     val font: Font,
     startChar: Int = 0,
     stopChar: Int = 65535,
-    private val loadingScreen: Boolean = false
+    private val loadingScreen: Boolean = false,
+    /** 是否套用全局字体粗细（图标字体传 false，避免图标被描边加粗）。 */
+    private val styleable: Boolean = true
 ) : MinecraftInstance {
 
     companion object : Listenable {
         var assumeNonVolatile: Boolean = false
 
+        // ===== 全局字体粗细（描边像素，按烘焙尺寸计；由 Client 模块同步写入）=====
+        // 主字体字形在全局粗细之外额外套用的描边量由 fallbackTextWeight 表示（中文回退字形专用）
+        @JvmStatic
+        var textWeight: Float = 0f
+        @JvmStatic
+        var fallbackTextWeight: Float = 0f
+
+        // 配置线程/初始化线程只置标志，真正的 GL 重烘焙在渲染线程的 Render2D 回调中执行
+        @Volatile
+        private var styleReloadPending = false
+        @Volatile
+        private var fallbackInvalidatePending = false
+
+        /** 请求重新烘焙全局字体样式（字号/粗细）；线程安全，延迟到渲染线程执行。 */
+        @JvmStatic
+        fun requestStyleReload() {
+            styleReloadPending = true
+        }
+
+        /** 请求清除所有渲染器的中文回退字形缓存（字体文件/字号/粗细变化时）；延迟到渲染线程执行。 */
+        @JvmStatic
+        fun requestFallbackInvalidate() {
+            fallbackInvalidatePending = true
+        }
+
+        /** 在渲染线程上清除所有渲染器的中文回退字形缓存。 */
+        private fun invalidateFallbackGlyphs() {
+            activeFontRenderers.forEach { it.clearFallbackCache() }
+        }
+
+        // ===== 中文回退字体设置（由 Client 模块同步写入）=====
+        // 主字体缺字形时使用的回退字体文件（相对 assets/minecraft/airplus/fonts/ 或 fontsDir）
+        @JvmStatic
+        var fallbackFontFile: String = "HarmonyOS_Sans_SC_Regular.ttf"
+        // 字号模式："Offset" = 所在渲染器字号 + offset；"Percent" = 所在渲染器字号 × scale%
+        @JvmStatic
+        var fallbackFontSizeMode: String = "Offset"
+        @JvmStatic
+        var fallbackFontSizeOffset: Int = 0
+        @JvmStatic
+        var fallbackFontSizeScale: Int = 100
+
         private val activeFontRenderers = mutableListOf<AWTFontRenderer>()
 
-        // 限制为 LRU，避免不同 size 缓存无限增长（每个 size 都会触发一次 Font 构造，长期占用内存）
+        // 回退字体缓存：key = "$file#$targetSize"，避免切换字体/模式后取到陈旧条目
         private const val MAX_FALLBACK_FONTS = 32
-        private val chineseFallbackFonts = object : LinkedHashMap<Int, Font>(MAX_FALLBACK_FONTS, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, Font>): Boolean {
-                return size > MAX_FALLBACK_FONTS
+        private val chineseFallbackFonts = HashMap<String, Font>()
+
+        private fun resolveFallbackTargetSize(size: Int): Int {
+            return if (fallbackFontSizeMode.equals("Percent", true)) {
+                (size * fallbackFontSizeScale / 100).coerceAtLeast(1)
+            } else {
+                (size + fallbackFontSizeOffset).coerceAtLeast(1)
             }
         }
 
         private fun getChineseFallbackFont(size: Int): Font? {
-            chineseFallbackFonts[size]?.let { return it }
+            val targetSize = resolveFallbackTargetSize(size)
+            val file = fallbackFontFile
+            val cacheKey = "$file#$targetSize"
+            synchronized(chineseFallbackFonts) {
+                chineseFallbackFonts[cacheKey]?.let { return it }
+            }
 
+            // 优先使用配置的回退字体文件
+            val configured = Fonts.loadFontFile(file, targetSize)
+            if (configured != null && (configured.canDisplay('\u4e2d') || configured.canDisplay('\u6587'))) {
+                synchronized(chineseFallbackFonts) {
+                    if (chineseFallbackFonts.size > MAX_FALLBACK_FONTS) chineseFallbackFonts.clear()
+                    chineseFallbackFonts[cacheKey] = configured
+                }
+                return configured
+            }
+
+            // 配置字体不可用 → 系统字体回退（原逻辑）
             val fallbackFonts = listOf(
                 "Microsoft YaHei",
                 "SimHei",
@@ -61,9 +128,12 @@ class AWTFontRenderer(
 
             for (fallbackName in fallbackFonts) {
                 try {
-                    val fallbackFont = Font(fallbackName, Font.PLAIN, size)
+                    val fallbackFont = Font(fallbackName, Font.PLAIN, targetSize)
                     if (fallbackFont.canDisplay('\u4e2d') || fallbackFont.canDisplay('\u6587')) {
-                        chineseFallbackFonts[size] = fallbackFont
+                        synchronized(chineseFallbackFonts) {
+                            if (chineseFallbackFonts.size > MAX_FALLBACK_FONTS) chineseFallbackFonts.clear()
+                            chineseFallbackFonts[cacheKey] = fallbackFont
+                        }
                         return fallbackFont
                     }
                 } catch (e: Exception) {
@@ -89,6 +159,17 @@ class AWTFontRenderer(
         private var gcTicks = 0
 
         private val onRender2D = handler<Render2DEvent>(priority = Byte.MIN_VALUE) {
+            // 全局字号/粗细变化：在渲染线程重烘焙核心字体并刷新回退字形缓存
+            if (styleReloadPending) {
+                styleReloadPending = false
+                fallbackInvalidatePending = false
+                Fonts.rebakeStyledFonts()
+                invalidateFallbackGlyphs()
+            } else if (fallbackInvalidatePending) {
+                fallbackInvalidatePending = false
+                invalidateFallbackGlyphs()
+            }
+
             if (++gcTicks > GC_TICKS) {
                 activeFontRenderers.forEach { it.collectGarbage() }
                 gcTicks = 0
@@ -136,6 +217,44 @@ class AWTFontRenderer(
         val fm = g.fontMetrics
         g.dispose()
         fm.height * 0.25f
+    }
+
+    /** 某字形应套用的描边粗细（烘焙像素）：图标渲染器恒为 0。 */
+    private fun weightPx(fallback: Boolean): Float =
+        if (!styleable) 0f
+        else if (fallback) textWeight + fallbackTextWeight
+        else textWeight
+
+    /**
+     * 绘制字形到 AWT 画布：粗细为 0 时沿用原生 drawString（保持原有观感）；
+     * 大于 0 时用字形轮廓 + 描边加粗，从而实现可自定义的字重。
+     */
+    private fun drawGlyph(g2d: java.awt.Graphics2D, useFont: Font, fm: FontMetrics, text: String, weight: Float) {
+        g2d.font = useFont
+        g2d.color = Color.WHITE
+        if (weight <= 0f) {
+            g2d.drawString(text, 3, 1 + fm.ascent)
+            return
+        }
+        val outline = useFont.createGlyphVector(g2d.fontRenderContext, text)
+            .getOutline(3f, (1 + fm.ascent).toFloat())
+        g2d.fill(outline)
+        g2d.stroke = BasicStroke(weight, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+        g2d.draw(outline)
+    }
+
+    /**
+     * 清除中文回退字形缓存：回退字体文件/字号/粗细变化后，动态字形贴图、字符尺寸表
+     * 以及宽度/显示列表缓存都必须失效，否则设置改动看起来「没有生效」。
+     * 含 GL 调用，必须在渲染线程执行。
+     */
+    private fun clearFallbackCache() {
+        dynamicCharTextures.values.forEach { glDeleteTextures(it) }
+        dynamicCharTextures.clear()
+        charLocations.keys.removeAll { it > 255 }
+        cachedStringWidths.clear()
+        cachedStringFonts.values.forEach { glDeleteLists(it.displayList, 1) }
+        cachedStringFonts.clear()
     }
 
     init {
@@ -248,10 +367,12 @@ class AWTFontRenderer(
      */
     private fun measureChar(c: Char): CharLocation? {
         var useFont = font
+        var isFallback = false
         if (!font.canDisplay(c)) {
             val fallback = getChineseFallbackFont(font.size)
             if (fallback != null && fallback.canDisplay(c)) {
                 useFont = fallback
+                isFallback = true
             } else {
                 return null
             }
@@ -264,9 +385,11 @@ class AWTFontRenderer(
             measureG.font = useFont
 
             val fm = measureG.fontMetrics
-            var w = fm.charWidth(c) + 8
+            // 字重描边会向外扩张，宽高预留相应像素，保证排版间距与描边后的实际字宽一致
+            val pad = ceil(weightPx(isFallback)).toInt()
+            var w = fm.charWidth(c) + 8 + pad
             if (w <= 0) w = 7
-            var h = fm.height + 3
+            var h = fm.height + 3 + pad
             if (h <= 0) h = useFont.size
             measureG.dispose()
 
@@ -284,8 +407,15 @@ class AWTFontRenderer(
         val h = loc.height
 
         var useFont = font
+        var isFallback = false
         if (!font.canDisplay(c)) {
-            useFont = getChineseFallbackFont(font.size) ?: font
+            val fb = getChineseFallbackFont(font.size)
+            if (fb != null) {
+                useFont = fb
+                isFallback = true
+            } else {
+                useFont = font
+            }
         }
 
         try {
@@ -303,9 +433,7 @@ class AWTFontRenderer(
             g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
             g2d.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON)
             g2d.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
-            g2d.font = useFont
-            g2d.color = Color.WHITE
-            g2d.drawString(c.toString(), 3, 1 + fm.ascent)
+            drawGlyph(g2d, useFont, fm, c.toString(), weightPx(isFallback))
             g2d.dispose()
 
             val texId = TextureUtil.glGenTextures()
@@ -497,9 +625,11 @@ class AWTFontRenderer(
         measureG.font = font
 
         val fm = measureG.fontMetrics
-        var w = fm.charWidth(c) + 8
+        // 字重描边会向外扩张，宽高预留相应像素
+        val pad = ceil(weightPx(false)).toInt()
+        var w = fm.charWidth(c) + 8 + pad
         if (w <= 0) w = 7
-        var h = fm.height + 3
+        var h = fm.height + 3 + pad
         if (h <= 0) h = font.size
 
         val charImg = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
@@ -509,9 +639,7 @@ class AWTFontRenderer(
         g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
         g2d.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON)
         g2d.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
-        g2d.font = font
-        g2d.color = Color.WHITE
-        g2d.drawString(c.toString(), 3, 1 + fm.ascent)
+        drawGlyph(g2d, font, fm, c.toString(), weightPx(false))
         return charImg
     }
 

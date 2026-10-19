@@ -115,6 +115,12 @@ public abstract class MixinEntityRenderer {
     @Inject(at = @At("HEAD"), method = "updateCameraAndRender")
     private void injectCameraModifications(float p_updateCameraAndRender_1_, long p_updateCameraAndRender_2_, CallbackInfo ci) {
         FreeCam.INSTANCE.useModifiedPosition();
+
+        // Camera: per-frame perspective-switch animation state update, must run before
+        // orientCamera / renderWorldPass read thirdPersonView this frame
+        if (Camera.INSTANCE.handleEvents()) {
+            Camera.INSTANCE.updateViewTransition();
+        }
     }
 
     @Inject(method = "orientCamera", at = @At(value = "HEAD"))
@@ -124,16 +130,19 @@ public abstract class MixinEntityRenderer {
 
     /**
      * Camera: replace the vanilla third-person camera distance (4.0F, clamped by the
-     * collision raytrace loop skipped in {@link #injectCameraClip}) with the fixed
-     * Distance value, the equivalent of SetsunaClient's Camera#getMaxZoom hook.
+     * collision raytrace loop skipped in {@link #injectCameraClip}) with the animated
+     * distance (settles at the fixed Distance value), the equivalent of SetsunaClient's
+     * Camera#getMaxZoom hook. While a perspective switch is in progress the animated
+     * distance collapses to 0 and expands again, producing the zoom transition.
      */
     @Inject(method = "orientCamera", at = @At("HEAD"))
     private void injectCameraDistance(float p_orientCamera_1_, CallbackInfo ci) {
         final Camera camera = Camera.INSTANCE;
 
-        if (camera.handleEvents() && !FreeCam.INSTANCE.handleEvents() && this.mc.gameSettings.thirdPersonView != 0) {
-            this.thirdPersonDistance = camera.getFixedDistance();
-            this.thirdPersonDistanceTemp = this.thirdPersonDistance;
+        if (camera.handleEvents() && !FreeCam.INSTANCE.handleEvents()) {
+            final float animated = camera.getAnimatedDistance();
+            this.thirdPersonDistance = animated;
+            this.thirdPersonDistanceTemp = animated;
         } else {
             this.thirdPersonDistance = 4.0F;
             this.thirdPersonDistanceTemp = 4.0F;

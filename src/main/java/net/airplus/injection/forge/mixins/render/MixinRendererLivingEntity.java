@@ -8,7 +8,6 @@ package net.airplus.injection.forge.mixins.render;
 import co.uk.hexeption.utils.OutlineUtils;
 import net.airplus.features.module.modules.render.*;
 import net.airplus.utils.client.ClientUtils;
-import net.airplus.utils.attack.EntityUtils;
 import net.airplus.utils.render.RenderUtils;
 import net.minecraft.client.model.ModelBase;
 import net.minecraft.client.renderer.entity.RendererLivingEntity;
@@ -37,12 +36,9 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
 
     @Inject(method = "doRender(Lnet/minecraft/entity/EntityLivingBase;DDDFF)V", at = @At("HEAD"))
     private <T extends EntityLivingBase> void injectChamsPre(T entity, double x, double y, double z, float entityYaw, float partialTicks, CallbackInfo callbackInfo) {
-        final Chams chams = Chams.INSTANCE;
         final ESP esp = ESP.INSTANCE;
-        // Cheap checks first: mode string compare before the expensive shouldRender()
-        boolean shouldRender = chams.handleEvents() && chams.getTargets() && EntityUtils.INSTANCE.isSelected(entity, false) || esp.handleEvents() && "Gaussian".equals(esp.getMode()) && esp.shouldRender(entity);
-
-        if (shouldRender) {
+        // Cheap check first: mode string compare before the expensive shouldRender()
+        if (esp.handleEvents() && "Gaussian".equals(esp.getMode()) && esp.shouldRender(entity)) {
             glEnable(GL_POLYGON_OFFSET_FILL);
             glPolygonOffset(1f, -1000000F);
         }
@@ -50,11 +46,8 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
 
     @Inject(method = "doRender(Lnet/minecraft/entity/EntityLivingBase;DDDFF)V", at = @At("RETURN"))
     private <T extends EntityLivingBase> void injectChamsPost(T entity, double x, double y, double z, float entityYaw, float partialTicks, CallbackInfo callbackInfo) {
-        final Chams chams = Chams.INSTANCE;
         final ESP esp = ESP.INSTANCE;
-        boolean shouldRender = chams.handleEvents() && chams.getTargets() && EntityUtils.INSTANCE.isSelected(entity, false) || esp.handleEvents() && "Gaussian".equals(esp.getMode()) && esp.shouldRender(entity);
-
-        if (shouldRender) {
+        if (esp.handleEvents() && "Gaussian".equals(esp.getMode()) && esp.shouldRender(entity)) {
             glPolygonOffset(1f, 1000000F);
             glDisable(GL_POLYGON_OFFSET_FILL);
         }

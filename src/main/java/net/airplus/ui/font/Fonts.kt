@@ -61,6 +61,19 @@ object Fonts : MinecraftInstance {
         mc.fontRendererObj
     }
 
+    // ===== 主字体：客户端主要 UI 字体（Client 模块可切换），Semibold/Regular/Bold180 全部跟随该文件 =====
+    var mainFontFile: String = "HarmonyOS_Sans_SC_Regular.ttf"
+
+    // ===== 全局字号：Client 模块 FontSize 控制，仅在烘焙核心 UI 文本字体时套用（百分比）=====
+    @JvmStatic
+    var globalFontSizeScale: Int = 100
+
+    private fun styledSize(size: Int) = (size * globalFontSizeScale / 100).coerceAtLeast(1)
+
+    /** 主字体文本渲染器统一烘焙入口：全局字号在此套用。 */
+    private fun mainFontRenderer(size: Int): GameFontRenderer =
+        getFontOrDefault(mainFontFile, styledSize(size)).asGameFontRenderer()
+
     // ===== 启动关键路径字体：HUD / 核心 GUI 需要，loadFonts 时立即烘焙 =====
     lateinit var fontSemibold35: GameFontRenderer
     lateinit var fontSemibold40: GameFontRenderer
@@ -69,15 +82,26 @@ object Fonts : MinecraftInstance {
     lateinit var fontRegular40: GameFontRenderer
 
     // ===== 其余字体：懒加载，首次访问（或 FontValue 字体循环遍历）时才创建 =====
-    val fontExtraBold35: GameFontRenderer by lazy { extraBold35() }
-    val fontExtraBold40: GameFontRenderer by lazy { extraBold40() }
-    val fontRegular45: GameFontRenderer by lazy {
-        register(FontInfo(name = "HarmonyOS Sans SC Regular", size = 45), getFontOrDefault("HarmonyOS_Sans_SC_Regular.ttf", 45).asGameFontRenderer())
-    }
-    val fontBold180: GameFontRenderer by lazy {
-        // HarmonyOS_Sans_SC_Medium 专用内部字体（主菜单大标题等），不进注册表（不可被 FontValue 选中）
-        getFontOrDefault("HarmonyOS_Sans_SC_Medium.ttf", 180).asGameFontRenderer()
-    }
+    // ExtraBold 系列跟随主字体，用可失效缓存以便全局字号/粗细变化后重建
+    private var _fontExtraBold35: GameFontRenderer? = null
+    private var _fontExtraBold40: GameFontRenderer? = null
+    val fontExtraBold35: GameFontRenderer
+        get() = _fontExtraBold35 ?: extraBold35().also { _fontExtraBold35 = it }
+    val fontExtraBold40: GameFontRenderer
+        get() = _fontExtraBold40 ?: extraBold40().also { _fontExtraBold40 = it }
+
+    // 可失效缓存：主字体切换/全局字号粗细变化时置空，下次访问按新设置重建
+    private var _fontRegular45: GameFontRenderer? = null
+    private var _fontBold180: GameFontRenderer? = null
+
+    val fontRegular45: GameFontRenderer
+        get() = _fontRegular45 ?: register(
+            FontInfo(name = "HarmonyOS Sans SC Regular", size = 45),
+            mainFontRenderer(45)
+        ).also { _fontRegular45 = it }
+
+    val fontBold180: GameFontRenderer
+        get() = _fontBold180 ?: mainFontRenderer(180).also { _fontBold180 = it }
 
     val fontNeutonBold35: GameFontRenderer by lazy {
         register(FontInfo(name = "Neuton Bold", size = 35), getFontOrDefault("Neuton-Bold.ttf", 35).asGameFontRenderer())
@@ -162,12 +186,10 @@ object Fonts : MinecraftInstance {
         register(FontInfo(name = "Usans", size = 50), getFontOrDefault("usans.otf", 50).asGameFontRenderer())
     }
 
-    // ExtraBold / Bold180 属于次级内部 GUI 字体（HarmonyOS_Sans_SC_Medium），同样走懒加载委托，
+    // ExtraBold / Bold180 属于次级内部 GUI 字体，同样走懒加载委托，
     // 但不注册进 FONT_PROVIDERS（不可被 FontValue 字体循环选中）
-    private fun extraBold35(): GameFontRenderer =
-        getFontOrDefault("HarmonyOS_Sans_SC_Medium.ttf", 35).asGameFontRenderer()
-    private fun extraBold40(): GameFontRenderer =
-        getFontOrDefault("HarmonyOS_Sans_SC_Medium.ttf", 40).asGameFontRenderer()
+    private fun extraBold35(): GameFontRenderer = mainFontRenderer(35)
+    private fun extraBold40(): GameFontRenderer = mainFontRenderer(40)
 
     // session.ttf（SessIcon）：图标字体。不进注册表，按需懒加载。
     val fontSessIcon14: GameFontRenderer by lazy { sessIcon(14) }
@@ -177,12 +199,12 @@ object Fonts : MinecraftInstance {
     val fontSessIcon60: GameFontRenderer by lazy { sessIcon(60) } // Hanabi 主菜单按钮图标 (sessionInfoIcon30 ×2)
 
     private fun sessIcon(size: Int): GameFontRenderer =
-        getFontOrDefault("SessIcon.ttf", size).asGameFontRenderer()
+        getFontOrDefault("SessIcon.ttf", size).asGameFontRenderer(styleable = false)
 
     // Flux 通知字体（移植自 today.flux FontManager；Icon.ttf 为图标字体，字形 A=info B=warning C=error D=success）。
     // Flux/Yarukon 字体管线渲染尺寸 = 标称 x0.5，与 Hanabi 同理，此处取 x2 标称尺寸还原原始大小。
     // 不进注册表，供 Notifications "Flux" 样式内部使用。
-    val fontFluxIcon: GameFontRenderer by lazy { fluxFont("Icon.ttf", 60) }
+    val fontFluxIcon: GameFontRenderer by lazy { fluxFont("Icon.ttf", 60, styleable = false) }
     val fontFluxTitle: GameFontRenderer by lazy { fluxFont("PoppinsSemiBold.ttf", 40) }
     val fontFluxDesc: GameFontRenderer by lazy { fluxFont("PoppinsRegular.ttf", 32) }
 
@@ -192,13 +214,13 @@ object Fonts : MinecraftInstance {
     val fontFluxRobotoL40 by lazy { fluxFont("RobotoLight.ttf", 80) } // 启动动画大字 (40×2)
     val fontFluxRobotoL18 by lazy { fluxFont("RobotoLight.ttf", 36) } // 启动动画副字 (18×2)
     val fontFluxSans by lazy { fluxFont("sans.ttf", 36) }            // 主按钮文字 (18×2)
-    val fontFluxIcon20 by lazy { fluxFont("Icon.ttf", 40) }          // 圆形小按钮图标 (20×2)
+    val fontFluxIcon20 by lazy { fluxFont("Icon.ttf", 40, styleable = false) }   // 圆形小按钮图标 (20×2)
 
     // Flux TabGUI 字体（移植自 today.flux FontManager.normal2 = ArialBold 16，x2 还原）
     val fontFluxTabGui: GameFontRenderer by lazy { fluxFont("ArialBold.ttf", 32) }
 
-    private fun fluxFont(file: String, size: Int): GameFontRenderer =
-        getFontOrDefault(file, size).asGameFontRenderer()
+    private fun fluxFont(file: String, size: Int, styleable: Boolean = true): GameFontRenderer =
+        getFontOrDefault(file, size).asGameFontRenderer(styleable)
 
     // ===== Setsuna 字体（移植自 SetsunaClient）=====
     // Setsuna 的 Skija 绘制像素 ≈ 本客户端标称尺寸 x 0.25，因此移植代码传入源端像素值，
@@ -208,27 +230,30 @@ object Fonts : MinecraftInstance {
 
     fun fontSetsuna(file: String, size: Int): GameFontRenderer =
         SETSUNA_FONT_CACHE.getOrPut("$file#$size") {
-            getFontOrDefault("Setsuna_$file", size * 4).asGameFontRenderer()
+            // pf_normal 为中文文本字体（可套用全局粗细），其余为音乐/图标字体（不套用）
+            getFontOrDefault("Setsuna_$file", size * 4).asGameFontRenderer(styleable = file == "pf_normal.ttf")
         }
 
+    // 别名必须走即时 getter：主字体切换后 Regular/Semibold 渲染器会被重建，
+    // by lazy 会永久缓存旧对象导致别名不跟随新字体
     @JvmStatic
-    val font24: GameFontRenderer by lazy { fontRegular30 }
+    val font24: GameFontRenderer get() = fontRegular30
     @JvmStatic
-    val font30: GameFontRenderer by lazy { fontRegular30 }
+    val font30: GameFontRenderer get() = fontRegular30
     @JvmStatic
-    val font35: GameFontRenderer by lazy { fontRegular35 }
+    val font35: GameFontRenderer get() = fontRegular35
     @JvmStatic
-    val font40: GameFontRenderer by lazy { fontRegular40 }
+    val font40: GameFontRenderer get() = fontRegular40
     @JvmStatic
-    val font52: GameFontRenderer by lazy { fontRegular45 }
+    val font52: GameFontRenderer get() = fontRegular45
     @JvmStatic
-    val fontSF35: GameFontRenderer by lazy { fontSemibold35 }
+    val fontSF35: GameFontRenderer get() = fontSemibold35
     @JvmStatic
-    val fontSF40: GameFontRenderer by lazy { fontSemibold40 }
+    val fontSF40: GameFontRenderer get() = fontSemibold40
     @JvmStatic
-    val font72: GameFontRenderer by lazy { fontBold180 }
+    val font72: GameFontRenderer get() = fontBold180
     @JvmStatic
-    val font32: GameFontRenderer by lazy { fontRegular35 }
+    val font32: GameFontRenderer get() = fontRegular35
 
     private fun <T : FontRenderer> register(fontInfo: FontInfo, fontRenderer: T): T {
         FONT_PROVIDERS[fontInfo] = { fontRenderer }
@@ -264,35 +289,19 @@ object Fonts : MinecraftInstance {
             register(minecraftFontInfo, minecraftFont)
 
             // 启动关键路径字体（HUD / 主菜单 / 核心 GUI）：立即烘焙
-            fontRegular30 = register(
-                FontInfo(name = "HarmonyOS Sans SC Regular", size = 30),
-                getFontOrDefault("HarmonyOS_Sans_SC_Regular.ttf", 30).asGameFontRenderer()
-            )
-
-            fontSemibold35 = register(
-                FontInfo(name = "HarmonyOS Sans SC Medium", size = 35),
-                getFontOrDefault("HarmonyOS_Sans_SC_Medium.ttf", 35).asGameFontRenderer()
-            )
-
-            fontRegular35 = register(
-                FontInfo(name = "HarmonyOS Sans SC Regular", size = 35),
-                getFontOrDefault("HarmonyOS_Sans_SC_Regular.ttf", 35).asGameFontRenderer()
-            )
-
-            fontRegular40 = register(
-                FontInfo(name = "HarmonyOS Sans SC Regular", size = 40),
-                getFontOrDefault("HarmonyOS_Sans_SC_Regular.ttf", 40).asGameFontRenderer()
-            )
-
-            fontSemibold40 = register(
-                FontInfo(name = "HarmonyOS Sans SC Medium", size = 40),
-                getFontOrDefault("HarmonyOS_Sans_SC_Medium.ttf", 40).asGameFontRenderer()
-            )
+            bakeCoreFonts()
 
             // 其余字体：只注册 provider（保持原有注册表顺序，供 FontValue 字体循环遍历），
             // 首次实际使用时才解析 TTF + 烘焙字形
             registerLazy(FontInfo(name = "HarmonyOS Sans SC Regular", size = 45)) {
-                getFontOrDefault("HarmonyOS_Sans_SC_Regular.ttf", 45).asGameFontRenderer()
+                mainFontRenderer(45)
+            }
+            // Setsuna 中文字体（Setsuna_pf_normal）注册进注册表，供主字体选择 / FontValue 循环遍历
+            registerLazy(FontInfo(name = "Setsuna", size = 35)) {
+                getFontOrDefault("Setsuna_pf_normal.ttf", 35).asGameFontRenderer()
+            }
+            registerLazy(FontInfo(name = "Setsuna", size = 40)) {
+                getFontOrDefault("Setsuna_pf_normal.ttf", 40).asGameFontRenderer()
             }
             registerLazy(FontInfo(name = "Neuton Bold", size = 35)) {
                 getFontOrDefault("Neuton-Bold.ttf", 35).asGameFontRenderer()
@@ -489,8 +498,103 @@ object Fonts : MinecraftInstance {
         return getFontFromResource(file, size) ?: getFallbackFont(size)
     }
 
-    private fun Font.asGameFontRenderer(): GameFontRenderer {
-        return GameFontRenderer(this@asGameFontRenderer)
+    /**
+     * 按文件名加载字体（先 fontsDir 用户目录，再内置资源），失败返回 null。
+     * 供 AWTFontRenderer 中文回退字体等外部机制使用。
+     */
+    internal fun loadFontFile(file: String, size: Int): Font? =
+        getFontFromFileOrNull(file, size) ?: getFontFromResource(file, size)
+
+    /** 注册表字体族名 -> 内置 TTF 文件（主字体切换用）。 */
+    private val FAMILY_FILES = mapOf(
+        "HarmonyOS Sans SC Regular" to "HarmonyOS_Sans_SC_Regular.ttf",
+        "Setsuna" to "Setsuna_pf_normal.ttf",
+        "Neuton Bold" to "Neuton-Bold.ttf",
+        "Neuton ExtraLight" to "Neuton-ExtraLight.ttf",
+        "Neuton Italic" to "Neuton-Italic.ttf",
+        "Neuton Light" to "Neuton-Light.ttf",
+        "Nosifer" to "Nosifer-Regular.ttf",
+        "Zen Dots" to "ZenDots-Regular.ttf",
+        "SF Apple" to "SFApple.ttf",
+        "Rise SF UI Pro" to "SF-UI-Pro.ttf",
+        "Usans" to "usans.otf"
+    )
+
+    /**
+     * 主字体候选列表：自动取自字体注册表全部非图标字体族名
+     * （排除 Minecraft 原版字体与 Semibold 别名族，Semibold 跟随主字体无需单选）。
+     */
+    fun mainFontCandidates(): Array<String> =
+        FONT_PROVIDERS.keys.map { it.name }
+            .distinct()
+            .filter {
+                !it.equals("Minecraft Font", true) &&
+                        !it.equals("HarmonyOS Sans SC Medium", true)
+            }
+            .toTypedArray()
+
+    /** 解析字体族名对应的 TTF 文件（内置映射优先，其次用户自定义字体）。 */
+    private fun resolveFamilyFile(family: String): String? {
+        FAMILY_FILES[family]?.let { return it }
+        return customFontInfoList.find { it.name.equals(family, true) }?.fontFile
+    }
+
+    /**
+     * 切换客户端主字体（Client 模块调用）。
+     * Regular/Semibold/ExtraBold/Bold180 全部跟随新字体文件重新烘焙；
+     * 若 loadFonts 尚未执行则仅记录文件，启动时自然生效。
+     */
+    fun applyMainFont(family: String) {
+        val file = resolveFamilyFile(family) ?: return
+        if (file == mainFontFile && ::fontRegular30.isInitialized) return
+        mainFontFile = file
+
+        if (!::fontRegular30.isInitialized) return
+
+        bakeCoreFonts()
+    }
+
+    /**
+     * 烘焙核心 UI 文本字体（跟随主字体文件 + 全局字号）。
+     * Semibold 系列原为 HarmonyOS_Sans_SC_Medium，Medium 已删，跟随主字体文件，
+     * 注册名保留 "HarmonyOS Sans SC Medium" 以兼容旧配置中的 FontValue 引用。
+     */
+    private fun bakeCoreFonts() {
+        fontRegular30 = register(
+            FontInfo(name = "HarmonyOS Sans SC Regular", size = 30),
+            mainFontRenderer(30)
+        )
+        fontSemibold35 = register(
+            FontInfo(name = "HarmonyOS Sans SC Medium", size = 35),
+            mainFontRenderer(35)
+        )
+        fontRegular35 = register(
+            FontInfo(name = "HarmonyOS Sans SC Regular", size = 35),
+            mainFontRenderer(35)
+        )
+        fontRegular40 = register(
+            FontInfo(name = "HarmonyOS Sans SC Regular", size = 40),
+            mainFontRenderer(40)
+        )
+        fontSemibold40 = register(
+            FontInfo(name = "HarmonyOS Sans SC Medium", size = 40),
+            mainFontRenderer(40)
+        )
+        // 可失效懒缓存置空，下次访问按新字体重建
+        _fontRegular45 = null
+        _fontBold180 = null
+        _fontExtraBold35 = null
+        _fontExtraBold40 = null
+    }
+
+    /** 全局字号/粗细变化后重建核心文本字体（在渲染线程调用，见 AWTFontRenderer.onRender2D）。 */
+    fun rebakeStyledFonts() {
+        if (!::fontRegular30.isInitialized) return
+        bakeCoreFonts()
+    }
+
+    private fun Font.asGameFontRenderer(styleable: Boolean = true): GameFontRenderer {
+        return GameFontRenderer(this@asGameFontRenderer, styleable)
     }
 
 }

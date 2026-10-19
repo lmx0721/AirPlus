@@ -5,7 +5,6 @@
  */
 package net.airplus.injection.forge.mixins.render;
 
-import net.airplus.features.module.modules.render.Chams;
 import net.airplus.features.module.modules.render.ItemPhysics;
 import net.minecraft.client.renderer.block.model.ItemCameraTransforms;
 import net.minecraft.client.renderer.entity.Render;
@@ -18,9 +17,6 @@ import net.minecraft.item.ItemStack;
 import org.lwjgl.opengl.GL11;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Overwrite;
-import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import static net.minecraft.client.renderer.GlStateManager.*;
 import static net.minecraft.util.MathHelper.sin;
@@ -30,26 +26,6 @@ import static org.lwjgl.opengl.GL11.*;
 public abstract class MixinRenderEntityItem extends Render<EntityItem> {
     protected MixinRenderEntityItem(final RenderManager p_i46179_1_) {
         super(p_i46179_1_);
-    }
-
-    @Inject(method = "doRender", at = @At("HEAD"))
-    private void injectChamsPre(CallbackInfo callbackInfo) {
-        final Chams chams = Chams.INSTANCE;
-
-        if (chams.handleEvents() && chams.getItems()) {
-            glEnable(GL_POLYGON_OFFSET_FILL);
-            glPolygonOffset(1f, -1000000F);
-        }
-    }
-
-    @Inject(method = "doRender", at = @At("RETURN"))
-    private void injectChamsPost(CallbackInfo callbackInfo) {
-        final Chams chams = Chams.INSTANCE;
-
-        if (chams.handleEvents() && chams.getItems()) {
-            glPolygonOffset(1f, 1000000F);
-            glDisable(GL_POLYGON_OFFSET_FILL);
-        }
     }
 
     /**

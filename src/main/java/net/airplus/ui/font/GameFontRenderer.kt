@@ -45,18 +45,22 @@ fun FontRenderer.drawCenteredString(
  * @author opZywl
  */
 class GameFontRenderer(
-    font: Font
+    font: Font,
+    /** 是否套用全局字体粗细；图标字体传 false。 */
+    styleable: Boolean = true
 ) : FontRenderer(
     mc.gameSettings, ResourceLocation("textures/font/ascii.png"), mc.textureManager, false
 ) {
 
-    val defaultFont = AWTFontRenderer(font)
+    val defaultFont = AWTFontRenderer(font, styleable = styleable)
 
     // 样式变体懒烘焙：绝大多数文字不含 §l/§o 样式码，启动时烘焙 bold/italic/boldItalic
     // 是纯浪费（每个字体 4 次字形贴图烘焙 → 1 次）。
-    private val boldFont: AWTFontRenderer by lazy { AWTFontRenderer(font.deriveFont(Font.BOLD)) }
-    private val italicFont: AWTFontRenderer by lazy { AWTFontRenderer(font.deriveFont(Font.ITALIC)) }
-    private val boldItalicFont: AWTFontRenderer by lazy { AWTFontRenderer(font.deriveFont(Font.BOLD or Font.ITALIC)) }
+    private val boldFont: AWTFontRenderer by lazy { AWTFontRenderer(font.deriveFont(Font.BOLD), styleable = styleable) }
+    private val italicFont: AWTFontRenderer by lazy { AWTFontRenderer(font.deriveFont(Font.ITALIC), styleable = styleable) }
+    private val boldItalicFont: AWTFontRenderer by lazy {
+        AWTFontRenderer(font.deriveFont(Font.BOLD or Font.ITALIC), styleable = styleable)
+    }
 
     val fontHeight: Int
     val size: Int

@@ -77,7 +77,7 @@ import kotlin.math.sin
 import kotlin.math.abs
 object Island : Module("Island", Category.RENDER) {
     private val ClientName by text("ClientName", "Air")
-    val style by choices("Style", arrayOf("ios", "legacy"), "legacy")
+    val style by choices("Style", arrayOf("ios", "legacy", "prism"), "legacy")
     private val animTension by float("BounceTension", 0.01f, 0.01f..1.0f)
     private val animFriction by float("BounceFriction", 0.12f, 0.01f..1.0f)
     // 每个样式的圆角设置
@@ -89,7 +89,6 @@ object Island : Module("Island", Category.RENDER) {
     private val iosExpandAnim by choices("iOS-ExpandAnim", arrayOf("Bounce", "EaseOut", "Linear", "Back"), "Bounce") { style == "ios" }
 
     // iOS样式设置
-    private val iosShadowStrength by float("iOS-ShadowStrength", 10F, 0F..30F) { style == "ios" }
     private val iosBlurStrength by float("iOS-BlurStrength", 15F, 0F..50F) { style == "ios" }
 
     private val logoIcon by choices("LogoIcon", arrayOf("Default", "A", "Diamond", "Radioactive", "Start", "Start2", "Earth"), "A")
@@ -112,13 +111,27 @@ object Island : Module("Island", Category.RENDER) {
     private val shadowRadiusValue by float("Shadow-Radius", 15F, 1F..50F) { ShadowCheck }
     private val shadowColor by color("Shadow-Color", Color(0, 0, 0, 120)) { ShadowCheck }
 
+    // iOS 样式阴影
+    private val iosShadowCheck by boolean("iOS-Shadow", false) { style == "ios" }
+    private val iosShadowRadius by float("iOS-Shadow-Radius", 14F, 1F..50F) { style == "ios" && iosShadowCheck }
+    private val iosShadowColor by color("iOS-Shadow-Color", Color(0, 0, 0, 110)) { style == "ios" && iosShadowCheck }
+
+    // ===== Prism 新样式设置 =====
+    // 背景透明度直接由颜色 alpha 控制；blur 使用全局 Blur 设置
+    private val prismBackground by color("Prism-Background", Color(0, 0, 0, 235)) { style == "prism" }
+    private val prismAccent by color("Prism-Accent", Color(108, 166, 255)) { style == "prism" }
+    private val newRadius by float("New-Radius", 16F, 0F..50F) { style == "prism" }
+    private val newShadowCheck by boolean("New-Shadow", true) { style == "prism" }
+    private val newShadowRadius by float("New-Shadow-Radius", 14F, 1F..50F) { newShadowCheck && style == "prism" }
+    private val newShadowColor by color("New-Shadow-Color", Color(0, 0, 0, 110)) { newShadowCheck && style == "prism" }
+
     private val blurCheck by boolean("Blur", true)
     private val blurMode by choices("BlurMode", arrayOf("Gaussian", "Dual", "Better", "Kawase"), "Better") { blurCheck }
     private val blurRadius by float("BlurStrength", 10F, 1F..50F) { blurCheck }
     private val kawaseIterations by int("Kawase-Iterations", 4, 1..10) { blurCheck && blurMode == "Kawase" }
     private val kawaseOffset by int("Kawase-Offset", 3, 1..10) { blurCheck && blurMode == "Kawase" }
 
-    private val notifyDuration by int("NotifyTime(ms)", 1000, 100..10000) { style == "legacy" }
+    private val notifyDuration by int("NotifyTime(ms)", 1000, 100..10000) { style == "legacy" || style == "prism" }
     private val versionNameUp by text("VersionName", "development") { false }
     private val ButtonColor by color("Button-Color", Color(20, 150, 180, 255)) { style == "legacy" }
     private val ModuleNotify by boolean("Notification", true)
@@ -812,6 +825,89 @@ object Island : Module("Island", Category.RENDER) {
             targetY = start_y
         } else {
             when (style) {
+                "prism" -> {
+                    val scaffoldOn = isScaffold && (scaffoldModuleRef?.state == true || scaffold2ModuleRef?.state == true)
+                    val musicOn = MusicHub.isCurrentlyPlaying && (MusicHub.currentLyricDisplay.isNotEmpty() || MusicHub.currentMusicName != "None")
+                    val toggleActive = ModuleNotify && notifications.isNotEmpty()
+                    val gappleOn = showGappleProgress && animatedGappleProgress > 0.01f && gappleModuleRef?.state == true
+                    val tabListOn = showTabList && playerList.isNotEmpty()
+                    val pearlOn = pearlCountdown && pearlTicksRemaining >= 0f
+                    val playerNow = mc.thePlayer
+                    val lowOn = lowHealthCheck && playerNow != null && playerNow.isEntityAlive &&
+                            playerNow.health > 0f && playerNow.health <= lowHealthThreshold
+
+                    when {
+                        isChestOpen && chestSlots.isNotEmpty() -> {
+                            renderMode = "NEW_CHEST"
+                            val columns = 9
+                            val rows = (chestSlots.size + 8) / 9
+                            val slotSize = 18f
+                            val padding = 10f
+                            targetWidth = columns * slotSize + padding * 2
+                            targetHeight = rows * slotSize + padding * 2
+                            targetX = (width - targetWidth) / 2
+                            targetY = start_y.coerceIn(5f, height - targetHeight - 5f)
+                        }
+                        tabListOn -> {
+                            renderMode = "NEW_TABLIST"
+                            val (tw, th2) = calcTabListSize(playerList, headerLines, footerLines)
+                            targetWidth = tw
+                            targetHeight = th2
+                            targetX = (width - targetWidth) / 2
+                            targetY = start_y.coerceIn(5f, height - targetHeight - 5f)
+                        }
+                        lowOn -> {
+                            renderMode = "NEW_LOWHEALTH"
+                            val (tw, th2) = calcNewLowHealthSize()
+                            targetWidth = tw
+                            targetHeight = th2
+                            targetX = (width - targetWidth) / 2
+                        }
+                        scaffoldOn -> {
+                            renderMode = "NEW_SCAFFOLD"
+                            val (tw, th2) = calcNewScaffoldSize()
+                            targetWidth = tw
+                            targetHeight = th2
+                            targetX = (width - targetWidth) / 2
+                        }
+                        pearlOn -> {
+                            renderMode = "NEW_PEARL"
+                            val (tw, th2) = calcNewPearlSize()
+                            targetWidth = tw
+                            targetHeight = th2
+                            targetX = (width - targetWidth) / 2
+                        }
+                        gappleOn -> {
+                            renderMode = "NEW_GAPPLE"
+                            targetWidth = 210f
+                            targetHeight = 34f
+                            targetX = (width - targetWidth) / 2
+                        }
+                        musicOn -> {
+                            renderMode = "NEW_MUSIC"
+                            val musicName = MusicHub.currentMusicName
+                            val coverSize = 36f
+                            val pad = 8f
+                            val textAreaW = Fonts.fontSemibold35.getStringWidth(musicName).toFloat().coerceAtMost(160f) + pad * 2
+                            targetWidth = (pad + coverSize + 6f + textAreaW + pad).coerceIn(200f, 360f)
+                            targetHeight = 52f
+                            targetX = (width - targetWidth) / 2
+                        }
+                        toggleActive -> {
+                            renderMode = "NEW_NOTIFY"
+                            val (tw, th2) = calcNewNotifySize()
+                            targetWidth = tw
+                            targetHeight = th2
+                            targetX = (width - targetWidth) / 2
+                        }
+                        else -> {
+                            renderMode = "NEW_WATERMARK"
+                            targetWidth = calcNewWatermarkWidth()
+                            targetHeight = 30f
+                            targetX = (width - targetWidth) / 2
+                        }
+                    }
+                }
                 "ios" -> {
                     val scaffoldOn = isScaffold && (scaffoldModuleRef?.state == true || scaffold2ModuleRef?.state == true)
                     val musicOn = MusicHub.isCurrentlyPlaying && (MusicHub.currentLyricDisplay.isNotEmpty() || MusicHub.currentMusicName != "None")
@@ -941,10 +1037,28 @@ object Island : Module("Island", Category.RENDER) {
             }
 
             val isIosMode = renderMode.startsWith("IOS_")
+            val isNewMode = renderMode.startsWith("NEW_")
             val currentRadius = when {
                 isIosMode -> if (renderMode == "IOS_CHEST") iosRadius else if (AnimGlobalHeight > 100f) iosRadius.coerceAtMost(AnimGlobalHeight / 2f) else iosRadius.coerceAtMost(AnimGlobalHeight / 2f)
+                isNewMode -> newRadius.coerceAtMost(AnimGlobalHeight / 2f)
                 AnimGlobalHeight > 30F -> if (renderMode == "CHEST" || renderMode == "TABLIST") ChestRounded else legacyRadius.coerceAtMost(AnimGlobalHeight / 2f)
                 else -> legacyRadius.coerceAtMost(AnimGlobalHeight / 2f)
+            }
+            // 各样式的阴影开关 / 强度 / 颜色相互独立（iOS / 新样式 / legacy）
+            val useShadow = when {
+                isIosMode -> iosShadowCheck
+                isNewMode -> newShadowCheck
+                else -> ShadowCheck
+            }
+            val shadowMaxDist = (when {
+                isIosMode -> iosShadowRadius
+                isNewMode -> newShadowRadius
+                else -> shadowRadiusValue
+            }).toInt()
+            val shadowCol = when {
+                isIosMode -> iosShadowColor
+                isNewMode -> newShadowColor
+                else -> shadowColor
             }
 
             val drawX = AnimGlobalX
@@ -961,14 +1075,27 @@ object Island : Module("Island", Category.RENDER) {
                 RenderUtils.drawRoundedRect(drawX, drawY, drawX + drawW, drawY + drawH, Color.WHITE.rgb, currentRadius, islandCorners)
 
                 EmbeddedStencil.erase(false)
-                if (ShadowCheck) {
-                    val maxDist = shadowRadiusValue.toInt()
-                    for (i in maxDist downTo 1) {
-                        val alpha = (shadowColor.alpha * (1f - i.toFloat() / (maxDist + 1))).toInt().coerceIn(1, shadowColor.alpha)
+                if (useShadow) {
+                    // 统一采用 Prism 思路：沿岛体圆角轮廓逐层向外扩展的半透明阴影
+                    for (i in shadowMaxDist downTo 1) {
+                        val alpha = (shadowCol.alpha * (1f - i.toFloat() / (shadowMaxDist + 1))).toInt().coerceIn(1, shadowCol.alpha)
                         RenderUtils.drawRoundedRect(
                             drawX - i, drawY - i,
                             drawX + drawW + i, drawY + drawH + i,
-                            Color(shadowColor.red, shadowColor.green, shadowColor.blue, alpha).rgb,
+                            Color(shadowCol.red, shadowCol.green, shadowCol.blue, alpha).rgb,
+                            currentRadius + i
+                        )
+                    }
+                }
+                // 低血量警告：额外的红色呼吸柔光（叠在阴影之上，只在岛外渲染）
+                if (isNewMode && renderMode == "NEW_LOWHEALTH") {
+                    val pulse = (sin(System.currentTimeMillis() / 320.0).toFloat() + 1f) / 2f
+                    for (i in 16 downTo 1) {
+                        val a = ((36 + 70 * pulse) * (1f - i.toFloat() / 17f)).toInt().coerceIn(0, 255)
+                        RenderUtils.drawRoundedRect(
+                            drawX - i, drawY - i,
+                            drawX + drawW + i, drawY + drawH + i,
+                            Color(255, 70, 70, a).rgb,
                             currentRadius + i
                         )
                     }
@@ -980,7 +1107,11 @@ object Island : Module("Island", Category.RENDER) {
                 }
 
                 // 样式背景透明度直接取颜色自带的 alpha 通道（Background / iOS-Background 颜色设置）
-                val bgColor = if (isIosMode) iosBackgroundColor else legacyBackground
+                val bgColor = when {
+                    isIosMode -> iosBackgroundColor
+                    isNewMode -> newBackgroundColor(renderMode)
+                    else -> legacyBackground
+                }
                 RenderUtils.drawRoundedRect(
                     drawX, drawY,
                     drawX + drawW, drawY + drawH,
@@ -992,7 +1123,7 @@ object Island : Module("Island", Category.RENDER) {
                 glEnable(GL_BLEND)
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
-                if (!isIosMode) {
+                if (!isIosMode && !isNewMode) {
                     glDisable(GL_TEXTURE_2D)
                     glEnable(GL_LINE_SMOOTH)
                     glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
@@ -1010,22 +1141,71 @@ object Island : Module("Island", Category.RENDER) {
                     glEnable(GL_TEXTURE_2D)
                 }
 
+                if (isNewMode) {
+                    glDisable(GL_TEXTURE_2D)
+                    glEnable(GL_LINE_SMOOTH)
+                    glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
+                    glLineWidth(1f)
+                    if (renderMode == "NEW_LOWHEALTH") {
+                        // 低血量：红色呼吸描边
+                        val pulse = (sin(System.currentTimeMillis() / 320.0).toFloat() + 1f) / 2f
+                        val borderA = (110 + 130 * pulse).toInt().coerceIn(0, 255)
+                        RenderUtils.drawRoundedBorderRect(
+                            drawX - 0.5f, drawY - 0.5f,
+                            drawX + drawW + 0.5f, drawY + drawH + 0.5f,
+                            1.2f,
+                            Color(0, 0, 0, 0).rgb,
+                            Color(255, 82, 82, borderA).rgb,
+                            currentRadius + 0.5f
+                        )
+                    } else {
+                        RenderUtils.drawRoundedBorderRect(
+                            drawX - 0.5f, drawY - 0.5f,
+                            drawX + drawW + 0.5f, drawY + drawH + 0.5f,
+                            1f,
+                            Color(0, 0, 0, 0).rgb,
+                            newTheme().border.rgb,
+                            currentRadius + 0.5f
+                        )
+                    }
+                    glLineWidth(1.0f)
+                    glDisable(GL_LINE_SMOOTH)
+                    glEnable(GL_TEXTURE_2D)
+                }
+
             } catch (e: Exception) {
                 // 异常路径先清除残留的 stencil 状态，避免回退绘制与后续渲染被 GL_EQUAL 遮罩
                 EmbeddedStencil.dispose()
-                if (ShadowCheck) {
-                    val maxDist = shadowRadiusValue.toInt()
-                    for (i in maxDist downTo 1) {
-                        val alpha = (shadowColor.alpha * (1f - i.toFloat() / (maxDist + 1))).toInt().coerceIn(1, shadowColor.alpha)
+                if (useShadow) {
+                    // 统一采用 Prism 思路：沿岛体圆角轮廓逐层向外扩展的半透明阴影
+                    for (i in shadowMaxDist downTo 1) {
+                        val alpha = (shadowCol.alpha * (1f - i.toFloat() / (shadowMaxDist + 1))).toInt().coerceIn(1, shadowCol.alpha)
                         RenderUtils.drawRoundedRect(
                             drawX - i, drawY - i,
                             drawX + drawW + i, drawY + drawH + i,
-                            Color(shadowColor.red, shadowColor.green, shadowColor.blue, alpha).rgb,
+                            Color(shadowCol.red, shadowCol.green, shadowCol.blue, alpha).rgb,
                             currentRadius + i
                         )
                     }
                 }
-                RenderUtils.drawRoundedRect(drawX, drawY, drawX + drawW, drawY + drawH, (if (isIosMode) iosBackgroundColor else legacyBackground).rgb, currentRadius, islandCorners) // 异常回退保持原色
+                // 低血量警告：额外的红色呼吸柔光（叠在阴影之上，只在岛外渲染）
+                if (isNewMode && renderMode == "NEW_LOWHEALTH") {
+                    val pulse = (sin(System.currentTimeMillis() / 320.0).toFloat() + 1f) / 2f
+                    for (i in 16 downTo 1) {
+                        val a = ((36 + 70 * pulse) * (1f - i.toFloat() / 17f)).toInt().coerceIn(0, 255)
+                        RenderUtils.drawRoundedRect(
+                            drawX - i, drawY - i,
+                            drawX + drawW + i, drawY + drawH + i,
+                            Color(255, 70, 70, a).rgb,
+                            currentRadius + i
+                        )
+                    }
+                }
+                RenderUtils.drawRoundedRect(drawX, drawY, drawX + drawW, drawY + drawH, (when {
+                    isIosMode -> iosBackgroundColor
+                    isNewMode -> newBackgroundColor(renderMode)
+                    else -> legacyBackground
+                }).rgb, currentRadius, islandCorners) // 异常回退保持原色
                 glEnable(GL_BLEND)
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             } finally {
@@ -1054,7 +1234,8 @@ object Island : Module("Island", Category.RENDER) {
             renderLyricDisplay()
         }
 
-        renderLowHealthPill()
+        // 新样式（Prism）低血量并入主岛，不再弹独立胶囊
+        if (!isNewStyle) renderLowHealthPill()
 
         glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE)
         glDisable(GL_LINE_SMOOTH)
@@ -1090,6 +1271,15 @@ object Island : Module("Island", Category.RENDER) {
             "IOS_CHEST" -> renderIosChest(drawX, drawY, drawW, drawH, chestSlots)
             "IOS_GAPPLE" -> renderIosGapple(drawX, drawY, drawW, drawH)
             "IOS_TABLIST" -> renderIosTabList(drawX, drawY, drawW, drawH, playerList, headerLines, footerLines)
+            "NEW_WATERMARK" -> renderNewWatermark(drawX, drawY, drawW, drawH)
+            "NEW_NOTIFY" -> renderNewNotify(drawX, drawY, drawW, drawH)
+            "NEW_TABLIST" -> renderNewTabList(drawX, drawY, drawW, drawH, playerList, headerLines, footerLines)
+            "NEW_MUSIC" -> renderNewMusic(drawX, drawY, drawW, drawH)
+            "NEW_SCAFFOLD" -> renderNewScaffold(drawX, drawY, drawW, drawH)
+            "NEW_PEARL" -> renderNewPearl(drawX, drawY, drawW, drawH)
+            "NEW_GAPPLE" -> renderNewGapple(drawX, drawY, drawW, drawH)
+            "NEW_LOWHEALTH" -> renderNewLowHealth(drawX, drawY, drawW, drawH)
+            "NEW_CHEST" -> renderIosChest(drawX, drawY, drawW, drawH, chestSlots)
         }
     }
 
@@ -3078,6 +3268,447 @@ object Island : Module("Island", Category.RENDER) {
         font.drawString(text, x1 + pad + 14f, pivotY - font.FONT_HEIGHT / 2f + 1f, Color(255, 255, 255, (255 * alphaF).toInt()).rgb)
 
         glPopMatrix()
+    }
+
+    // ============================================================
+    // Prism 新样式
+    // ============================================================
+
+    val isNewStyle: Boolean
+        get() = style == "prism"
+
+    /** 新样式背景色（含 alpha 透明度）；低血量警告态整体染红 */
+    private fun newBackgroundColor(mode: String): Color {
+        val base = prismBackground
+        if (mode == "NEW_LOWHEALTH") return Color(22, 10, 12, base.alpha)
+        return base
+    }
+
+    private data class NewTheme(
+        val text: Color,
+        val sub: Color,
+        val accent: Color,
+        val track: Color,
+        val border: Color,
+        val light: Boolean
+    )
+
+    private fun newTheme(): NewTheme = NewTheme(
+        text = Color(255, 255, 255), sub = Color(139, 150, 163),
+        accent = prismAccent, track = Color(255, 255, 255, 24),
+        border = Color(255, 255, 255, 16), light = false
+    )
+
+    private fun newGreen(th: NewTheme, alpha: Int = 255) =
+        if (th.light) Color(63, 158, 108, alpha) else Color(105, 201, 138, alpha)
+
+    private fun newRed(alpha: Int = 255) = Color(235, 95, 95, alpha)
+
+    private fun hotbarBlockCount(): Int = (0..8).sumOf { slotIndex ->
+        val stack = mc.thePlayer?.inventory?.getStackInSlot(slotIndex)
+        if (stack != null && stack.item is ItemBlock) stack.stackSize else 0
+    }
+
+    private const val NEW_NOTIFY_ROW = 34F
+
+    // ---------- 水印 ----------
+
+    private fun calcNewWatermarkWidth(): Float {
+        val pingStr = "${getSafePing()}ms"
+        val ipStr = if (customip) ip else ServerUtils.remoteIp ?: "SinglePlayer"
+        val nameW = Fonts.fontSemibold35.getStringWidth(ClientName).toFloat()
+        val pingW = Fonts.fontRegular30.getStringWidth(pingStr).toFloat()
+        val tailW = Fonts.fontRegular30.getStringWidth("· $ipStr").toFloat()
+        return 12F + 16F + 8F + nameW + 8F + pingW + 4F + tailW + 12F
+    }
+
+    private fun renderNewWatermark(x: Float, y: Float, w: Float, h: Float) {
+        val th = newTheme()
+        val centerY = y + h / 2f
+        val logoSize = 16F
+        var cx = x + 12F
+
+        // Prism：Logo 呼吸光环
+        if (style == "prism") {
+            val pulse = (sin(System.currentTimeMillis() / 500.0).toFloat() + 1f) / 2f
+            val haloAlpha = (60 + 80 * pulse).toInt().coerceIn(0, 255)
+            drawCircle(cx + logoSize / 2f, centerY, logoSize / 2f + 3.5f,
+                Color(th.accent.red, th.accent.green, th.accent.blue, haloAlpha))
+        }
+        drawImage(getLogoResource(), cx, centerY - logoSize / 2f, logoSize.toInt(), logoSize.toInt(), Color.WHITE)
+        cx += logoSize + 8F
+
+        val nameBaseY = centerY - Fonts.fontSemibold35.FONT_HEIGHT / 2f + 1f
+        Fonts.fontSemibold35.drawString(ClientName, cx, nameBaseY, th.text.rgb)
+        cx += Fonts.fontSemibold35.getStringWidth(ClientName).toFloat() + 8F
+
+        val pingStr = "${getSafePing()}ms"
+        val ipStr = if (customip) ip else ServerUtils.remoteIp ?: "SinglePlayer"
+        val subBaseY = centerY - Fonts.fontRegular30.FONT_HEIGHT / 2f + 1f
+        Fonts.fontRegular30.drawString(pingStr, cx, subBaseY, newGreen(th).rgb)
+        cx += Fonts.fontRegular30.getStringWidth(pingStr).toFloat() + 4F
+        Fonts.fontRegular30.drawString("· $ipStr", cx, subBaseY, th.sub.rgb)
+    }
+
+    // ---------- 模块开关通知（滑动入场 + 多条堆叠） ----------
+
+    private fun calcNewNotifySize(): Pair<Float, Float> {
+        var maxTextW = 80F
+        for (n in notifications) {
+            val t = n as? ToggleNotification ?: continue
+            val nameW = Fonts.fontSemibold35.getStringWidth(t.moduleName).toFloat()
+            val stateW = Fonts.fontRegular30.getStringWidth(if (t.enabled) "已启用" else "已禁用").toFloat()
+            maxTextW = max(maxTextW, max(nameW, stateW))
+        }
+        val w = (12F + 30F + 10F + maxTextW + 12F).coerceAtLeast(170F)
+        return Pair(w, notifications.size * NEW_NOTIFY_ROW + 8F)
+    }
+
+    private fun renderNewNotify(x: Float, y: Float, w: Float, h: Float) {
+        val th = newTheme()
+        val now = System.currentTimeMillis()
+        var rowY = y + 4F
+        for (n in notifications) {
+            val t = n as? ToggleNotification ?: continue
+            // 入场：从上方滑落 + 淡入（参考 legacy 的滑动动画，可同时展示多条）
+            val slide = ((now - n.createTime) / 350f).coerceIn(0f, 1f)
+            val e = easeOutCubic(slide)
+            val centerY = rowY + NEW_NOTIFY_ROW / 2f - (1f - e) * NEW_NOTIFY_ROW * 0.6f
+            val alpha = (255 * e).toInt()
+
+            drawNewToggleButton(x + 12F, centerY, t.enabled, t.anim, th, alpha)
+
+            val textX = x + 12F + 30F + 10F
+            val fhName = Fonts.fontSemibold35.FONT_HEIGHT.toFloat()
+            val fhState = Fonts.fontRegular30.FONT_HEIGHT.toFloat()
+            val totalH = fhName + 2F + fhState
+            val nameY = centerY - totalH / 2f
+            Fonts.fontSemibold35.drawString(t.moduleName, textX, nameY,
+                Color(th.text.red, th.text.green, th.text.blue, alpha).rgb)
+            val stateStr = if (t.enabled) "已启用" else "已禁用"
+            Fonts.fontRegular30.drawString(stateStr, textX, nameY + fhName + 2F,
+                (if (t.enabled) newGreen(th, alpha) else newRed(alpha)).rgb)
+            rowY += NEW_NOTIFY_ROW
+        }
+    }
+
+    private fun drawNewToggleButton(x: Float, centerY: Float, enabled: Boolean, anim: SwitchAnimationState, th: NewTheme, alpha: Int) {
+        val btnH = 19F
+        val btnW = 30F
+        val margin = 3F
+        val btnY = centerY - btnH / 2f
+        anim.updateState(enabled)
+        val a = anim.getOutput().toFloat()
+        val track = if (enabled) newGreen(th, alpha)
+            else if (th.light) Color(150, 160, 172, alpha) else Color(58, 65, 75, alpha)
+        drawRoundedRect(x, btnY, x + btnW, btnY + btnH, track.rgb, btnH / 2f)
+        val knobSize = btnH - margin * 2
+        val knobX = x + margin + (btnW - margin * 2 - knobSize) * a
+        drawRoundedRect(knobX, btnY + margin, knobX + knobSize, btnY + margin + knobSize,
+            Color(255, 255, 255, alpha).rgb, knobSize / 2f)
+    }
+
+    // ---------- TabList ----------
+
+    private fun renderNewTabList(x: Float, y: Float, w: Float, h: Float, players: List<NetworkPlayerInfo>, header: List<String>, footer: List<String>) {
+        val th = newTheme()
+        val maxRows = tabListMaxRows
+        val outerPadding = 8F
+
+        var currentY = y + outerPadding
+        val centerX = x + w / 2F
+
+        if (header.isNotEmpty()) {
+            for (line in header) {
+                Fonts.fontRegular35.drawCenteredString(line, centerX, currentY, th.text.rgb)
+                currentY += Fonts.fontRegular35.FONT_HEIGHT + 2
+            }
+            currentY += 2
+        }
+
+        if (players.isNotEmpty()) {
+            var maxNameWidth = 50F
+            players.forEach {
+                val fullName = mc.ingameGUI.tabList.getPlayerName(it)
+                val wName = Fonts.fontRegular35.getStringWidth(fullName).toFloat()
+                if (wName > maxNameWidth) maxNameWidth = wName
+            }
+            val headSize = 10F
+            val padding = 6F
+            val spacing = 4F
+            val itemHeight = headSize + spacing
+            val colWidth = padding + headSize + spacing + maxNameWidth + spacing + 25F + padding
+            val totalCols = ceil(players.size.toDouble() / maxRows.toDouble()).toInt()
+
+            val playersTotalWidth = totalCols * colWidth
+            var startX = centerX - playersTotalWidth / 2F
+            val columnY = currentY
+
+            for (i in players.indices) {
+                val player = players[i]
+                if (i > 0 && i % maxRows == 0) {
+                    startX += colWidth
+                    currentY = columnY
+                }
+                val rowX = startX + padding
+
+                mc.textureManager.bindTexture(player.locationSkin)
+                GlStateManager.color(1f, 1f, 1f, 1f)
+                Gui.drawScaledCustomSizeModalRect(rowX.toInt(), currentY.toInt(), 8f, 8f, 8, 8, headSize.toInt(), headSize.toInt(), 64f, 64f)
+
+                val fullName = mc.ingameGUI.tabList.getPlayerName(player)
+                Fonts.fontRegular35.drawString(fullName, rowX + headSize + spacing, currentY + 1.5F, th.text.rgb)
+
+                val ping = player.responseTime
+                val pingColor = when {
+                    ping < 0 -> Color(50, 50, 50)
+                    ping < 100 -> Color(100, 255, 100)
+                    ping < 200 -> Color(255, 200, 50)
+                    else -> Color(255, 80, 80)
+                }
+                val pingText = "${ping}ms"
+                val pingW = Fonts.fontRegular35.getStringWidth(pingText).toFloat()
+                Fonts.fontRegular35.drawString(pingText, startX + colWidth - padding - pingW, currentY + 1.5F, pingColor.rgb)
+
+                currentY += itemHeight
+            }
+
+            val actualRows = if (totalCols == 1) players.size else maxRows
+            currentY = columnY + actualRows * itemHeight + 2
+        }
+
+        if (footer.isNotEmpty()) {
+            for (line in footer) {
+                Fonts.fontRegular35.drawCenteredString(line, centerX, currentY, th.text.rgb)
+                currentY += Fonts.fontRegular35.FONT_HEIGHT + 2
+            }
+        }
+    }
+
+    // ---------- 音乐 ----------
+
+    private fun renderNewMusic(x: Float, y: Float, w: Float, h: Float) {
+        val th = newTheme()
+        val pad = 8f
+        val musicName = MusicHub.currentMusicName
+        val lyric = MusicHub.currentLyricDisplay
+        val displayText = if (musicName != "None" && musicName != "无") musicName else lyric.take(30)
+        val progress = MusicHub.progress.coerceIn(0f, 1f)
+
+        val coverSize = 32f
+        val coverX = x + pad + 2f
+        val coverY = y + (h - coverSize) / 2f
+        val coverRadius = 8f
+
+        drawRoundedRect(coverX, coverY, coverX + coverSize, coverY + coverSize,
+            (if (th.light) Color(0, 0, 0, 18) else Color(30, 30, 30, 220)).rgb, coverRadius)
+
+        val coverTexture = MusicCoverCache.get(MusicHub.currentCoverUrl)
+        if (coverTexture != null) {
+            GlStateManager.color(1f, 1f, 1f, 1f)
+            drawImage(coverTexture, coverX, coverY, coverSize.toInt(), coverSize.toInt(), Color.WHITE, coverRadius)
+        } else {
+            val iconSz = (coverSize * 0.6f).toInt()
+            drawImage(ResourceLocation("airplus/watermark_images/music.png"),
+                (coverX + (coverSize - iconSz) / 2f).toInt(), (coverY + (coverSize - iconSz) / 2f).toInt(), iconSz, iconSz, Color.WHITE)
+        }
+
+        val textX = coverX + coverSize + 8f
+        val textRightEdge = x + w - pad
+        val maxTextW = textRightEdge - textX
+
+        val displayName = truncateText(displayText, Fonts.fontSemibold35, maxTextW)
+        val nameY = y + pad + 1f
+        Fonts.fontSemibold35.drawString(displayName, textX, nameY, th.text.rgb)
+
+        val lyricLine = lyric.take(25)
+        if (lyricLine.isNotEmpty()) {
+            val lyricDisplay = truncateText(lyricLine, Fonts.fontRegular30, maxTextW)
+            val lyricY = nameY + Fonts.fontSemibold35.FONT_HEIGHT + 1f
+            Fonts.fontRegular30.drawString(lyricDisplay, textX, lyricY, th.sub.rgb)
+        }
+
+        val barH = 3f
+        val barY = y + h - barH - pad
+        val barW = textRightEdge - textX
+        drawRoundedRect(textX, barY, textX + barW, barY + barH, th.track.rgb, barH / 2)
+        if (barW * progress > 0.5f) {
+            drawRoundedRect(textX, barY, textX + barW * progress, barY + barH, th.accent.rgb, barH / 2)
+        }
+    }
+
+    // ---------- 珍珠倒计时 ----------
+
+    private fun calcNewPearlSize(): Pair<Float, Float> {
+        val labelW = Fonts.fontRegular30.getStringWidth("珍珠").toFloat()
+        val valStr = String.format("%.1fs", pearlTicksRemaining.coerceAtLeast(0f) * 50f / 1000f)
+        val valW = Fonts.fontSemibold35.getStringWidth(valStr).toFloat()
+        return Pair((12F + labelW + 6F + valW + 12F + 110F + 12F).coerceAtLeast(190F), 34F)
+    }
+
+    private fun renderNewPearl(x: Float, y: Float, w: Float, h: Float) {
+        val th = newTheme()
+        val total = pearlLandingTicks.coerceAtLeast(1)
+        val remaining = pearlTicksRemaining.coerceIn(0f, total.toFloat())
+        val pad = 12F
+        val centerY = y + h / 2f
+        var cx = x + pad
+
+        val labelBaseY = centerY - Fonts.fontRegular30.FONT_HEIGHT / 2f + 1f
+        val valBaseY = centerY - Fonts.fontSemibold35.FONT_HEIGHT / 2f + 1f
+        Fonts.fontRegular30.drawString("珍珠", cx, labelBaseY, th.sub.rgb)
+        cx += Fonts.fontRegular30.getStringWidth("珍珠").toFloat() + 6F
+        val valStr = String.format("%.1fs", remaining * 50f / 1000f)
+        Fonts.fontSemibold35.drawString(valStr, cx, valBaseY, th.accent.rgb)
+        cx += Fonts.fontSemibold35.getStringWidth(valStr).toFloat() + 12F
+
+        // 10 段分段条，随落地倒计时逐渐消耗
+        val barW = (x + w - pad) - cx
+        val gap = 2F
+        val segCount = 10
+        val segW = ((barW - gap * (segCount - 1)) / segCount).coerceAtLeast(3F)
+        val barH = 8F
+        val barY = centerY - barH / 2f
+        val filled = ((remaining / total) * segCount + 0.5f).toInt().coerceIn(0, segCount)
+        for (i in 0 until segCount) {
+            val sx = cx + i * (segW + gap)
+            val col = if (i < filled) th.accent else th.track
+            drawRoundedRect(sx, barY, sx + segW, barY + barH, col.rgb, 2F)
+        }
+    }
+
+    // ---------- Gapple ----------
+
+    private fun renderNewGapple(x: Float, y: Float, w: Float, h: Float) {
+        val th = newTheme()
+        val percentage = animatedGappleProgress.coerceIn(0f, 1f)
+        val pad = 12F
+        val centerY = y + h / 2f
+        var cx = x + pad
+
+        val pctStr = String.format("%.0f%%", percentage * 100f)
+        Fonts.fontSemibold35.drawString(pctStr, cx, centerY - Fonts.fontSemibold35.FONT_HEIGHT / 2f + 1f, th.text.rgb)
+        cx += Fonts.fontSemibold35.getStringWidth(pctStr).toFloat() + 10F
+
+        val barW = (x + w - pad) - cx
+        val gap = 2F
+        val segCount = 10
+        val segW = ((barW - gap * (segCount - 1)) / segCount).coerceAtLeast(3F)
+        val barH = 8F
+        val barY = centerY - barH / 2f
+        val filledSegs = (percentage * segCount).toInt().coerceIn(0, segCount)
+        val fill = Color(gappleProgressTheme.red, gappleProgressTheme.green, gappleProgressTheme.blue, 230)
+        for (i in 0 until segCount) {
+            val sx = cx + i * (segW + gap)
+            val col = if (i < filledSegs) fill else th.track
+            drawRoundedRect(sx, barY, sx + segW, barY + barH, col.rgb, 2F)
+        }
+    }
+
+    // ---------- Scaffold ----------
+
+    private fun calcNewScaffoldSize(): Pair<Float, Float> {
+        // Prism：进度环 + 文案
+        val count = hotbarBlockCount()
+        val subW = Fonts.fontRegular30.getStringWidth("$count / $maxBlocks 方块").toFloat()
+        val textW = max(Fonts.fontSemibold35.getStringWidth("Scaffold").toFloat(), subW)
+        return Pair((12F + 40F + 14F + textW + 16F).coerceAtLeast(190F), 62F)
+    }
+
+    private fun renderNewScaffold(x: Float, y: Float, w: Float, h: Float) {
+        renderPrismScaffold(x, y, w, h)
+    }
+
+    private fun renderPrismScaffold(x: Float, y: Float, w: Float, h: Float) {
+        val th = newTheme()
+        val count = hotbarBlockCount()
+        val percentage = (count.toFloat() / maxBlocks.toFloat()).coerceIn(0f, 1f)
+
+        val ringR = 17F
+        val ringCX = x + 12F + ringR
+        val ringCY = y + h / 2f
+
+        GlStateManager.pushMatrix()
+        GlStateManager.enableBlend()
+        GlStateManager.disableTexture2D()
+        GlStateManager.tryBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ZERO)
+        glEnable(GL_LINE_SMOOTH)
+        glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
+
+        // 轨道
+        glColor4f(1f, 1f, 1f, 0.12f)
+        glLineWidth(4f)
+        glBegin(GL_LINE_LOOP)
+        for (i in 0..360) {
+            val theta = i * Math.PI / 180
+            glVertex2d(ringCX + ringR * cos(theta), ringCY + ringR * sin(theta))
+        }
+        glEnd()
+
+        // 进度弧
+        glColor4f(th.accent.red / 255f, th.accent.green / 255f, th.accent.blue / 255f, 1f)
+        glBegin(GL_LINE_STRIP)
+        val drawSegments = (360 * percentage).toInt()
+        for (i in 0..drawSegments) {
+            val theta = (i - 90) * Math.PI / 180
+            glVertex2d(ringCX + ringR * cos(theta), ringCY + ringR * sin(theta))
+        }
+        glEnd()
+
+        glDisable(GL_LINE_SMOOTH)
+        GlStateManager.enableTexture2D()
+        GlStateManager.disableBlend()
+        GlStateManager.popMatrix()
+
+        Fonts.fontRegular30.drawCenteredString("${(percentage * 100).toInt()}%", ringCX, ringCY - Fonts.fontRegular30.FONT_HEIGHT / 2f, th.text.rgb)
+
+        val textX = x + 12F + 40F + 14F
+        Fonts.fontSemibold35.drawString("Scaffold", textX, y + 13F, th.text.rgb)
+        Fonts.fontRegular30.drawString("$count / $maxBlocks 方块", textX, y + 13F + Fonts.fontSemibold35.FONT_HEIGHT + 2F, th.sub.rgb)
+    }
+
+    // ---------- 低血量警告（并入主岛：膨胀展开 + 岛内血条 + 红色呼吸描边） ----------
+
+    private fun calcNewLowHealthSize(): Pair<Float, Float> {
+        val hp = mc.thePlayer?.health ?: 20f
+        val sub = "HP " + String.format("%.1f", hp) + " / 20"
+        val textW = max(Fonts.fontSemibold35.getStringWidth("低血量警告").toFloat(), Fonts.fontRegular30.getStringWidth(sub).toFloat())
+        return Pair(14F + 28F + 10F + textW + 12F + 78F + 14F, 46F)
+    }
+
+    private fun renderNewLowHealth(x: Float, y: Float, w: Float, h: Float) {
+        val th = newTheme()
+        val p = mc.thePlayer ?: return
+        val now = System.currentTimeMillis()
+        val pad = 14F
+        val centerY = y + h / 2f
+
+        // "!" 心跳警示圆标
+        val circ = 28F
+        val circX = x + pad
+        val circY = centerY - circ / 2f
+        drawRoundedRect(circX, circY, circX + circ, circY + circ,
+            (if (th.light) Color(224, 80, 80, 34) else Color(255, 93, 93, 44)).rgb, circ / 2f)
+        val beat = 1f + 0.1f * sin(now / 160.0).toFloat()
+        drawCircle(circX + circ / 2f, centerY, 4.5f * beat,
+            if (th.light) Color(216, 74, 74) else Color(255, 125, 125))
+
+        val textX = circX + circ + 10F
+        Fonts.fontSemibold35.drawString("低血量警告", textX, centerY - 14F, th.text.rgb)
+        val sub = "HP " + String.format("%.1f", p.health) + " / 20"
+        Fonts.fontRegular30.drawString(sub, textX, centerY + 1F,
+            (if (th.light) Color(192, 82, 82) else Color(255, 154, 154)).rgb)
+
+        // 岛内血条
+        val barW = 78F
+        val barH = 6F
+        val barX = x + w - pad - barW
+        val barY = centerY - barH / 2f
+        drawRoundedRect(barX, barY, barX + barW, barY + barH,
+            (if (th.light) Color(224, 80, 80, 40) else Color(255, 255, 255, 28)).rgb, barH / 2f)
+        val hpPct = (p.health / p.maxHealth.coerceAtLeast(1f)).coerceIn(0f, 1f)
+        drawRoundedRect(barX, barY, barX + barW * hpPct, barY + barH,
+            Color(lowHealthColor.red, lowHealthColor.green, lowHealthColor.blue, 255).rgb, barH / 2f)
     }
 
     /**

@@ -34,6 +34,7 @@ import org.lwjgl.opengl.GL11;
 import javax.vecmath.Vector2f;
 import java.awt.Color;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -85,6 +86,10 @@ public class AugustusClickGui extends GuiScreen {
     private boolean dragging;
     private boolean resizing;
     private boolean waitingForKey;
+
+    // 模块列表悬浮提示：悬浮同一模块 1 秒后在其旁显示模块解释
+    private Module hoverModule;
+    private long moduleHoverStart;
 
     private Category selectedCategory = Category.COMBAT;
     private Module selectedModule;
@@ -258,6 +263,12 @@ public class AugustusClickGui extends GuiScreen {
         drawModules(mouseX, mouseY, mouseButton, event);
         drawValues(mouseX, mouseY, mouseButton, event);
         updateDraggingValues(mouseX, mouseY);
+
+        // 模块悬浮提示（最后绘制保证在最上层）
+        if (event == GuiEvent.DRAW && hoverModule != null
+                && System.currentTimeMillis() - moduleHoverStart >= 1000L) {
+            drawModuleTooltip(mouseX, mouseY, hoverModule.getDescription());
+        }
     }
 
     private void drawCategories(int mouseX, int mouseY, int mouseButton, GuiEvent event) {
@@ -322,10 +333,12 @@ public class AugustusClickGui extends GuiScreen {
         if (event == GuiEvent.DRAW) scissor(listX, listY, listW, listH, true);
 
         float moduleY = posY + 26F + moduleScroll;
+        Module hoveredThisFrame = null;
         for (Module module : modulesInCategory(selectedCategory)) {
             boolean inBounds = moduleY >= listY && moduleY + normalHeight() <= listY + listH;
             boolean moduleHovered = inBounds && hovered(mouseX, mouseY, posX + 8F, moduleY - 3F, 74F, normalHeight() + 4F);
             if (event == GuiEvent.DRAW) {
+                if (moduleHovered) hoveredThisFrame = module;
                 float drawX = posX + 8F;
                 if (module == selectedModule) {
                     drawNormal(">", drawX, moduleY, module.getState() ? accent().getRGB() : new Color(210, 210, 210).getRGB());
@@ -345,6 +358,15 @@ public class AugustusClickGui extends GuiScreen {
             moduleY += normalHeight() + 5F;
         }
 
+        if (event == GuiEvent.DRAW) {
+            if (hoveredThisFrame != null && hoveredThisFrame != hoverModule) {
+                hoverModule = hoveredThisFrame;
+                moduleHoverStart = System.currentTimeMillis();
+            } else if (hoveredThisFrame == null) {
+                hoverModule = null;
+            }
+        }
+
         if (event == GuiEvent.DRAW) scissor(0F, 0F, 0F, 0F, false);
     }
 
@@ -356,6 +378,12 @@ public class AugustusClickGui extends GuiScreen {
 
         if (event == GuiEvent.DRAW) {
             drawNormal(selectedModule.getName() + ":", valuesX, currentY, new Color(210, 210, 210).getRGB());
+            // 模块解释：跟在模块名 ":" 后面，超宽时截断
+            float descX = valuesX + normalWidth(selectedModule.getName() + ":") + 8F;
+            String desc = truncateText(selectedModule.getDescription(), posX + width - descX - 6F);
+            if (!desc.isEmpty()) {
+                drawNormal(desc, descX, currentY, new Color(130, 130, 130).getRGB());
+            }
         }
         currentY += normalHeight() + 5F;
 
@@ -933,5 +961,65 @@ public class AugustusClickGui extends GuiScreen {
         int factor = sr.getScaleFactor();
         GL11.glEnable(GL11.GL_SCISSOR_TEST);
         GL11.glScissor((int) (x * factor), (int) ((sr.getScaledHeight() - y - h) * factor), (int) (w * factor), (int) (h * factor));
+    }
+
+    /** 将文本截断到指定像素宽度内，超出部分以省略号结尾。 */
+    private String truncateText(String text, float maxWidth) {
+        if (text == null || text.isEmpty()) return "";
+        if (maxWidth <= 0F || normalWidth(text) <= maxWidth) return text;
+        String trimmed = text;
+        while (trimmed.length() > 1 && normalWidth(trimmed + "…") > maxWidth) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+        return trimmed + "…";
+    }
+
+    /** 按像素宽度折行（中文按字符折行）。 */
+    private List<String> wrapText(String text, float maxWidth) {
+        List<String> lines = new ArrayList<>();
+        if (text == null || text.isEmpty()) return lines;
+        StringBuilder line = new StringBuilder();
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (line.length() > 0 && normalWidth(line.toString() + c) > maxWidth) {
+                lines.add(line.toString());
+                line = new StringBuilder();
+            }
+            line.append(c);
+        }
+        if (line.length() > 0) lines.add(line.toString());
+        return lines;
+    }
+
+    /** 在鼠标旁绘制模块解释悬浮窗。 */
+    private void drawModuleTooltip(int mouseX, int mouseY, String description) {
+        if (description == null || description.isEmpty()) return;
+
+        List<String> lines = wrapText(description, 190F);
+        if (lines.isEmpty()) return;
+
+        float textWidth = 0F;
+        for (String line : lines) {
+            textWidth = Math.max(textWidth, normalWidth(line));
+        }
+        float padX = 6F;
+        float padY = 4F;
+        float w = textWidth + padX * 2F;
+        float h = lines.size() * (normalHeight() + 2F) - 2F + padY * 2F;
+
+        ScaledResolution sr = new ScaledResolution(mc);
+        float x = mouseX + 10F;
+        float y = mouseY + 10F;
+        if (x + w > sr.getScaledWidth() - 2F) x = mouseX - w - 8F;
+        if (y + h > sr.getScaledHeight() - 2F) y = mouseY - h - 8F;
+        x = Math.max(2F, x);
+        y = Math.max(2F, y);
+
+        drawRounded(x, y, w, h, 6F, new Color(18, 18, 18, 240).getRGB());
+        float textY = y + padY;
+        for (String line : lines) {
+            drawNormal(line, x + padX, textY, new Color(210, 210, 210).getRGB());
+            textY += normalHeight() + 2F;
+        }
     }
 }

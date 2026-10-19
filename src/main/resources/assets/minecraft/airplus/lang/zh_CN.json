@@ -173,10 +173,6 @@
 
         "module.cameraClip.description": "允许你在第三人称视角中透过墙壁看到另一边。",
 
-        "module.cameraView.description": "允许您修改视角 Y 轴的位置。",
-
-        "module.chams.description": "允许你透过方块看到目标。",
-
         "module.chestAura.description": "自动打开周围的箱子。",
 
         "module.chestStealer.description": "自动拿走箱子里的物品。",
@@ -409,6 +405,43 @@
 
         "module.chineseHat.description": "给实体戴上一顶帽子。",
 
-        "module.jumpCircle.description": "跳跃时在玩家底下生成一个圆环。"
+        "module.jumpCircle.description": "跳跃时在玩家底下生成一个圆环。",
+
+        "module.anticheatDetector.description": "检测服务器使用的反作弊并提醒用户。",
+        "module.armorBreak.description": "攻击时破甲",
+        "module.attackEffect.description": "自定义攻击时显示的效果",
+        "module.autoLFix.description": "自动嘲讽",
+        "module.bAHalo.description": "在头顶显示ba光环",
+        "module.betterFPS.description": "进一步提升帧数",
+        "module.blockHit.description": "攻击后自动格挡",
+        "module.camera.description": "自定义相机",
+        "module.cape.description": "显示自定义披风",
+        "module.client.description": "客户端设置",
+        "module.clientFixes.description": "修复客户端的各类漏洞",
+        "module.colorMixer.description": "混合两种颜色为自定义theme",
+        "module.damage Particles.description": "显示对方血量变化",
+        "module.deltaForce Style.description": "三角洲风格的界面样式。",
+        "module.fastLadder.description": "让你更快地下梯子(oldgrim)",
+        "module.fly2.description": "飞行",
+        "module.followTargetHud.description": "显示当前目标信息",
+        "module.hanabiHUD.description": "Hanabi的界面",
+        "module.hUDEdit.description": "自定义HUD 元素",
+        "module.health.description": "在屏幕中间显示自己的血量",
+        "module.island.description": "灵动岛",
+        "module.jelly.description": "桃花谢了有玫瑰~",
+        "module.killEffect.description": "击杀玩家时播放特效",
+        "module.killEffectV2.description": "击杀玩家时播放特效",
+        "module.moreBends.description": "让模型的肢体动作更生动",
+        "module.motionBlur.description": "动态模糊",
+        "module.nameTags2.description": "玩家名牌",
+        "module.notifier.description": "提示你大部分信息",
+        "module.rawInput.description": "鼠标输入修复",
+        "module.sound.description": "自定义客户端音效。",
+        "module.tPAura.description": "tp光环",
+        "module.targetManager.description": "管理客户端的目标",
+        "module.targetMark.description": "显示杀戮光环的目标。",
+        "module.themeManager.description": "管理客户端界面的主题颜色",
+        "module.musicPlayer.description": "播放本地音乐",
+        "module.netEase Music.description": "播放网易云音乐"
     }
 }
