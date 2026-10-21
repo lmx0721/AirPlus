@@ -21,6 +21,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.renderer.EntityRenderer;
 import net.minecraft.client.renderer.GlStateManager;
+import net.minecraft.client.renderer.OpenGlHelper;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
@@ -30,6 +31,15 @@ import net.minecraft.util.*;
 import net.minecraft.world.World;
 import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
+import org.apache.logging.log4j.LogManager;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL13;
+import org.lwjgl.opengl.GL20;
+
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.FloatBuffer;
+import java.util.ArrayList;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -92,6 +102,43 @@ public abstract class MixinEntityRenderer {
             FreeLook.INSTANCE.runWithoutSavingRotations(() -> {
                 FreeLook.INSTANCE.restoreOriginalRotation();
                 EventManager.INSTANCE.call(new Render3DEvent(partialTicks));
+                /*
+                 * 手部物品半透明根治（第四轮：全面状态同步）。
+                 * 机制：手部物品经 renderItemModelTransform 总是带 blend(770,771) 渲染且不重置当前颜色，
+                 * fragment alpha = 方块图集 alpha × 当前颜色 alpha（× 残留纹理 alpha）。Render3DEvent /
+                 * 上一帧 HUD 的任何 GlStateManager 缓存失同步都会让以下缓存守卫调用被跳过：
+                 *  - active texture unit 卡在非 0 → 方块图集绑到错误单元，unit 0 残留 HUD 贴图
+                 *    （如 potion 玻璃 alpha≈0.4）→ 物品被其 alpha 调制而半透明
+                 *  - bindTexture 缓存失同步 → 图集重绑被跳过，unit 0 采样残留贴图
+                 *  - enableColorMaterial/enableLighting 缓存失同步 → 材质不跟踪当前色，
+                 *    以固定 diffuse alpha=0.8 渲染
+                 *  - blendFunc 缓存失同步 → 错误混合因子
+                 * 全部两步法强制真实 GL 调用，把缓存与实际状态拉回一致。
+                 */
+                airplus$dumpHandState();
+                GL20.glUseProgram(0); // 防 shader 泄漏：固定管线手部渲染若被残留 program 劫持会透滤
+                // 纹理单元强制归 0：OpenGlHelper 是真实调用；GlStateManager 索引也要拉回，
+                // 否则后续 enableTexture2D/bindTexture 会作用在错误单元
+                OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
+                GlStateManager.setActiveTexture(OpenGlHelper.defaultTexUnit);
+                // unit-0 绑定两步法：脏缓存强制 vanilla 随后的 bindTexture(方块图集) 真实执行
+                GlStateManager.bindTexture(0);
+                // unit-0 TEXTURE_2D 开关两步法：保证实际开启且缓存一致
+                GlStateManager.disableTexture2D();
+                GlStateManager.enableTexture2D();
+                GlStateManager.enableBlend();
+                GlStateManager.disableBlend();
+                // blendFunc 两步法：强制真实 glBlendFuncSeparate
+                GlStateManager.tryBlendFuncSeparate(0, 0, 0, 0);
+                GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0);
+                // 当前颜色两步法
+                GlStateManager.color(0.0F, 0.0F, 0.0F, 0.0F);
+                GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
+                GlStateManager.depthMask(true);
+                // colorMaterial/lighting 两步法：手部渲染第一步 enableStandardItemLighting
+                // 的对应调用有缓存，先脏化缓存保证真实执行
+                GlStateManager.disableColorMaterial();
+                GlStateManager.disableLighting();
                 FreeLook.INSTANCE.useModifiedRotation();
                 return null;
             });
@@ -245,6 +292,41 @@ public abstract class MixinEntityRenderer {
     // even when the view, position and world state are completely unchanged.
     @Unique
     private boolean airplus$mouseOverCacheValid;
+    @Unique
+    private static long airplus$lastHandStateLog = 0L;
+    @Unique
+    private static final FloatBuffer airplus$dumpBuf = ByteBuffer
+            .allocateDirect(16).order(ByteOrder.nativeOrder()).asFloatBuffer();
+
+    /**
+     * 手部渲染前把实际 GL 状态（绕过一切缓存，直接 glGet）节流转储，用于定位
+     * 「非 blend/program 泄漏型」的半透明根因。每 5s 一条；定位完成后可移除。
+     */
+    @Unique
+    private static void airplus$dumpHandState() {
+        if (System.currentTimeMillis() - airplus$lastHandStateLog <= 5000L) {
+            return;
+        }
+        airplus$lastHandStateLog = System.currentTimeMillis();
+        airplus$dumpBuf.clear();
+        GL11.glGetFloat(GL11.GL_CURRENT_COLOR, airplus$dumpBuf);
+        LogManager.getLogger("AirPlus").warn(
+                "[HandStateDump] blend={} src=0x{} dst=0x{} program={} color=({},{},{},{}) activeTex=0x{} texBind={} tex2D={} colMat={}/{} lighting={} alphaTest={} fog={}",
+                GL11.glIsEnabled(GL11.GL_BLEND),
+                Integer.toHexString(GL11.glGetInteger(GL11.GL_BLEND_SRC)),
+                Integer.toHexString(GL11.glGetInteger(GL11.GL_BLEND_DST)),
+                GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM),
+                airplus$dumpBuf.get(0), airplus$dumpBuf.get(1),
+                airplus$dumpBuf.get(2), airplus$dumpBuf.get(3),
+                Integer.toHexString(GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE)),
+                GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D),
+                GL11.glIsEnabled(GL11.GL_TEXTURE_2D),
+                GL11.glIsEnabled(GL11.GL_COLOR_MATERIAL),
+                GL11.glGetInteger(GL11.GL_COLOR_MATERIAL_PARAMETER),
+                GL11.glIsEnabled(GL11.GL_LIGHTING),
+                GL11.glIsEnabled(GL11.GL_ALPHA_TEST),
+                GL11.glIsEnabled(GL11.GL_FOG));
+    }
     @Unique
     private World airplus$mouseOverCacheWorld;
     @Unique

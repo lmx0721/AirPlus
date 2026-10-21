@@ -82,9 +82,8 @@ public abstract class MixinBlock {
     private void isCollidable(CallbackInfoReturnable<Boolean> callbackInfoReturnable) {
         final GhostHand ghostHand = GhostHand.INSTANCE;
 
-        // 只在准星于交互距离内瞄准目标方块时生效
-        if (ghostHand.handleEvents() && ghostHand.isAimingAtTarget()
-                && !(ghostHand.getBlock() == Block.getIdFromBlock((Block) (Object) this))) {
+        // SmartCheck 开启时仅在准星于交互距离内瞄准目标方块时生效，关闭时全局穿透
+        if (ghostHand.shouldBypassCollision(Block.getIdFromBlock((Block) (Object) this))) {
             callbackInfoReturnable.setReturnValue(false);
         }
     }

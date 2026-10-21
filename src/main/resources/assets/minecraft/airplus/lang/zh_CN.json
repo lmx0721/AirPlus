@@ -275,6 +275,8 @@
 
         "module.nameTags.description": "更改名称标签的比例，以便你始终可以阅读它们。",
 
+        "module.nameTagOpai.description": "opai风格的nametag",
+
         "module.noBob.description": "禁用视角摇晃效果。",
 
         "module.noClip.description": "允许你自由穿行于墙壁 (需要有沙子落在头上)。",
@@ -339,6 +341,12 @@
 
         "module.rotations.description": "允许你看到你在服务器端的身体旋转。",
 
+        "module.rotationRecorder.description": "录制你的真实旋转数据用于 AI 学习转头，可开启 AimBall 小游戏：瞄准小球后点击（或持续瞄准）换位，录制瞄准数据。",
+
+        "module.aiTrainer.description": "在游戏内一键运行离线训练脚本，把 dataset.json 训练成 Neural 模式可用的 net_weights.json（需要 Python 和 numpy）。",
+
+        "aim.missingData": "AI 转头数据缺失，已回退 Default",
+
         "module.safeWalk.description": "防止你在方块边缘掉落。",
 
         "module.scaffold.description": "自动在你的脚下放方块。",
@@ -397,8 +405,6 @@
 
         "module.tickBase.description": "缓冲ticks以便尽早攻击敌人。",
 
-        "module.rotationRecorder.description": "记录并保存您的旋转。",
-
         "module.forwardTrack.description": "显示实体的实际位置。",
 
         "module.clickRecorder.description": "记录并保存您的点击。",
@@ -422,7 +428,6 @@
         "module.damage Particles.description": "显示对方血量变化",
         "module.deltaForce Style.description": "三角洲风格的界面样式。",
         "module.fastLadder.description": "让你更快地下梯子(oldgrim)",
-        "module.fly2.description": "飞行",
         "module.followTargetHud.description": "显示当前目标信息",
         "module.hanabiHUD.description": "Hanabi的界面",
         "module.hUDEdit.description": "自定义HUD 元素",

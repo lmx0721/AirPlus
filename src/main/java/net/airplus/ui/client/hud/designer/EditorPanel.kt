@@ -285,8 +285,10 @@ class EditorPanel(private val hudDesigner: GuiHudDesigner, var x: Int, var y: In
     private fun drawAddList(mouseX: Int, mouseY: Int, wheel: Int) {
         val sr = ScaledResolution(mc)
 
-        // 计算行高
-        val rows = ELEMENTS.entries.filter { !(it.value.single && HUD.elements.any { e -> e.javaClass == it.key }) }
+        // 计算行高（Add 列表按显示名 A-Z 排序；不改变 ELEMENTS 注册顺序，存档/事件顺序不受影响）
+        val rows = ELEMENTS.entries
+            .filter { !(it.value.single && HUD.elements.any { e -> e.javaClass == it.key }) }
+            .sortedBy { it.value.name.lowercase() }
         val rowH = 13F
         addContentH = rows.size * rowH + 20F
         val viewH = min(addContentH, sr.scaledHeight - addY - 16F)

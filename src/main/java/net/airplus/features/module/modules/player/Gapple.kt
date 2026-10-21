@@ -21,6 +21,9 @@ import net.minecraft.network.play.client.*
 import java.awt.Color
 
 object Gapple : Module("Gapple", Category.PLAYER) {
+    // Stuck = 定身 + 拦截 C03 计数 + 结束后补发；NoC03 = Freeze 原理（取消 C03 且不补发）；
+    // None = 不拦截任何包，仅按游戏 tick 计时后发送使用包
+    private val mode by choices("Mode", arrayOf("Stuck", "NoC03", "None"), "Stuck")
     private val c by int("C03PacketPlayer", 32, 32..40)
     private val progressBar2 by boolean("ProgressBar", true)
     private val chatMessage by boolean("ChatMessage", true)
@@ -77,7 +80,14 @@ object Gapple : Module("Gapple", Category.PLAYER) {
     val onPacket = handler<PacketEvent> { event ->
         val packet = event.packet
 
-        if (packet is C03PacketPlayer && cancelMove && ticks < c) {
+        // Stuck：定身期间拦截 C03 计数；NoC03：吃苹果期间按 Freeze 原理取消 C03（丢弃不补发）
+        val interceptC03 = when (mode) {
+            "Stuck" -> cancelMove && ticks < c
+            "NoC03" -> isEating && ticks < c
+            else -> false
+        }
+
+        if (packet is C03PacketPlayer && interceptC03) {
             if (packet is C03PacketPlayer.C05PacketPlayerLook) {
                 yaw = packet.yaw
                 pitch = packet.pitch
@@ -88,7 +98,7 @@ object Gapple : Module("Gapple", Category.PLAYER) {
     }
 
     val onMove = handler<MoveEvent> { event ->
-        if (cancelMove) {
+        if (mode == "Stuck" && cancelMove) {
             event.cancelEvent()
         }
     }
@@ -102,13 +112,18 @@ object Gapple : Module("Gapple", Category.PLAYER) {
             return@handler
         }
 
-        if (pauseTicks == 0) {
-            stuck()
-        } else {
-            if (pauseTicks > 0) {
-                stopStuck()
-                pauseTicks--
+        if (mode == "Stuck") {
+            if (pauseTicks == 0) {
+                stuck()
+            } else {
+                if (pauseTicks > 0) {
+                    stopStuck()
+                    pauseTicks--
+                }
             }
+        } else if (mode == "None" && pauseTicks == 0) {
+            // None 模式不拦截 C03，改用游戏 tick 计数（暂停期间不计）
+            ticks++
         }
 
         if (ticks >= c) {
@@ -156,6 +171,9 @@ object Gapple : Module("Gapple", Category.PLAYER) {
     }
 
     private fun release() {
+        // Stuck 模式把定身期间拦截的 C03 补发出去；
+        // NoC03 按 Freeze 原理直接丢弃；None 模式没有拦截过任何包
+        if (mode != "Stuck") return
         sendPacket(C03PacketPlayer.C05PacketPlayerLook(yaw, pitch, mc.thePlayer.onGround))
         for (i in 1 until ticks) {
             sendPacket(C03PacketPlayer(mc.thePlayer.onGround))

@@ -37,6 +37,7 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
         // Register modules
         val modules = arrayOf(
             AbortBreaking,
+            AiTrainer,
             Aimbot,
             Ambience,
             Animations,
@@ -112,7 +113,6 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             FastUse,
             FlagCheck,
             Fly,
-            Fly2,
             FollowTargetHud,
             ForceUnicodeChat,
             FreeCam,
@@ -156,6 +156,7 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             NameProtect,
             NameTags,
             NameTags2,
+            NameTagOpai,
             NoBob,
             NoClip,
             NoFOV,
@@ -185,6 +186,7 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             Regen,
             ResourcePackSpoof,
             Rotations,
+            RotationRecorder,
             SafeWalk,
             Scaffold,
             ServerCrasher,

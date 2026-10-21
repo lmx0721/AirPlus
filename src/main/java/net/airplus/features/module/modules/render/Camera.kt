@@ -25,6 +25,7 @@ object Camera : Module("Camera", Category.RENDER) {
     private val actionMaxDistance by float("ActionMaxDistance", 20F, 1F..50F) { action }
     private val viewAnimation by boolean("ViewAnimation", true)
     private val viewAnimationSpeed by float("ViewAnimationSpeed", 15F, 2F..50F) { viewAnimation }
+    private val noSecondPerson by boolean("NoSecondPerson", false)
 
     private var cameraPos: Vec3? = null
 
@@ -89,6 +90,10 @@ object Camera : Module("Camera", Category.RENDER) {
                 settings.thirdPersonView = targetView
                 transitioning = false
             }
+            // NoSecondPerson：把第二人称改写回第一人称（F5 循环变成 0 ↔ 1）
+            if (noSecondPerson && settings.thirdPersonView == 2) {
+                settings.thirdPersonView = 0
+            }
             lastAppliedView = settings.thirdPersonView
             animatedDistance = if (settings.thirdPersonView == 0) 0F else distance
             return animatedDistance
@@ -102,7 +107,8 @@ object Camera : Module("Camera", Category.RENDER) {
         val frameView = settings.thirdPersonView
 
         if (!transitioning && frameView != lastAppliedView) {
-            targetView = frameView
+            targetView = requestedView(frameView)
+            if (targetView != frameView) settings.thirdPersonView = targetView
             heldView = lastAppliedView
             transitionProgress = 0F
             transitioning = true
@@ -111,7 +117,8 @@ object Camera : Module("Camera", Category.RENDER) {
         if (transitioning) {
             // 过渡期间再次切换人称：以当前请求为新目标，从当前位置继续
             if (frameView != heldView && frameView != targetView) {
-                targetView = frameView
+                targetView = requestedView(frameView)
+                if (targetView != frameView) settings.thirdPersonView = targetView
             }
 
             // 固定时长（默认 ViewAnimationSpeed=15 → 约 0.5s），按速度反比缩放
@@ -124,14 +131,28 @@ object Camera : Module("Camera", Category.RENDER) {
             val heldDistance = if (heldView == 0) 0F else distance
             val targetDistance = if (targetView == 0) 0F else distance
 
-            if (e < 0.5F) {
-                // 前半段：保持旧人称，距离由旧目标收缩到 0
-                settings.thirdPersonView = heldView
-                animatedDistance = heldDistance * (1F - e * 2F)
-            } else {
-                // 后半段：切到新人称，距离由 0 展开到新目标
-                settings.thirdPersonView = targetView
-                animatedDistance = targetDistance * (e * 2F - 1F)
+            when {
+                // 第一人称 → 第三人称：立即切换视角、距离直接展开。
+                // 旧的两段式前半段在第一人称下没有任何视觉变化，会给人「等一下才切换」的感觉
+                heldView == 0 -> {
+                    settings.thirdPersonView = targetView
+                    animatedDistance = targetDistance * e
+                }
+                // 第三人称 → 第一人称：保持旧人称，距离全程收缩到 0，收缩完成立即切第一人称
+                targetView == 0 -> {
+                    settings.thirdPersonView = heldView
+                    animatedDistance = heldDistance * (1F - e)
+                }
+                else -> {
+                    // 第三人称 ↔ 第三人称（背/ front 视角互换）：保持旧人称收缩到 0，再切新人称展开
+                    if (e < 0.5F) {
+                        settings.thirdPersonView = heldView
+                        animatedDistance = heldDistance * (1F - e * 2F)
+                    } else {
+                        settings.thirdPersonView = targetView
+                        animatedDistance = targetDistance * (e * 2F - 1F)
+                    }
+                }
             }
 
             if (t >= 1F) {
@@ -152,6 +173,13 @@ object Camera : Module("Camera", Category.RENDER) {
         val factor = (1.0 - Math.exp(-speed * dt)).toFloat()
         animatedDistance += (target - animatedDistance) * factor
     }
+
+    /**
+     * 处理人称请求：启用 NoSecondPerson 时把第二人称（view 2）映射为第一人称，
+     * F5 循环由 0→1→2→0 变为 0↔1。
+     */
+    private fun requestedView(view: Int): Int =
+        if (noSecondPerson && view == 2) 0 else view
 
     fun updateActionCamera(targetPos: Vec3) {
         val currentPos = cameraPos ?: run {

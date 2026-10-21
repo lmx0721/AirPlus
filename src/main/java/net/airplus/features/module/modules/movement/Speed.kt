@@ -8,6 +8,7 @@ package net.airplus.features.module.modules.movement
 import net.airplus.event.*
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
+import net.airplus.features.module.modules.combat.KillAura
 import net.airplus.features.module.modules.movement.speedmodes.aac.AACHop3313
 import net.airplus.features.module.modules.movement.speedmodes.aac.AACHop350
 import net.airplus.features.module.modules.movement.speedmodes.aac.AACHop4
@@ -32,6 +33,7 @@ import net.airplus.features.module.modules.movement.speedmodes.vulcan.VulcanGrou
 import net.airplus.features.module.modules.movement.speedmodes.vulcan.VulcanHop
 import net.airplus.features.module.modules.movement.speedmodes.vulcan.VulcanLowHop
 import net.airplus.utils.extensions.isMoving
+import net.airplus.utils.rotation.RotationUtils
 
 object Speed : Module("Speed", Category.MOVEMENT) {
 
@@ -201,6 +203,10 @@ object Speed : Module("Speed", Category.MOVEMENT) {
     val onMotion = handler<MotionEvent> { event ->
         val thePlayer = mc.thePlayer ?: return@handler
 
+        // OldGrim-TargetStrafe：按住空格时 KillAura 的移动修复表现为 strict（绕过旋转输入重建）
+        RotationUtils.forceStrict = mode.get() == "OldGrim" && oldGrimTargetStrafe &&
+            KillAura.target != null && mc.gameSettings.keyBindJump.isKeyDown
+
         if (thePlayer.isSneaking || event.eventState != EventState.PRE)
             return@handler
 
@@ -255,6 +261,8 @@ object Speed : Module("Speed", Category.MOVEMENT) {
     }
 
     override fun onDisable() {
+        RotationUtils.forceStrict = false
+
         if (mc.thePlayer == null)
             return
 

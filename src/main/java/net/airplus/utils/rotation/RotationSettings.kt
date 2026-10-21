@@ -56,6 +56,11 @@ open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true 
         "MinRotationDifferenceResetTiming", arrayOf("OnStart", "OnSlowDown", "Always"), "OnStart"
     ) { rotationsActive && generalApply() }
 
+    // AI 学习转头策略：Default = 原有速度限幅管线；Template = 模板库 k-NN；Neural = MLP 推理
+    open val aimStrategyValue = choices(
+        "AimStrategy", arrayOf("Default", "Template", "Neural"), "Default"
+    ) { rotationsActive && generalApply() }
+
     // Variables for easier access
     val rotations by rotationsValue
     val applyServerSide by applyServerSideValue
@@ -73,6 +78,7 @@ open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true 
     val angleResetDifference by angleResetDifferenceValue
     val minRotationDifference by minRotationDifferenceValue
     val minRotationDifferenceResetTiming by minRotationDifferenceResetTimingValue
+    val aimStrategy by aimStrategyValue
 
     var prioritizeRequest = false
     var immediate = false

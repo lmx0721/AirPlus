@@ -186,6 +186,10 @@ object JumpCircle : Module("JumpCircle", Category.RENDER, gameDetecting = false)
     private fun forceRenderStateSync() {
         GlStateManager.enableBlend()
         GlStateManager.disableBlend()
+        // drawHueCircle 的裸 glColor4f 只改实际状态不改 GlStateManager 颜色缓存：
+        // 直接 GlStateManager.color(1,1,1,1) 会因缓存命中被跳过，残留的带 alpha 当前色
+        // 会让第一人称手持物品被混合渲染而呈半透明。先写差异值再写回，强制真实 glColor4f 执行。
+        GlStateManager.color(0f, 0f, 0f, 0f)
         GlStateManager.color(1f, 1f, 1f, 1f)
         GlStateManager.depthMask(true)
     }

@@ -280,6 +280,8 @@
         "module.nameProtect.description": "Changes player names clientside.",
         
         "module.nameTags.description": "Changes the scale of the nametags so you can always read them.",
+
+        "module.nameTagOpai.description": "Capsule-style name tags ported from Samsara: players, items and floating text with health, armor difference, distance and equipment.",
         
         "module.noBob.description": "Disables the view bobbing effect.",
         
@@ -346,7 +348,13 @@
         "module.reverseStep.description": "Allows you to step down blocks faster.",
         
         "module.rotations.description": "Allows you to see server-sided head and body rotations.",
-        
+
+        "module.rotationRecorder.description": "Records your real rotations for AI-learned aiming. Enable AimBall for the aim mini-game: click on the ball (or keep aiming at it) to relocate it and record aim data.",
+
+        "module.aiTrainer.description": "Runs the offline training script in-game to turn dataset.json into net_weights.json for the Neural aim strategy (requires Python and numpy).",
+
+        "aim.missingData": "AI aim data missing, falling back to Default",
+
         "module.safeWalk.description": "Prevents you from falling down as if you were sneaking.",
         
         "module.scaffold.description": "Automatically places blocks beneath your feet.",
@@ -404,8 +412,6 @@
         "module.overrideRaycast.description": "Overrides your rotation-based raycast with the server rotation based raycast.",
 
         "module.tickBase.description": "Buffers ticks to get early hits of an enemy.",
-
-        "module.rotationRecorder.description": "Records and saves your rotations.",
 
         "module.forwardTrack.description": "Reveals the actual position of an entity.",
 

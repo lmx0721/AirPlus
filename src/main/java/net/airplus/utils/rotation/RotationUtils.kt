@@ -18,6 +18,8 @@ import net.airplus.utils.inventory.InventoryUtils
 import net.airplus.utils.kotlin.RandomUtils.nextDouble
 import net.airplus.utils.kotlin.RandomUtils.nextFloat
 import net.airplus.utils.rotation.RaycastUtils.raycastEntity
+import net.airplus.utils.rotation.aim.AimTemplateEngine
+import net.airplus.utils.rotation.aim.RotationNet
 import net.airplus.utils.timing.WaitTickUtils
 import net.minecraft.entity.Entity
 import net.minecraft.network.play.client.C03PacketPlayer
@@ -50,6 +52,11 @@ object RotationUtils : MinecraftInstance, Listenable {
     private const val MAX_CAPTURE_TICKS = 3
 
     var modifiedInput = MovementInput()
+
+    /**
+     * 强制移动修复走 strict 分支（绕过旋转输入重建），由 Speed OldGrim-TargetStrafe 在按住跳跃键时置位。
+     */
+    var forceStrict = false
 
     /**
      * A list that stores the last rotations captured from 0 up to [MAX_CAPTURE_TICKS] previous ticks.
@@ -337,7 +344,8 @@ object RotationUtils : MinecraftInstance, Listenable {
             vSpeed,
             !settings.instant && settings.legitimize,
             settings.minRotationDifference,
-            settings.minRotationDifferenceResetTiming
+            settings.minRotationDifferenceResetTiming,
+            settings,
         )
     }
 
@@ -349,6 +357,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         legitimize: Boolean,
         minRotationDiff: Float,
         minRotationDiffResetTiming: String,
+        settings: RotationSettings? = null,
     ): Rotation {
         var (yawDiff, pitchDiff) = angleDifferences(targetRotation, currentRotation)
 
@@ -374,10 +383,16 @@ object RotationUtils : MinecraftInstance, Listenable {
             pitchDiff = (pitchDiff * pitchSlowdown).withGCD()
         }
 
+        // AI 学习转头：Template（模板库）/ Neural（MLP）生成增量，null 则回退下方 Default 管线
+        val aiDiff = if (settings != null && !settings.instant) aiGeneratedDiff(settings, yawDiff, pitchDiff) else null
+        if (aiDiff != null) {
+            settings?.updateSimulateShortStopData(aiDiff.first)
+            return currentRotation.plus(Rotation(aiDiff.first.withGCD(), aiDiff.second.withGCD()))
+        }
+
         var (straightLineYaw, straightLinePitch) = run {
             val baseYawSpeed = abs(yawDiff safeDiv rotationDifference) * hSpeed
             val basePitchSpeed = abs(pitchDiff safeDiv rotationDifference) * vSpeed
-
             // Apply imperfect correlation
             if (legitimize) {
                 baseYawSpeed * (0.9F..1.1F).random()
@@ -413,6 +428,35 @@ object RotationUtils : MinecraftInstance, Listenable {
 
         return currentRotation.plus(Rotation(straightLineYaw, straightLinePitch))
     }
+
+    /**
+     * AI 学习转头：按 [RotationSettings.aimStrategy] 把当前剩余角度差交给模板库或神经网络，
+     * 生成下一 tick 的 (yawDelta, pitchDelta)。无法生成时返回 null（回退 Default 管线）。
+     */
+    private fun aiGeneratedDiff(settings: RotationSettings, yawDiff: Float, pitchDiff: Float): Pair<Float, Float>? {
+        val player = mc.thePlayer ?: return null
+
+        if (hypot(yawDiff, pitchDiff) <= 0f) return null
+
+        // 当前角速度 = 上上 tick 到上一 tick 的实际旋转变化
+        val vel = angleDifferences(lastRotations[0], lastRotations[1])
+        val moveSpeed = hypot(player.motionX, player.motionZ).toFloat()
+        val entityDist = nearestEntityDistance(player)
+
+        return when (settings.aimStrategy) {
+            "Template" -> AimTemplateEngine.sample(yawDiff, pitchDiff, vel.x, vel.y, moveSpeed, entityDist)
+            "Neural" -> RotationNet.predict(yawDiff, pitchDiff, vel.x, vel.y, moveSpeed, entityDist, getFixedAngleDelta())
+            else -> null
+        }
+    }
+
+    // 与 RotationRecorder 保持一致：只统计生物实体，避免掉落物/箭污染 entityDist 特征
+    private fun nearestEntityDistance(player: Entity): Float =
+        mc.theWorld?.loadedEntityList?.asSequence()
+            ?.filterIsInstance<net.minecraft.entity.EntityLivingBase>()
+            ?.filter { it !== player }
+            ?.minOfOrNull { player.getDistanceToEntity(it) }
+            ?: 0f
 
     private fun applySlowDown(
         diff: Float, min: Float, timing: String, yaw: Boolean, applyRealism: Boolean, action: (Float) -> Unit
@@ -733,7 +777,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         }
 
         currentRotation?.let {
-            it.applyStrafeToPlayer(event, data.strict)
+            it.applyStrafeToPlayer(event, data.strict || forceStrict)
             event.cancelEvent()
         }
     }

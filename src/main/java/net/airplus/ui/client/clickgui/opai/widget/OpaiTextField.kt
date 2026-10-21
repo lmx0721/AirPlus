@@ -1,40 +1,38 @@
 package net.airplus.ui.client.clickgui.opai.widget
 
-import net.airplus.ui.client.clickgui.opai.OpaiRenderer
-import net.airplus.ui.client.clickgui.opai.OpaiTheme
-import net.airplus.ui.client.clickgui.opai.MD3Theme
 import net.airplus.ui.client.clickgui.opai.OpaiCompat.IMEFocusHelper
+import net.airplus.ui.client.clickgui.opai.OpaiPalette
+import net.airplus.ui.client.clickgui.opai.OpaiStyle
+import net.airplus.ui.client.clickgui.opai.OpaiSurface
 import net.minecraft.client.gui.GuiScreen
 import org.lwjgl.input.Keyboard
 import java.util.function.Predicate
-import kotlin.math.min
 
+/**
+ * Samsara Opai 风格输入框：field 圆角底 + fieldLine/accent 下划线，
+ * 光标为 1px 竖线。仅负责输入逻辑与绘制，宿主负责布局。
+ */
 class OpaiTextField(val maxLength: Int, val inputFilter: Predicate<String>? = Predicate { true }) {
 
     var focused = false
     var text = ""
     var cursor = 0
 
-    fun draw(renderer: OpaiRenderer, x: Float, y: Float, width: Float, height: Float, mouseX: Int, mouseY: Int, placeholder: String, textScale: Float) {
-        renderer.roundRect().addRoundRect(x, y, width, height, OpaiTheme.INPUT_RADIUS,
-                OpaiTheme.inputSurface(focused))
-        renderer.outline().addOutline(x, y, width, height, OpaiTheme.INPUT_RADIUS,
-                if (focused) 1.2f else 0.7f,
-                if (focused) MD3Theme.PRIMARY else MD3Theme.withAlpha(MD3Theme.OUTLINE, 120))
-
+    fun draw(surface: OpaiSurface, palette: OpaiPalette, x: Float, y: Float, width: Float, height: Float, placeholder: String = "") {
+        surface.rounded(x, y, width, height, 2f, palette.field)
+        surface.rect(x + 1f, y + height - 1f, width - 2f, 1f, if (focused) palette.enabled else palette.fieldLine)
         val showPlaceholder = text.isEmpty() && !focused
-        var display = if (showPlaceholder) placeholder else text
-        if (focused && System.currentTimeMillis() % 1000 > 500) {
-            val safeCursor = min(cursor, display.length)
-            display = display.substring(0, safeCursor) + "|" + display.substring(safeCursor)
+        if (showPlaceholder) {
+            surface.plainText(placeholder, x + 6f, y + height / 2f, OpaiStyle.ROW_TEXT_SIZE, width - 12f,
+                OpaiStyle.multiplyOpacity(palette.text, 0.45f))
+        } else {
+            surface.plainText(text, x + 6f, y + height / 2f, OpaiStyle.ROW_TEXT_SIZE, width - 12f, palette.text)
         }
-        val textY = y + (height - renderer.text().getLineHeight(textScale)) / 2.0f
-        renderer.text().addText(trimToWidth(display, textScale, width - 8.0f, renderer), x + 4.0f, textY, textScale, if (showPlaceholder) MD3Theme.TEXT_MUTED else MD3Theme.TEXT_PRIMARY)
-
         if (focused) {
-            val safeCursor = min(cursor, text.length)
-            val caretX = x + 4.0f + renderer.text().getWidth(text.substring(0, safeCursor), textScale)
-            IMEFocusHelper.updateCursorPos(caretX, textY)
+            val safeCursor = cursor.coerceIn(0, text.length)
+            val caretX = x + 6f + surface.plainTextWidth(text.substring(0, safeCursor), OpaiStyle.ROW_TEXT_SIZE)
+            surface.rect(caretX, y + height / 2f - 4.5f, 1f, 9f, palette.text)
+            IMEFocusHelper.updateCursorPos(caretX, y + height / 2f)
         }
     }
 
@@ -127,24 +125,6 @@ class OpaiTextField(val maxLength: Int, val inputFilter: Predicate<String>? = Pr
             }
             else -> return false
         }
-    }
-
-    private fun clamp(value: String?): String {
-        val v = value ?: ""
-        return if (v.length > maxLength) v.substring(0, maxLength) else v
-    }
-
-    private fun trimToWidth(value: String?, scale: Float, maxWidth: Float, renderer: OpaiRenderer): String {
-        if (value == null || value.isEmpty()) return ""
-        if (renderer.text().getWidth(value, scale) <= maxWidth) return value
-        val ellipsis = "..."
-        val ellipsisWidth = renderer.text().getWidth(ellipsis, scale)
-        if (ellipsisWidth >= maxWidth) return ellipsis
-        for (len in value.length - 1 downTo 0) {
-            val candidate = value.substring(0, len) + ellipsis
-            if (renderer.text().getWidth(candidate, scale) <= maxWidth) return candidate
-        }
-        return ellipsis
     }
 
     fun clear() {

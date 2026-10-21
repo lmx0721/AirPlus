@@ -20,6 +20,7 @@ import net.airplus.ui.client.hud.element.Side
 import net.airplus.utils.client.ClientThemesUtils
 import net.airplus.utils.extensions.lerpWith
 import net.airplus.utils.render.HudBlur
+import net.airplus.utils.render.HudSlices
 import net.airplus.utils.render.RenderUtils.deltaTime
 import net.airplus.utils.render.RenderUtils.drawRoundedBorder
 import net.airplus.utils.render.RenderUtils.drawRect
@@ -32,6 +33,8 @@ import net.minecraft.potion.Potion
 import net.minecraft.potion.PotionEffect
 import net.minecraft.util.ResourceLocation
 import java.awt.Color
+import java.util.Locale
+import kotlin.math.exp
 import kotlin.math.max
 
 @ElementInfo(name = "Potions", single = true)
@@ -40,7 +43,7 @@ class Potions(
     side: Side = Side(Side.Horizontal.RIGHT, Side.Vertical.DOWN)
 ) : Element("Potions", x, y, scale, side) {
 
-    private val style by choices("Style", arrayOf("Hanabi", "Card", "Compact", "Mini", "Onyx"), "Hanabi")
+    private val style by choices("Style", arrayOf("Hanabi", "Card", "Compact", "Mini", "Onyx", "Opai"), "Hanabi")
     private val nameColor by color("Color", Color(33, 170, 47))
     private val fontRenderer by font("Font", Fonts.minecraftFont)
     private val blur by boolean("Blur", false)
@@ -48,10 +51,13 @@ class Potions(
     private val bgColors = ColorSettingsInteger(this, "BackgroundColor") { style != "Hanabi" }.with(Color(20, 22, 28, 150))
     private val bgRadius by float("Round-Radius", 5F, 0F..12F) { style != "Hanabi" }
 
-    // Onyx style：排序 / 药水染色 / 隐藏氛围效果（仅 Onyx 可见）
+    // Onyx 样式：排序 / 药水染色 / 隐藏氛围效果（仅 Onyx 可见）
     private val onyxSort by choices("Sort", arrayOf("Time left", "Name", "Level"), "Time left") { style == "Onyx" }
     private val potionColor by boolean("Potion color", true) { style == "Onyx" }
     private val hideAmbient by boolean("Hide ambient", false) { style == "Onyx" }
+
+    // Opai 样式：药水色淡染玻璃卡片（仅 Opai 可见）
+    private val opaiTint by boolean("Tint", true) { style == "Opai" }
 
     // Longest seen duration per potion id, so the bar doesn't reset on re-applied effects
     private val potionMaxDurations = mutableMapOf<Int, Int>()
@@ -70,6 +76,144 @@ class Potions(
 
     private val onyxRows = HashMap<Int, OnyxRowState>()
 
+    // Opai 行状态（按 potionID 跟踪；内容冻结用于淡出）
+    private val opaiRows = HashMap<Int, OpaiRowState>()
+
+    /** Opai 行动画状态：slide（水平滑入/滑出）+ space（垂直槽位延迟塌缩）+ 冻结内容。 */
+    private class OpaiRowState(val id: Int, now: Long, firstGroup: Boolean) {
+        var potion: Potion? = null
+        var title = ""
+        var timer = ""
+        var color = 0 // 药水液色（ARGB）
+        var timerRed = false // 剩余 ≤30s 变红
+        var width = 0F
+        var present = false
+        var justRemoved = false
+        var exitY = 0F
+        var curX = 0F
+        var curY = 0F
+        val slide = OpaiSlide(now)
+        val space = OpaiSpace(firstGroup, now)
+    }
+
+    /** Samsara PotionStatusMotion.Spring：指向 1 的临界阻尼弹簧（rate 18）。 */
+    private class OpaiSpring(value: Double, velocity: Double, now: Long) {
+        var value = value
+        var velocity = velocity
+        private var last = now
+
+        fun advance(now: Long) {
+            val dt = max(0.0, (now - last).toDouble()) / 1000.0
+            val offset = value - 1
+            val rate = 18.0
+            val decay = exp(-rate * dt)
+            val linear = velocity + rate * offset
+            value = 1 + (offset + linear * dt) * decay
+            velocity = (velocity - rate * linear * dt) * decay
+            last = now
+        }
+    }
+
+    /** Samsara PotionStatusMotion.Slide：三次 Hermite（入场 back 过冲 / 单行快出 / 组退场预备钳制）。 */
+    private class OpaiSlide(now: Long) {
+        var value = 0.0
+        var velocity = 0.0
+            private set
+        private var start = 0.0
+        private var target = 0.0
+        private var startVelocity = 0.0
+        private var endVelocity = 0.0
+        private var duration = 1.0
+        private var changedAt = now
+        private var moving = false
+        private var groupExit = false
+
+        val isMoving: Boolean
+            get() = moving
+
+        fun advance(now: Long) {
+            if (!moving) return
+            val t = ((now - changedAt) / 1000.0 / duration).coerceIn(0.0, 1.0)
+            val d = target - start
+            val startTangent = startVelocity * duration
+            val endTangent = endVelocity * duration
+            val raw = start + startTangent * t + (3 * d - 2 * startTangent - endTangent) * t * t +
+                (-2 * d + startTangent + endTangent) * t * t * t
+            // 组退场预备段：钳制在起点，卡住不动直到曲线回落
+            value = if (groupExit) minOf(start, raw) else raw
+            velocity = if (groupExit && raw > start) 0.0 else
+                (startTangent + 2 * (3 * d - 2 * startTangent - endTangent) * t +
+                    3 * (-2 * d + startTangent + endTangent) * t * t) / duration
+            if (t >= 1) {
+                value = target
+                velocity = 0.0
+                moving = false
+            }
+        }
+
+        fun to(target: Double, groupExit: Boolean, distance: Float, now: Long) {
+            if (target == this.target) return
+            start = value
+            this.groupExit = target == 0.0 && groupExit
+            duration = when {
+                target == 1.0 -> OPAI_ENTRY_S
+                this.groupExit -> OPAI_GROUP_EXIT_S
+                else -> distance / OPAI_EXIT_SPEED
+            }
+            val d = target - start
+            startVelocity = if (moving) velocity else when {
+                target == 1.0 -> (3 + OPAI_BACK) * d / duration
+                this.groupExit -> 0.0
+                else -> 3 * d / duration
+            }
+            endVelocity = if (this.groupExit) (3 + OPAI_BACK) * d / duration else 0.0
+            this.target = target
+            changedAt = now
+            moving = true
+        }
+    }
+
+    /** Samsara PotionStatusMotion.Space：行槽位伸缩，退场延迟 300ms 后 200ms 塌缩重排。 */
+    private class OpaiSpace(firstGroup: Boolean, now: Long) {
+        private var growth = OpaiSpring(if (firstGroup) 1.0 else 0.0, 0.0, now)
+        private var collapseAt = 0L
+        private var retiring = false
+        private var collapsing = false
+        private var collapseFrom = 0.0
+        private var velocity = 0.0
+
+        var value = if (firstGroup) 1.0 else 0.0
+            private set
+
+        fun advance(now: Long) {
+            if (!collapsing) {
+                growth.advance(if (retiring) minOf(now, collapseAt) else now)
+                value = growth.value
+                velocity = growth.velocity
+                if (retiring && now >= collapseAt) {
+                    collapseFrom = value
+                    collapsing = true
+                }
+            }
+            if (collapsing) {
+                val t = ((now - collapseAt) / 1000.0 / OPAI_REFLOW_S).coerceIn(0.0, 1.0)
+                value = collapseFrom * (1 - t)
+                velocity = if (t < 1) -collapseFrom / OPAI_REFLOW_S else 0.0
+            }
+        }
+
+        fun present(present: Boolean, now: Long) {
+            if (present && retiring) {
+                growth = OpaiSpring(value, velocity, now)
+                retiring = false
+                collapsing = false
+            } else if (!present && !retiring) {
+                retiring = true
+                collapseAt = now + OPAI_REFLOW_DELAY_MS
+            }
+        }
+    }
+
     private class Metrics(val width: Float, val rowHeight: Float, val rowSpacing: Float)
 
     private fun styleMetrics() = when (style) {
@@ -81,6 +225,7 @@ class Potions(
 
     override fun drawElement(): Border {
         if (style == "Onyx") return drawOnyx()
+        if (style == "Opai") return drawOpai()
         return drawLegacy()
     }
 
@@ -352,6 +497,211 @@ class Potions(
 
     private fun potionOf(effect: PotionEffect): Potion? = Potion.potionTypes.getOrNull(effect.potionID)
 
+    /**
+     * Opai 样式：Samsara PotionStatus 移植（常量按其 1.6 默认缩放预乘：行高 20→32、间距 2.25→3.6、
+     * 圆角 3.75→6）。每张小卡为药水色淡染玻璃底 + 原版效果图标 + 名称罗马数字 + 剩余时间
+     * （≤30s 变红）。行自左侧带过冲滑入（430ms back-out），单行退场 848px/s，组退场 170ms；
+     * 槽位在退场 300ms 后 200ms 塌缩重排；行按 Samsara 固定顺序排列，锚点在整组顶部，
+     * 新行向下生长。
+     */
+    private fun drawOpai(): Border {
+        val designer = mc.currentScreen is GuiHudDesigner
+        val now = System.currentTimeMillis()
+        val s = scale
+
+        // 要显示的效果：设计器显示示例行；否则取玩家身上带原版图标的效果
+        val effects: List<PotionEffect> = if (designer) {
+            listOf(PotionEffect(Potion.nightVision.id, 9580, 0), PotionEffect(Potion.moveSpeed.id, 1780, 1))
+        } else {
+            (mc.thePlayer?.activePotionEffects ?: emptyList()).filter { potionOf(it)?.hasStatusIcon() == true }
+        }
+
+        val firstGroup = opaiRows.isEmpty()
+        val previousCount = opaiRows.values.count { it.present }
+
+        // 更新内容并标记本帧在场
+        val presentIds = HashSet<Int>()
+        val font = Fonts.fontSemibold35
+        for (effect in effects) {
+            val potion = potionOf(effect) ?: continue
+            val row = opaiRows.getOrPut(effect.potionID) { OpaiRowState(effect.potionID, now, firstGroup) }
+            row.potion = potion
+            row.title = opaiTitle(potion, effect)
+            row.timer = opaiTimer(effect)
+            row.color = 0xFF000000.toInt() or (potion.liquidColor and 0xFFFFFF)
+            row.timerRed = !effect.isPotionDurationMax && effect.duration <= OPAI_WARN_TICKS
+            row.width = OPAI_WIDTH_BASE +
+                max(font.getStringWidth(row.title).toFloat(), font.getStringWidth(row.timer).toFloat())
+            presentIds.add(effect.potionID)
+        }
+
+        // 推进行动画
+        for (row in opaiRows.values) {
+            row.slide.advance(now)
+            row.space.advance(now)
+            val next = row.id in presentIds
+            row.justRemoved = row.present && !next
+            row.slide.to(if (next) 1.0 else 0.0, max(previousCount, presentIds.size) > 1, row.width + OPAI_SLIDE_PAD, now)
+            row.space.present(next, now)
+            row.present = next
+        }
+        if (presentIds.isEmpty() && opaiRows.values.none { it.slide.isMoving }) {
+            opaiRows.clear()
+            return Border(0f, -OPAI_ROW_HEIGHT, 30f, 0f)
+        }
+        opaiRows.entries.removeAll { !it.value.present && !it.value.slide.isMoving && it.value.space.value <= 0.001 }
+
+        // 排序（Samsara 固定顺序 + id 兜底）并计算行位（锚点在整组顶部，向下生长）
+        val sorted = opaiRows.values.sortedWith(compareBy({ opaiOrder(it.id) }, { it.id }))
+        var height = 0f
+        for (row in sorted) height += (OPAI_ROW_HEIGHT + OPAI_GAP) * row.space.value.toFloat()
+        height = max(0f, height - OPAI_GAP)
+
+        val drawList = ArrayList<OpaiRowState>(sorted.size)
+        var y = 0f
+        for (row in sorted) {
+            if (row.justRemoved) row.exitY = y
+            if (row.present || row.slide.isMoving) {
+                row.curX = -(row.width + OPAI_SLIDE_PAD) * (1f - row.slide.value.toFloat())
+                row.curY = if (row.present) y else row.exitY
+                drawList.add(row)
+            }
+            y += (OPAI_ROW_HEIGHT + OPAI_GAP) * row.space.value.toFloat()
+        }
+        if (drawList.isEmpty()) return Border(0f, -OPAI_ROW_HEIGHT, 30f, 0f)
+        val width = drawList.maxOf { it.width }
+
+        // 模糊（逐行，绝对 AABB + 局部圆角遮罩）
+        if (blur) {
+            val originX = renderX.toFloat()
+            val originY = renderY.toFloat()
+            for (row in drawList) {
+                val rx = row.curX
+                val ry = row.curY
+                val rw = row.width
+                HudBlur.blur(
+                    (originX + rx) * s, (originY + ry) * s,
+                    (originX + rx + rw) * s, (originY + ry + OPAI_ROW_HEIGHT) * s,
+                    blurStrength, "InternalBlur"
+                ) {
+                    drawRoundedRect(rx, ry, rx + rw, ry + OPAI_ROW_HEIGHT, -1, OPAI_RADIUS)
+                }
+            }
+        }
+
+        for (row in drawList) drawOpaiRow(row)
+
+        return Border(0f, 0f, width, height)
+    }
+
+    /** Opai 行：Samsara 预烘焙阴影/玻璃贴图（3 段切片）+ 药水色图标贴图 + 名称 + 剩余时间。 */
+    private fun drawOpaiRow(state: OpaiRowState) {
+        val potion = state.potion ?: return
+        val x = state.curX
+        val y = state.curY
+        val glassTint = if (opaiTint) 0xFF000000.toInt() or (state.color and 0xFFFFFF) else 0xFFFFFFFF.toInt()
+
+        // Samsara PotionStatusSurface.panel：shadow.png + 药水色染色 glass.png（×1.6 预乘 → texScale 8/1.6）
+        HudSlices.panelStrip(
+            HudSlices.POTION_SHADOW, x, y, state.width, OPAI_ROW_HEIGHT,
+            OPAI_TEX_MARGIN, OPAI_TEX_SCALE, OPAI_RADIUS, 720f, 240f, 0xFFFFFFFF.toInt()
+        )
+        HudSlices.panelStrip(
+            HudSlices.POTION_GLASS, x, y, state.width, OPAI_ROW_HEIGHT,
+            OPAI_TEX_MARGIN, OPAI_TEX_SCALE, OPAI_RADIUS, 720f, 240f, glassTint
+        )
+
+        drawOpaiIcon(potion, state.id, x, y, glassTint)
+
+        val font = Fonts.fontSemibold35
+        font.drawString(state.title, x + OPAI_TEXT_X, y + OPAI_TITLE_Y, state.color)
+        font.drawString(state.timer, x + OPAI_TEXT_X, y + OPAI_TIMER_Y, if (state.timerRed) OPAI_TIMER_RED else OPAI_TIMER_GRAY)
+    }
+
+    /** Opai 图标：Samsara 自定义药水图标贴图（128×128，药水色染色，占满行高）；无贴图的效果回退原版图标。 */
+    private fun drawOpaiIcon(potion: Potion, id: Int, x: Float, y: Float, tint: Int) {
+        val key = opaiIconKey(id)
+        if (key == null) {
+            drawStatusIcon(potion, x + 7f, y + 7f, 18)
+            return
+        }
+        HudSlices.texRect(
+            ResourceLocation("minecraft", "airplus/hud/potion/$key.png"),
+            x, y, OPAI_ROW_HEIGHT, OPAI_ROW_HEIGHT, 0f, 0f, 128f, 128f, 128f, 128f, tint
+        )
+    }
+
+    /** 1.8.9 Potion id → Samsara 图标贴图名（17 个内置图标）。 */
+    private fun opaiIconKey(id: Int): String? = when (id) {
+        Potion.moveSpeed.id -> "speed"
+        Potion.moveSlowdown.id -> "slowness"
+        Potion.damageBoost.id -> "strength"
+        Potion.jump.id -> "jump_boost"
+        Potion.regeneration.id -> "regeneration"
+        Potion.fireResistance.id -> "fire_resistance"
+        Potion.waterBreathing.id -> "water_breathing"
+        Potion.invisibility.id -> "invisibility"
+        Potion.nightVision.id -> "night_vision"
+        Potion.weakness.id -> "weakness"
+        Potion.poison.id -> "poison"
+        Potion.absorption.id -> "absorption"
+        Potion.saturation.id -> "saturation"
+        Potion.digSpeed.id -> "haste"
+        Potion.digSlowdown.id -> "mining_fatigue"
+        Potion.confusion.id -> "nausea"
+        Potion.resistance.id -> "resistance"
+        else -> null
+    }
+
+    /** Opai 剩余时间：M:SS（无限时长显示 ∞，同 Samsara duration）。 */
+    private fun opaiTimer(effect: PotionEffect): String {
+        if (effect.isPotionDurationMax) return "∞"
+        val seconds = max(0, effect.duration) / 20
+        return String.format(Locale.ROOT, "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    /** Opai 行名：本地化名称 + 等级罗马数字（≤XX，更高用数字，同 Samsara roman）。 */
+    private fun opaiTitle(potion: Potion, effect: PotionEffect): String {
+        val level = effect.amplifier + 1
+        val suffix = if (level > 1) " " + opaiRoman(level) else ""
+        return I18n.format(potion.getName()).replace(Regex("§."), "") + suffix
+    }
+
+    private fun opaiRoman(value: Int): String {
+        if (value > 20) return value.toString()
+        val values = intArrayOf(10, 9, 5, 4, 1)
+        val numerals = arrayOf("X", "IX", "V", "IV", "I")
+        var v = value
+        val result = StringBuilder()
+        for (i in values.indices) while (v >= values[i]) {
+            result.append(numerals[i])
+            v -= values[i]
+        }
+        return result.toString()
+    }
+
+    /** Samsara 固定排序：night_vision → speed → … → 默认最后。 */
+    private fun opaiOrder(id: Int): Int = when (id) {
+        Potion.nightVision.id -> 0
+        Potion.moveSpeed.id -> 1
+        Potion.moveSlowdown.id -> 2
+        Potion.digSpeed.id -> 3
+        Potion.digSlowdown.id -> 4
+        Potion.damageBoost.id -> 5
+        Potion.jump.id -> 8
+        Potion.confusion.id -> 9
+        Potion.regeneration.id -> 10
+        Potion.resistance.id -> 11
+        Potion.fireResistance.id -> 12
+        Potion.waterBreathing.id -> 13
+        Potion.invisibility.id -> 14
+        Potion.weakness.id -> 18
+        Potion.poison.id -> 19
+        Potion.absorption.id -> 22
+        Potion.saturation.id -> 23
+        else -> 32
+    }
+
     /** Onyx 行名：本地化名称 + 等级罗马数字（2..8 级为 II..VIII，更高用数字） */
     private fun onyxRowName(potion: Potion, effect: PotionEffect): String {
         val level = effect.amplifier + 1
@@ -380,5 +730,26 @@ class Potions(
         private val ONYX_BORDER = Color(255, 255, 255, 40)
         private val ONYX_SEPARATOR = Color(255, 255, 255, 40)
         private val ONYX_ROMAN = arrayOf("II", "III", "IV", "V", "VI", "VII", "VIII")
+
+        // Opai 样式（Samsara PotionStatusPainter/Motion 常量 ×1.6 预乘）
+        private const val OPAI_ROW_HEIGHT = 32F          // 20 ×1.6
+        private const val OPAI_GAP = 3.6F                // 2.25 ×1.6
+        private const val OPAI_RADIUS = 6F               // 3.75 ×1.6
+        private const val OPAI_TEXT_X = 31.6F            // 19.75 ×1.6
+        private const val OPAI_TITLE_Y = 7.6F            // 4.75 ×1.6
+        private const val OPAI_TIMER_Y = 18.8F           // 11.75 ×1.6
+        private const val OPAI_WIDTH_BASE = 38F          // 23.75 ×1.6（图标列 + 右侧内边距）
+        private const val OPAI_SLIDE_PAD = 12.8F         // 8 ×1.6（滑入距离附加量）
+        private const val OPAI_WARN_TICKS = 600          // 剩余 ≤30s 变红
+        private const val OPAI_ENTRY_S = 0.430           // 入场时长（back 过冲）
+        private const val OPAI_GROUP_EXIT_S = 0.170      // 组退场时长
+        private const val OPAI_EXIT_SPEED = 848.0        // 单行退场速度（530 ×1.6 px/s）
+        private const val OPAI_BACK = 1.70158            // 入场过冲系数
+        private const val OPAI_REFLOW_DELAY_MS = 300L    // 槽位塌缩延迟
+        private const val OPAI_REFLOW_S = 0.200          // 槽位塌缩时长
+        private const val OPAI_TEX_MARGIN = 8F           // 贴图阴影外扩 5 ×1.6
+        private const val OPAI_TEX_SCALE = 5F            // 贴图超采样 8 ÷ 1.6 预乘
+        private val OPAI_TIMER_GRAY = 0xFFAAAAAA.toInt()
+        private val OPAI_TIMER_RED = 0xFFFF5555.toInt()
     }
 }

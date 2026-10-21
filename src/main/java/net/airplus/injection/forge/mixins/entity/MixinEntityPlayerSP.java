@@ -404,7 +404,7 @@ public abstract class MixinEntityPlayerSP extends MixinAbstractClientPlayer {
 
         RotationSettings settings = utils.getActiveSettings();
 
-        utils.setModifiedInput(settings != null && !settings.getStrict() ? modifiedInput : movementInput);
+        utils.setModifiedInput(settings != null && !settings.getStrict() && !utils.getForceStrict() ? modifiedInput : movementInput);
 
         pushOutOfBlocks(posX - width * 0.35, getEntityBoundingBox().minY + 0.5, posZ + width * 0.35);
         pushOutOfBlocks(posX - width * 0.35, getEntityBoundingBox().minY + 0.5, posZ - width * 0.35);

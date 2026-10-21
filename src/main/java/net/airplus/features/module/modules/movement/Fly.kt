@@ -73,7 +73,7 @@ object Fly : Module("Fly", Category.MOVEMENT, Keyboard.KEY_F) {
         MineSecure, HawkEye, HAC, WatchCat,
 
         // Other
-        Jetpack, KeepAlive, Collide, Jump, Flag, Fireball
+        Jetpack, KeepAlive, Collide, Jump, Flag, Fireball, GrimGhostBlock
     )
 
     /**
@@ -201,7 +201,7 @@ object Fly : Module("Fly", Category.MOVEMENT, Keyboard.KEY_F) {
 
         if (!mode.startsWith("AAC") && mode != "Hypixel" && mode != "VerusGlide"
             && mode != "SmoothVanilla" && mode != "Vanilla" && mode != "Rewinside"
-            && mode != "Fireball" && mode != "Collide" && mode != "Jump"
+            && mode != "Fireball" && mode != "Collide" && mode != "Jump" && mode != "GrimGhostBlock"
         ) {
 
             if (mode == "CubeCraft") thePlayer.stopXZ()
@@ -321,7 +321,7 @@ object Fly : Module("Fly", Category.MOVEMENT, Keyboard.KEY_F) {
     }
 
     override val tag
-        get() = mode
+        get() = if (mode == "GrimGhostBlock") "GhostBlock-Blink: ${GrimGhostBlock.bufferSize}" else mode
 
     private val modeModule
         get() = flyModes.find { it.modeName == mode }!!

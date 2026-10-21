@@ -50,7 +50,6 @@ object HUD : MinecraftInstance {
         Combo::class.java,
         Nearby::class.java,
         Ping::class.java,
-        KillFeed::class.java,
         HitDirection::class.java,
         Keybinds::class.java
     )

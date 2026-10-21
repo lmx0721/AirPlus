@@ -4,30 +4,18 @@ import net.airplus.features.module.Category
 import net.airplus.features.module.Module
 import net.airplus.ui.client.clickgui.opai.OpaiScreen
 import org.lwjgl.input.Keyboard
-import java.awt.Color
 
 object OpaiGUI : Module("OpaiGUI", Category.RENDER, Keyboard.KEY_RSHIFT, canBeEnabled = false, gameDetecting = false) {
 
-    val style by choices("Style", arrayOf("Style1", "Style2"), "Style1")
-    
-    val primaryColor by color("PrimaryColor", Color(0, 160, 255))
-    val enabledModuleColor by color("EnabledModuleColor", Color(0, 160, 255))
-    val sliderColor by color("SliderColor", Color(0, 160, 255))
-    val sliderKnobColor by color("SliderKnobColor", Color(0, 160, 255))
-    
+    val opaiColor by choices("Opai Color", arrayOf("Lavender", "Light Pink"), "Lavender")
+
     val backgroundBlur by float("BackgroundBlur", 15f, 0f..30f)
     val animSpeed by float("AnimSpeed", 1f, 0.5f..3f)
-    
-    val panelWidth by float("PanelWidth", 130f, 80f..200f)
-    val panelHeight by float("PanelHeight", 350f, 200f..500f)
-    val panelRadius by float("PanelRadius", 12f, 0f..20f)
-    val panelGap by float("PanelGap", 6f, 2f..30f)
-    
-    val headerHeight by float("HeaderHeight", 28f, 20f..40f)
-    val settingHeight by float("SettingHeight", 22f, 16f..32f)
-    val textSize by float("TextSize", 1f, 0.6f..1.5f)
 
     fun getAnimTime(baseMs: Long): Long = (baseMs / animSpeed).toLong()
+
+    /** Motion rates are exponential decays, so animSpeed multiplies the rate directly. */
+    fun getAnimRate(baseRate: Double): Double = baseRate * animSpeed.toDouble().coerceIn(0.5, 3.0)
 
     override fun onEnable() {
         if (mc.currentScreen is OpaiScreen) {
@@ -37,4 +25,10 @@ object OpaiGUI : Module("OpaiGUI", Category.RENDER, Keyboard.KEY_RSHIFT, canBeEn
         }
     }
 
+    /**
+     * 供 HUD 药水/Session 等元素共用当前 Opai 调色板（对齐 Samsara 的 currentOpaiPalette）。
+     * 未初始化或读取失败时返回 LAVENDER。
+     */
+    @JvmStatic
+    fun currentPalette(): OpaiPalette = runCatching { OpaiStyle.palette(opaiColor) }.getOrDefault(OpaiStyle.LAVENDER)
 }

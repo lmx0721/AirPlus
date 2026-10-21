@@ -25,8 +25,14 @@ object Blink : Module("Blink", Category.PLAYER, gameDetecting = false) {
 
     private val pulseTimer = MSTimer()
 
+    // Blink 起始 / 上次 Pulse 释放时间戳（供 Island HUD 显示当前 blink 时间与 Pulse 进度）
+    private var enabledAt = 0L
+    private var pulseAt = 0L
+
     override fun onEnable() {
         pulseTimer.reset()
+        enabledAt = System.currentTimeMillis()
+        pulseAt = enabledAt
 
         if (fakePlayerMenu)
             BlinkUtils.addFakePlayer()
@@ -84,6 +90,9 @@ object Blink : Module("Blink", Category.PLAYER, gameDetecting = false) {
                     BlinkUtils.addFakePlayer()
                 }
                 pulseTimer.reset()
+                // Pulse 释放后 blink 重新开始计时
+                pulseAt = System.currentTimeMillis()
+                enabledAt = pulseAt
             }
         }
     }
@@ -124,4 +133,14 @@ object Blink : Module("Blink", Category.PLAYER, gameDetecting = false) {
 
     fun blinkingSend() = handleEvents() && (mode == "Sent" || mode == "Both")
     fun blinkingReceive() = handleEvents() && (mode == "Received" || mode == "Both")
+
+    /** 当前 blink 已持续时间（ms），未启用时返回 0 */
+    fun blinkTime(): Long = if (handleEvents()) System.currentTimeMillis() - enabledAt else 0L
+
+    /** Pulse 是否启用 */
+    fun pulseEnabled(): Boolean = handleEvents() && pulse
+
+    /** 当前 Pulse 周期进度（0..1），未启用 Pulse 时返回 0 */
+    fun pulseProgress(): Float =
+        if (pulseEnabled()) ((System.currentTimeMillis() - pulseAt).toFloat() / pulseDelay).coerceIn(0f, 1f) else 0f
 }
