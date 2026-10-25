@@ -197,6 +197,8 @@
         
         "module.eagle.description": "Makes you eagle (aka. FastBridge).",
         
+        "module.execution.description": "Plays a first-person execution animation after a kill: stabs a sword into the target's chest and pulls it out.",
+        
         "module.fakeLag.description": "Lags you behind server side until first hit.",
         
         "module.fastBreak.description": "Allows you to break blocks faster.",
@@ -349,7 +351,7 @@
         
         "module.rotations.description": "Allows you to see server-sided head and body rotations.",
 
-        "module.rotationRecorder.description": "Records your real rotations for AI-learned aiming. Enable AimBall for the aim mini-game: click on the ball (or keep aiming at it) to relocate it and record aim data.",
+        "module.rotationRecorder.description": "Records your real rotations for AI-learned aiming, tagging each tick with scene ground truth (locate / adjust / track). Enable AimBall for the aim mini-game: click on the ball (or keep aiming at it) to relocate it and record aim data; set BallSpeed > 0 to let the ball wander and record tracking data.",
 
         "module.aiTrainer.description": "Runs the offline training script in-game to turn dataset.json into net_weights.json for the Neural aim strategy (requires Python and numpy).",
 

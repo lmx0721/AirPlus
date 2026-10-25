@@ -103,6 +103,7 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             Derp,
             ESP,
             Eagle,
+            Execution,
             FakeLag,
             FastBow,
             FastBreak,

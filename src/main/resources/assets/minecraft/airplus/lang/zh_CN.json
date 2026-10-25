@@ -341,9 +341,9 @@
 
         "module.rotations.description": "允许你看到你在服务器端的身体旋转。",
 
-        "module.rotationRecorder.description": "录制你的真实旋转数据用于 AI 学习转头，可开启 AimBall 小游戏：瞄准小球后点击（或持续瞄准）换位，录制瞄准数据。",
+        "module.rotationRecorder.description": "录制你的数据用于 AI 学习转头",
 
-        "module.aiTrainer.description": "在游戏内一键运行离线训练脚本，把 dataset.json 训练成 Neural 模式可用的 net_weights.json（需要 Python 和 numpy）。",
+        "module.aiTrainer.description": "在游戏内训练 AI 转头模型（需要 Python 和 numpy）。",
 
         "aim.missingData": "AI 转头数据缺失，已回退 Default",
 
@@ -436,6 +436,7 @@
         "module.jelly.description": "桃花谢了有玫瑰~",
         "module.killEffect.description": "击杀玩家时播放特效",
         "module.killEffectV2.description": "击杀玩家时播放特效",
+        "module.execution.description": "击杀目标后播放第一人称处决动画",
         "module.moreBends.description": "让模型的肢体动作更生动",
         "module.motionBlur.description": "动态模糊",
         "module.nameTags2.description": "玩家名牌",

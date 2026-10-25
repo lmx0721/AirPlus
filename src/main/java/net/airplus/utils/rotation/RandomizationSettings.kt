@@ -48,6 +48,30 @@ class RandomizationSettings(owner: Module, val generalApply: () -> Boolean = { t
     val randomizationChosen
         get() = randomizationPattern != "None" && generalApply()
 
+    /**
+     * AI 瞄准（aimStrategy != Default）时段点跳动的跳点间隔（tick）。
+     * AI 引擎（RotationNet / AimTemplateEngine）逐 tick 平滑转换剩余差，若每 tick
+     * 都跳点，剩余差方向高频抖动会污染漂移/速度特征并让 AI 输出显得抽搐。
+     * 开启 AI 瞄准时按该间隔限流跳点，其余模式不受影响（每 tick 都可跳）。
+     */
+    private val aiSpotHopInterval by int("AiSpotHopInterval", 4, 1..20) { randomizationChosen }
+
+    private var hopCooldown = 0
+
+    /**
+     * 本 tick 是否允许跳点。[aiStable] = AI 瞄准激活（按 [aiSpotHopInterval] 冷却限流）；
+     * 其余模式始终允许。
+     */
+    fun shouldHop(aiStable: Boolean): Boolean {
+        if (!aiStable) return true
+        if (hopCooldown > 0) {
+            hopCooldown--
+            return false
+        }
+        hopCooldown = aiSpotHopInterval - 1
+        return true
+    }
+
     fun processNextSpot(box: AxisAlignedBB, rotation: Rotation, eyes: Vec3, range: Double) {
         val intercept = box.calculateIntercept(eyes, eyes + getVectorForRotation(lastRotations.random()) * range)
 

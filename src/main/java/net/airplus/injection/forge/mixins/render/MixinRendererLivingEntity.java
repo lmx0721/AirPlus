@@ -166,6 +166,19 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
     }
 
     /**
+     * Execution：处决动画期间冻结被处决者的死亡倒地 —— rotateCorpse 用 deathTime
+     * 驱动 90° 翻倒，在 HEAD 清零即可逐帧拦下死亡动画（此前仅 tick 侧清零，
+     * 渲染时 deathTime 会被实体自身 onUpdate 顶到 1，产生 0~25° 摆动的半倒姿态）。
+     * 处决结束后不再清零，原版死亡动画继续播放。
+     */
+    @Inject(method = "rotateCorpse(Lnet/minecraft/entity/EntityLivingBase;FFF)V", at = @At("HEAD"))
+    private <T extends EntityLivingBase> void injectExecutionFreezeDeath(T entity, float yaw, float offset, float partialTicks, CallbackInfo callbackInfo) {
+        if (Execution.INSTANCE.isPlaying() && Execution.INSTANCE.isCurrentVictim(entity)) {
+            entity.deathTime = 0;
+        }
+    }
+
+    /**
      * Jelly：在 rotateCorpse RETURN 处施加果冻缩放。此时已完成 renderLivingAt 平移与朝向旋转，
      * 矩阵处于 doRender 的 pushMatrix/popMatrix 内，自动恢复无残留；缩放围绕脚底原点，压扁贴地。
      */

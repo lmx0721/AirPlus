@@ -18,6 +18,8 @@ import net.airplus.utils.inventory.InventoryUtils
 import net.airplus.utils.kotlin.RandomUtils.nextDouble
 import net.airplus.utils.kotlin.RandomUtils.nextFloat
 import net.airplus.utils.rotation.RaycastUtils.raycastEntity
+import net.airplus.utils.rotation.aim.AimScene
+import net.airplus.utils.rotation.aim.AimSegmentClass
 import net.airplus.utils.rotation.aim.AimTemplateEngine
 import net.airplus.utils.rotation.aim.RotationNet
 import net.airplus.utils.timing.WaitTickUtils
@@ -34,6 +36,15 @@ object RotationUtils : MinecraftInstance, Listenable {
      * Our final rotation point, which [currentRotation] follows.
      */
     private var targetRotation: Rotation? = null
+
+    /**
+     * 视角是否被模块直接接管：ApplyServerSide=false 的可见旋转走 [Rotation.toPlayer]
+     * 直接写 rotationYaw/Pitch（不经过 setAngles，也不会设置 currentRotation），
+     * 真实鼠标增量与视角真值会被模块转动打断。静默 spoof（currentRotation）不改
+     * 第一人称视角，不在此列 —— 录制端（RotationRecorder）据此区分两类接管。
+     */
+    val isViewOverridden: Boolean
+        get() = targetRotation != null && activeSettings?.applyServerSide == false
 
     /**
      * The current rotation that is responsible for aiming at objects, synchronizing movement, etc.
@@ -239,11 +250,23 @@ object RotationUtils : MinecraftInstance, Listenable {
         randomization: RandomizationSettings? = null, predict: Boolean,
         lookRange: Float, attackRange: Float, throughWallsRange: Float = 0f,
         bodyPoints: List<String> = listOf("Head", "Feet"), horizontalSearch: ClosedFloatingPointRange<Float> = 0f..1f,
+        aiStableSpot: Boolean = false,
+        verticalRange: ClosedFloatingPointRange<Float>? = null,
     ): Rotation? {
         val scanRange = lookRange.coerceAtLeast(attackRange)
 
         val max = BodyPoint.fromString(bodyPoints[0]).range.endInclusive
         val min = BodyPoint.fromString(bodyPoints[1]).range.start
+
+        // 竖直候选点：传入 verticalRange 时在区间内均匀采样（步长 ≈ 0.1，含两端），
+        // 覆盖整个自定义范围；否则沿用 bodyPoints 档位的原有采样节奏（Double 区间
+        // 默认步长 1.0，实际上只取区间起点）。
+        val yCandidates: List<Double> = verticalRange?.let { range ->
+            val lo = range.start.toDouble()
+            val hi = range.endInclusive.toDouble()
+            val stepCount = ((hi - lo) / 0.1).roundToInt().coerceAtLeast(1)
+            (0..stepCount).map { lo + (hi - lo) * it / stepCount }
+        } ?: listOf(min)
 
         if (outborder) {
             val vec3 = bb.lerpWith(nextDouble(0.5, 1.3), nextDouble(0.9, 1.3), nextDouble(0.5, 1.3))
@@ -262,14 +285,17 @@ object RotationUtils : MinecraftInstance, Listenable {
         var attackRotation: Pair<Rotation, Float>? = null
         var lookRotation: Pair<Rotation, Float>? = null
 
-        randomization?.takeIf { it.randomizationChosen }?.run {
+        // 随机化跳点（在敌人身上随机选取瞄准点）。aiStableSpot = AI 瞄准激活时按
+        // RandomizationSettings.AiSpotHopInterval 冷却限流 —— AI 引擎逐 tick 平滑
+        // 转换剩余差，每 tick 跳点会让剩余差方向高频抖动、污染漂移特征。
+        randomization?.takeIf { it.randomizationChosen && it.shouldHop(aiStableSpot) }?.run {
             processNextSpot(bb, currRotation, eyes, scanRange.toDouble())
         }
 
         val (hMin, hMax) = horizontalSearch.start.toDouble() to min(horizontalSearch.endInclusive + 0.01, 1.0)
 
         for (x in hMin..hMax) {
-            for (y in min..max) {
+            for (y in yCandidates) {
                 for (z in hMin..hMax) {
                     val vec = bb.lerpWith(x, y, z)
 
@@ -383,8 +409,12 @@ object RotationUtils : MinecraftInstance, Listenable {
             pitchDiff = (pitchDiff * pitchSlowdown).withGCD()
         }
 
-        // AI 学习转头：Template（模板库）/ Neural（MLP）生成增量，null 则回退下方 Default 管线
-        val aiDiff = if (settings != null && !settings.instant) aiGeneratedDiff(settings, yawDiff, pitchDiff) else null
+        // AI 学习转头：Template（模板库）/ Neural（MLP）生成增量，null 则回退下方 Default 管线。
+        // 短停期间跳过 AI：短停已把剩余差缩到近零，AI 引擎按「全速走剩余差」的方式
+        // 一 tick 就会走完缩放后的差，完全抵消「几乎不动」的意图，交给 Default 管线处理。
+        val aiDiff = if (settings != null && !settings.instant && !isShortStopActive) {
+            aiGeneratedDiff(settings, yawDiff, pitchDiff)
+        } else null
         if (aiDiff != null) {
             settings?.updateSimulateShortStopData(aiDiff.first)
             return currentRotation.plus(Rotation(aiDiff.first.withGCD(), aiDiff.second.withGCD()))
@@ -430,31 +460,167 @@ object RotationUtils : MinecraftInstance, Listenable {
     }
 
     /**
+     * 拟真瞄准点游走：真人不会把准星钉死在 hitbox 同一点上，注视点在目标附近
+     * 缓慢漂移并持续产生亚 GCD 级微修正。给剩余角度差叠加一个慢速随机游走偏移
+     * （每 8~20 tick 在圆盘内重采样目标点，逐 tick 平滑趋近），量级远小于一次
+     * 甩动，只影响收尾与跟踪阶段的微观形态。附近没有生物实体（方块瞄准）时不生效。
+     */
+    private const val WANDER_RANGE = 0.9f
+    private var wanderYaw = 0f
+    private var wanderPitch = 0f
+    private var wanderTargetYaw = 0f
+    private var wanderTargetPitch = 0f
+    private var wanderTicksLeft = 0
+
+    private fun updateWander(entityDist: Float): Pair<Float, Float> {
+        if (entityDist <= 0f) {
+            wanderYaw = 0f
+            wanderPitch = 0f
+            wanderTicksLeft = 0
+            return 0f to 0f
+        }
+
+        if (wanderTicksLeft <= 0) {
+            wanderTicksLeft = (8..20).random()
+            val angle = nextFloat(0f, (2.0 * Math.PI).toFloat())
+            val radius = WANDER_RANGE * sqrt(nextFloat(0f, 1f))
+            wanderTargetYaw = cos(angle) * radius
+            wanderTargetPitch = sin(angle) * radius * 0.6f
+        }
+        wanderTicksLeft--
+
+        wanderYaw += (wanderTargetYaw - wanderYaw) * 0.15f
+        wanderPitch += (wanderTargetPitch - wanderPitch) * 0.15f
+        return wanderYaw to wanderPitch
+    }
+
+    /** 瞄准点漂移追踪（见 aiGeneratedDiff 注释）：决策态单级历史的 raw needed。 */
+    private var prevRawAim = 0f to 0f
+    private var aimDriftValid = false
+
+    /**
      * AI 学习转头：按 [RotationSettings.aimStrategy] 把当前剩余角度差交给模板库或神经网络，
      * 生成下一 tick 的 (yawDelta, pitchDelta)。无法生成时返回 null（回退 Default 管线）。
      */
     private fun aiGeneratedDiff(settings: RotationSettings, yawDiff: Float, pitchDiff: Float): Pair<Float, Float>? {
         val player = mc.thePlayer ?: return null
 
-        if (hypot(yawDiff, pitchDiff) <= 0f) return null
-
         // 当前角速度 = 上上 tick 到上一 tick 的实际旋转变化
         val vel = angleDifferences(lastRotations[0], lastRotations[1])
         val moveSpeed = hypot(player.motionX, player.motionZ).toFloat()
         val entityDist = nearestEntityDistance(player)
 
-        return when (settings.aimStrategy) {
-            "Template" -> AimTemplateEngine.sample(yawDiff, pitchDiff, vel.x, vel.y, moveSpeed, entityDist)
-            "Neural" -> RotationNet.predict(yawDiff, pitchDiff, vel.x, vel.y, moveSpeed, entityDist, getFixedAngleDelta())
-            else -> null
+        // 瞄准点漂移（次序关键，按每 tick 内部顺序「发包 → lastRotations 前移 → 决策」）：
+        // 决策 tick i 的 yawDiff ≡ 录制契约 needed(i-1)，prevRawAim ≡ needed(i-2)，
+        // vel = lastRotations[0] - lastRotations[1] = Δ(i-1)，因此
+        //   d = yawDiff - prevRawAim + vel.x ── = needed(i-1) - needed(i-2) + Δ(i-1)
+        // 与录制（TickSample）/ train.py 三端同一公式、同一 one-tick shift。
+        // 状态推进放在 diff==0 早退之前：瞄准期间（-needed≈0）链条保持连续，
+        // 复跑首 tick 的漂移直接等于真实瞄准点移动，而不是靠间断保护碰运气。
+        // 保护：首次调用 / 附近无实体（瞄准点未定义）→ 失效，本 tick 记 0；
+        // |d| 超过 AimSegmentClass.DRIFT_DISCONTINUITY_DEG（换目标 / 接管恢复后的
+        // needed 跳变 / invalidate 零样本混入）同样记 0。必须用 raw（未加 wander）：
+        // wander 幅值 ±0.9° 会严重污染这个逐 tick 漂移特征（类别路由只认 scene 真值，
+        // 漂移仅作为 NETWORK 输入特征使用）。
+        if (entityDist <= 0f) aimDriftValid = false
+        val driftYaw: Float
+        val driftPitch: Float
+        if (!aimDriftValid) {
+            driftYaw = 0f
+            driftPitch = 0f
+        } else {
+            val dy = yawDiff - prevRawAim.first + vel.x
+            val dp = pitchDiff - prevRawAim.second + vel.y
+            if (hypot(dy, dp) > AimSegmentClass.DRIFT_DISCONTINUITY_DEG) {
+                driftYaw = 0f; driftPitch = 0f
+            } else {
+                driftYaw = dy; driftPitch = dp
+            }
         }
+        prevRawAim = yawDiff to pitchDiff
+        aimDriftValid = true
+
+        if (hypot(yawDiff, pitchDiff) <= 0f) return null
+
+        val (wanderYaw, wanderPitch) = updateWander(entityDist)
+
+        // 决策时刻场景（三端共用 AimScene 判据，与录制真值同语义）：
+        // 视线（lastRotations[0] = 决策时刻实际生效的旋转，录制契约里本 tick 转动
+        // 已应用后的视角）压在可见实体 hitbox 上 → TRACK；附近无实体 → NONE（引擎
+        // 返回 null，交回 Default 管线）；其余按剩余差幅值分 定位/调整。
+        // scene(i-1) 语义与 pair 级训练标签严格一致 —— 这里 scene 是「上一 tick
+        // 转完」的状态，正好对齐训练侧 ctx = ticks[i-1] 的取值时机。
+        val scene = AimScene.classify(
+            onTarget = AimScene.crosshairOnEntity(lastRotations[0].yaw, lastRotations[0].pitch),
+            hasTarget = entityDist > 0f,
+            neededDiff = hypot(yawDiff, pitchDiff),
+        )
+
+        // v4 传入语义：引擎收 raw needed（特征 / 分类 / 方向锁定 / 缩放全部与训练分布
+        // 一致）+ 独立的 wander 偏移（由引擎按尾部衰减叠加到输出增量上，
+        // 见 RotationNet/AimTemplateEngine 的拟真游走注释）。
+        val generated = when (settings.aimStrategy) {
+            "Template" -> AimTemplateEngine.sample(
+                yawDiff, pitchDiff, wanderYaw, wanderPitch,
+                driftYaw, driftPitch,
+                vel.x, vel.y, moveSpeed, entityDist, getFixedAngleDelta(), scene,
+            )
+            "Neural" -> RotationNet.predict(
+                yawDiff, pitchDiff, wanderYaw, wanderPitch,
+                driftYaw, driftPitch,
+                vel.x, vel.y, moveSpeed, entityDist, getFixedAngleDelta(), scene,
+            )
+            else -> null
+        } ?: return null
+
+        // AI 生成序列的人手化：模板重放 / MLP 回归对（几乎）相同输入输出确定性
+        // 增量，整段转头的 per-tick 步长分布过于一致，反作弊的 stride 一致性
+        // （smooth）检测容易命中。这与训练数据量无关 —— 数据再多，确定性输出
+        // 序列的「过机械设备感」仍在。叠加与 Default 管线同量级的相对扰动
+        // （±3% yaw / ±2% pitch，见 applyAiJitter），在 gcd 量化前完成。
+        return applyAiJitter(generated)
     }
 
-    // 与 RotationRecorder 保持一致：只统计生物实体，避免掉落物/箭污染 entityDist 特征
+    /**
+     * 对 AI 生成的增量叠加相对幅值抖动。与 Default 管线的
+     * (yawJitter, pitchJitter) = (±3%, ±2%) × straightLine 分量同一量级。
+     *
+     * 老实现对已 gcd 量化的值乘 (1±3%) 后由 performAngleChange 的 withGCD() 取整，
+     * 增量 < 17 gcd 时几乎总是落回同一个 gcd 桶 —— 抖动实际是死代码。改为
+     * 「gcd 单位上带抖动 + 概率取整」：小数部分直接作为本 tick 的进位概率，
+     * 输出均值严格等于抖动后的幅值（E[输出] = value×(1±rel)），but 每 tick 落在
+     * 相邻 gcd 桶上随机游走 —— 步长散步在数据量级上真正生效，打掉确定性输出
+     * 序列的 stride 一致性（smooth）特征。
+     */
+    private fun applyAiJitter(diff: Pair<Float, Float>): Pair<Float, Float> {
+        if (diff.first == 0f && diff.second == 0f) return diff
+
+        val gcd = getFixedAngleDelta()
+        if (gcd <= 0f) {
+            // 无灵敏度取不到 gcd：退回纯相对抖动（下一级管线会再量化）
+            return diff.first * (1f + nextFloat(-0.03f, 0.03f)) to
+                diff.second * (1f + nextFloat(-0.02f, 0.02f))
+        }
+
+        return jitterToGcdBucket(diff.first, 0.03f, gcd) to jitterToGcdBucket(diff.second, 0.02f, gcd)
+    }
+
+    private fun jitterToGcdBucket(value: Float, rel: Float, gcd: Float): Float {
+        if (value == 0f) return 0f
+
+        val scaled = value / gcd * (1f + nextFloat(-rel, rel))
+        val base = floor(scaled)
+        // 概率取整：frac 是 scaled 落在下一桶的进位概率；frac == 0 时永不向上取整
+        val carry = if (nextFloat(0f, 1f) < scaled - base) 1f else 0f
+        return (base + carry) * gcd
+    }
+
+    // 与 RotationRecorder / currentAimDiff 保持一致：只统计存活生物实体，避免掉落物/
+    // 尸体污染 entityDist 特征，且与 needed 的目标集（currentAimDiff 过滤 isDead）一致
     private fun nearestEntityDistance(player: Entity): Float =
         mc.theWorld?.loadedEntityList?.asSequence()
             ?.filterIsInstance<net.minecraft.entity.EntityLivingBase>()
-            ?.filter { it !== player }
+            ?.filter { it !== player && !it.isDead }
             ?.minOfOrNull { player.getDistanceToEntity(it) }
             ?: 0f
 

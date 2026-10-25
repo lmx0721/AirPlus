@@ -9,9 +9,11 @@ import net.airplus.event.*
 import net.airplus.event.async.loopSequence
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
+import net.airplus.features.module.modules.player.Blink
 import net.airplus.features.module.modules.render.NoSwing
 import net.airplus.utils.attack.CPSCounter
 import net.airplus.utils.block.*
+import net.airplus.utils.client.BlinkUtils
 import net.airplus.utils.client.PacketUtils.sendPacket
 import net.airplus.utils.extensions.*
 import net.airplus.utils.inventory.InventoryUtils
@@ -164,6 +166,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         resetTicksValue.setSupport { it && scaffoldMode != "Telly" }
     }
 
+    // ReverseYaw 提前转头：启用模块后立刻开始转头，方向取自移动输入（无输入则按当前视角朝向为正方向）
+    private val reverseYawAhead by boolean("ReverseYawAhead", true) { options.rotationMode == "ReverseYaw" }
+
     // Search options
     val searchMode by choices("SearchMode", arrayOf("Area", "Center"), "Area") { scaffoldMode != "GodBridge" }
     private val minDist by float("MinDist", 0f, 0f..0.2f) { scaffoldMode !in arrayOf("GodBridge", "Telly") }
@@ -197,6 +202,11 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private val safeWalkValue = boolean("SafeWalk", true) { scaffoldMode != "GodBridge" }
     private val airSafe by boolean("AirSafe", false) { safeWalkValue.isActive() }
 
+    // Clutch（坠落保命：触发后冻结悬停等 Scaffold 补方块，迁移自 Leader-Lite）
+    private val clutch by boolean("Clutch", true)
+    private val clutchOnlyVoid by boolean("OnlyVoid", false) { clutch }
+    private val clutchTicks by int("ClutchTicks", 10, 5..20) { clutch }
+
     // Visuals
     private val mark by boolean("Mark", false).subjective()
     private val markStyle by choices("MarkStyle", arrayOf("Box", "CornerFrame", "RingPulse"), "Box") { mark }
@@ -209,6 +219,15 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
     // Launch position
     private var launchY = -999
+
+    // Clutch 状态
+    private var clutchActive = false
+    private var clutchFrozen = false
+    private var clutchFrozenTicks = 0
+    private var clutchSavedMotionX = 0.0
+    private var clutchSavedMotionY = 0.0
+    private var clutchSavedMotionZ = 0.0
+    private var clutchSafeY = -999.0
 
     val shouldJumpOnInput
         get() = !jumpOnUserInput || !mc.gameSettings.keyBindJump.isKeyDown && mc.thePlayer.posY >= launchY && !mc.thePlayer.onGround
@@ -295,6 +314,14 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         launchY = player.posY.roundToInt()
         blocksUntilAxisChange = 0
+
+        // ReverseYaw 提前转头：启用后立刻转头，低头固定 90°（垂直向下），朝向按屏幕视角取整（直行 90°、斜向 45°）
+        if (reverseYawAhead && options.rotationMode == "ReverseYaw") {
+            val step = if (isLookingDiagonally) 45f else 90f
+            val target = MathHelper.wrapAngleTo180_float(round(player.rotationYaw / step) * step)
+
+            setTargetRotation(Rotation(target, 90f).fixedSensitivity(), options)
+        }
     }
 
     // Events
@@ -302,6 +329,15 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         val player = mc.thePlayer ?: return@loopSequence
 
         if (mc.playerController.currentGameType == WorldSettings.GameType.SPECTATOR) return@loopSequence
+
+        // Clutch
+        updateClutch()
+
+        if (clutchFrozen) {
+            player.motionX = 0.0
+            player.motionY = 0.0
+            player.motionZ = 0.0
+        }
 
         mc.timer.timerSpeed = timer
 
@@ -537,6 +573,15 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     val onMovementInput = handler<MovementInputEvent> { event ->
         val player = mc.thePlayer ?: return@handler
 
+        // Clutch 冻结期间清空所有移动输入
+        if (clutchFrozen) {
+            event.originalInput.moveForward = 0f
+            event.originalInput.moveStrafe = 0f
+            event.originalInput.jump = false
+            event.originalInput.sneak = false
+            return@handler
+        }
+
         if (!isGodBridgeEnabled || !player.onGround) return@handler
 
         if (waitForRots) {
@@ -570,6 +615,133 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
 
         findBlock(scaffoldMode == "Expand" && expandLength > 1, searchMode == "Area")
+    }
+
+    /**
+     * Clutch 坠落保命（迁移自 Leader-Lite）：
+     * 搭路时坠落刚起步（fallDistance > 1 或掉出最后站立平面 1.5 格）且还来得及救时，
+     * 进入脉冲式冻结 —— 每次冻结 ClutchTicks tick（扣住发包 + 零运动 + 清输入）后短暂释放一 tick，
+     * 循环往复直到落地，期间 Scaffold 持续在脚下补方块。
+     */
+    private fun updateClutch() {
+        val player = mc.thePlayer ?: return
+
+        // 记录最后一次落地的 Y，作为搭路平面参考（launchY 多数配置下会跟随玩家下移，不能用）
+        if (player.onGround) clutchSafeY = player.posY
+
+        if (!clutch || player.isDead || player.onGround || clutchBlocksBelow()) {
+            resetClutch()
+            return
+        }
+
+        // 提前触发：坠落刚起步（fallDistance > 1）或已掉出最后站立平面 1.5 格即出手，
+        // 不再等 fallDistance > 2（那时速度已 ~-0.7/tick，经常来不及）
+        val shouldClutch = (player.fallDistance > 1 || player.posY < clutchSafeY - 1.5)
+                && !clutchAirAbove()
+                && (!player.isCollidedHorizontally || isFallingIntoVoid())
+                && (!clutchOnlyVoid || isFallingIntoVoid())
+
+        if (shouldClutch && !clutchActive && !Blink.state) {
+            clutchActive = true
+            clutchFrozen = false
+            clutchFrozenTicks = 0
+        }
+
+        if (!clutchActive) return
+
+        if (clutchFrozen) {
+            clutchFrozenTicks++
+            if (clutchFrozenTicks >= clutchTicks) releaseClutchFreeze()
+        } else {
+            startClutchFreeze()
+        }
+    }
+
+    /** 进入冻结：保存当前 motion，之后由 PacketEvent 扣包、各事件清运动。 */
+    private fun startClutchFreeze() {
+        val player = mc.thePlayer ?: run {
+            resetClutch()
+            return
+        }
+
+        clutchFrozen = true
+        clutchFrozenTicks = 0
+        clutchSavedMotionX = player.motionX
+        clutchSavedMotionY = player.motionY
+        clutchSavedMotionZ = player.motionZ
+    }
+
+    /** 解除冻结：放出期间扣住的包并恢复进入冻结时的 motion（释放 tick 玩家会下坠一格）。 */
+    private fun releaseClutchFreeze() {
+        clutchFrozen = false
+        clutchFrozenTicks = 0
+
+        BlinkUtils.unblink()
+
+        val player = mc.thePlayer ?: return
+        player.motionX = clutchSavedMotionX
+        player.motionY = clutchSavedMotionY
+        player.motionZ = clutchSavedMotionZ
+    }
+
+    private fun resetClutch() {
+        if (clutchFrozen) {
+            BlinkUtils.unblink()
+
+            mc.thePlayer?.let {
+                it.motionX = clutchSavedMotionX
+                it.motionY = clutchSavedMotionY
+                it.motionZ = clutchSavedMotionZ
+            }
+        }
+
+        clutchActive = false
+        clutchFrozen = false
+        clutchFrozenTicks = 0
+    }
+
+    /** 脚下 1~2 格存在实体方块（即将落地，没必要也没时间 clutch）。 */
+    private fun clutchBlocksBelow(): Boolean {
+        val player = mc.thePlayer ?: return true
+        val world = mc.theWorld ?: return true
+
+        val playerY = MathHelper.floor_double(player.posY)
+
+        for (i in 1..2) {
+            val pos = BlockPos(MathHelper.floor_double(player.posX), playerY - i, MathHelper.floor_double(player.posZ))
+            if (world.getBlockState(pos).block.material.isSolid) {
+                // 高速下坠时 2 格外的方块可能来不及救（横向漂出其上方），不再视为即将落地
+                if (i == 2 && player.motionY < -0.5) continue
+                return true
+            }
+        }
+
+        return false
+    }
+
+    /** 头顶上方一个身位处是否存在碰撞方块。 */
+    private fun clutchAirAbove(): Boolean {
+        val player = mc.thePlayer ?: return false
+        val world = mc.theWorld ?: return false
+
+        return world.getCollidingBoundingBoxes(player, player.entityBoundingBox.offset(0.0, 1.0, 0.0)).isNotEmpty()
+    }
+
+    /** 下方 128 格内是否完全没有实体方块（真·掉虚空）。 */
+    private fun isFallingIntoVoid(): Boolean {
+        val player = mc.thePlayer ?: return false
+        val world = mc.theWorld ?: return false
+
+        for (i in 0..128) {
+            val pos = BlockPos(
+                MathHelper.floor_double(player.posX),
+                MathHelper.floor_double(player.posY) - i,
+                MathHelper.floor_double(player.posZ)
+            )
+            if (world.getBlockState(pos).block.material.isSolid) return false
+        }
+
+        return true
     }
 
     private fun setRotation(rotation: Rotation, ticks: Int) {
@@ -765,6 +937,8 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         placeRotation = null
         mc.timer.timerSpeed = 1f
 
+        resetClutch()
+
         lastMarkPos = null
         fadingMarks.clear()
 
@@ -777,6 +951,12 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     val onMove = handler<MoveEvent> { event ->
         val player = mc.thePlayer ?: return@handler
 
+        // Clutch 冻结期间直接取消位移，把玩家定在原地
+        if (clutchFrozen) {
+            event.cancelEvent()
+            return@handler
+        }
+
         if (!safeWalkValue.isActive() || shouldGoDown) {
             return@handler
         }
@@ -784,6 +964,22 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         if (airSafe || player.onGround) {
             event.isSafeWalk = true
         }
+    }
+
+    // Clutch 冻结期间扣住所有发包，解除时统一放出（服务器视角只是卡顿）
+    val onClutchPacket = handler<PacketEvent> { event ->
+        if (!clutchFrozen) return@handler
+
+        BlinkUtils.blink(event.packet, event, sent = true, receive = false)
+    }
+
+    // 切换世界时丢弃冻结期间积压的旧世界包并复位 Clutch 状态
+    val onClutchWorld = handler<WorldEvent> {
+        if (clutchFrozen) BlinkUtils.clear()
+
+        clutchActive = false
+        clutchFrozen = false
+        clutchFrozenTicks = 0
     }
 
     val jumpHandler = handler<JumpEvent> { event ->

@@ -50,6 +50,7 @@ import net.airplus.utils.rotation.RotationUtils.searchCenter
 import net.airplus.utils.rotation.RotationUtils.serverRotation
 import net.airplus.utils.rotation.RotationUtils.setTargetRotation
 import net.airplus.utils.rotation.RotationUtils.toRotation
+import net.airplus.utils.rotation.aim.AimScene
 import net.airplus.utils.simulation.SimulatedPlayer
 import net.airplus.utils.timing.MSTimer
 import net.airplus.utils.timing.TickedActions.nextTick
@@ -70,8 +71,10 @@ import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement
 import net.minecraft.potion.Potion
 import net.minecraft.util.*
 import org.lwjgl.input.Keyboard
+import org.lwjgl.opengl.GL11
 import java.awt.Color
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
@@ -137,9 +140,19 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     private val onDestroyBlock by boolean("OnDestroyBlock", false)
 
     // AutoBlock
-    val autoBlock by choices("AutoBlock", arrayOf("Off", "Packet", "Fake", "BlockOnNoHit"), "Packet")
+    val autoBlock by choices("AutoBlock", arrayOf("Off", "Packet", "Fake", "BlockOnNoHit", "HurtTime"), "Packet")
     private val blockOnNoHitRange by float("BlockOnNoHitRange", 6f, 1f..16f) { autoBlock == "BlockOnNoHit" }
-    private val blockMaxRange by float("BlockMaxRange", 3f, 0f..8f) { autoBlock == "Packet" }
+    private val blockMaxRange by float("BlockMaxRange", 3f, 0f..8f) { autoBlock == "Packet" || autoBlock == "HurtTime" }
+
+    /**
+     * HurtTime AutoBlock：不整轮无脑 block，跟自己的受击节奏走 ——
+     * 挨打瞬间先松开格挡（受击期间原版不给格挡减伤，白挡收招/反打），等自己
+     * hurtTime 回落到 [blockOwnHurtTime] 以下且目标仍在 [blockMaxRange]
+     * （stopblock 范围，默认 3 格）内时再起格挡，按 [hurtTimeBlockTicksValue]
+     * 随机持续时长（默认 2..4 tick）维持后松开，等待下一次挨打再重置节奏。
+     */
+    private val blockOwnHurtTime by int("BlockOwnHurtTime", 2, 0..10) { autoBlock == "HurtTime" }
+    private val hurtTimeBlockTicksValue = intRange("HurtTimeBlockTicks", 2..4, 1..10) { autoBlock == "HurtTime" }
     private val unblockMode by choices(
         "UnblockMode", arrayOf("Stop", "Switch", "Empty"), "Stop"
     ) { autoBlock == "Packet" }
@@ -223,30 +236,12 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     private val randomization = RandomizationSettings(this) { options.rotationsActive }
     private val outBorder by boolean("OutBorder", false) { options.rotationsActive }
 
-    private val highestBodyPointToTargetValue = choices(
-        "HighestBodyPointToTarget", arrayOf("Head", "Body", "Feet"), "Head"
-    ) {
-        options.rotationsActive
-    }.onChange { _, new ->
-        val newPoint = RotationUtils.BodyPoint.fromString(new)
-        val lowestPoint = RotationUtils.BodyPoint.fromString(lowestBodyPointToTarget)
-        val coercedPoint = RotationUtils.coerceBodyPoint(newPoint, lowestPoint, RotationUtils.BodyPoint.HEAD)
-        coercedPoint.displayName
-    }
-    private val highestBodyPointToTarget: String by highestBodyPointToTargetValue
-
-    private val lowestBodyPointToTargetValue = choices(
-        "LowestBodyPointToTarget", arrayOf("Head", "Body", "Feet"), "Feet"
-    ) {
-        options.rotationsActive
-    }.onChange { _, new ->
-        val newPoint = RotationUtils.BodyPoint.fromString(new)
-        val highestPoint = RotationUtils.BodyPoint.fromString(highestBodyPointToTarget)
-        val coercedPoint = RotationUtils.coerceBodyPoint(newPoint, RotationUtils.BodyPoint.FEET, highestPoint)
-        coercedPoint.displayName
-    }
-
-    private val lowestBodyPointToTarget: String by lowestBodyPointToTargetValue
+    // 竖直方向选点范围（hitbox 高度比例：0 = 脚底，1 = 头顶），取代旧的 Head/Body/Feet 三档。
+    // 默认 0.1..0.9 与旧 Head..Feet 档位等价；searchCenter 会在该区间内均匀采样候选点。
+    private val verticalBodySearchRangeValue = floatRange(
+        "VerticalBodySearchRange", 0.1f..0.9f, 0f..1f
+    ) { options.rotationsActive }
+    private val verticalBodySearchRange by verticalBodySearchRangeValue
 
     private val horizontalBodySearchRange by floatRange(
         "HorizontalBodySearchRange", 0f..1f, 0f..1f
@@ -259,7 +254,35 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     private val predictOnlyWhenOutOfRange by boolean(
         "PredictOnlyWhenOutOfRange", false
     ) { predictClientMovement != 0 }
-    private val predictEnemyPosition by float("PredictEnemyPosition", 1.5f, -1f..2f)
+    // 保留 Value 引用：init 里把「转头模式」(AimStrategy) 移到该值之后展示（rotation 相关设置的最下方）
+    private val predictEnemyPositionValue = float("PredictEnemyPosition", 1.5f, -1f..2f)
+    private val predictEnemyPosition by predictEnemyPositionValue
+
+    // AI 瞄准点改进（仅 Template / Neural 模式可见且生效；Default 模式保持用户原始选点与预判）
+    /** 总开关：远距自动收敛上半身选点 + 预判下限。 */
+    private val aiAimSpotValue = boolean("AiAimSpot", true) { options.aimStrategy != "Default" }
+    private val aiAimSpot by aiAimSpotValue
+
+    /** 远距收敛起始距离：目标 hitbox 距离 >= 该值时把选点范围收敛 Head..Body（上半身视角内变化率低且不易被遮挡）。 */
+    private val aiFarSpotDistanceValue = float("AiFarSpotDistance", 8f, 3f..20f) {
+        aiAimSpot && options.aimStrategy != "Default"
+    }
+    private val aiFarSpotDistance by aiFarSpotDistanceValue
+
+    /** 远距收敛恢复距离（滞回下界）：目标贴近该距离以下才恢复用户的 bodyPoints 配置，避免阈值附近每 tick 反复切范围。 */
+    private val aiFarSpotRecoverDistanceValue = float("AiFarSpotRecoverDistance", 7.5f, 2f..20f) {
+        aiAimSpot && options.aimStrategy != "Default"
+    }
+    private val aiFarSpotRecoverDistance by aiFarSpotRecoverDistanceValue
+
+    /** AI 预判下限：AI 逐 tick 平滑收差需要数 tick，预判低于该值会一直打在目标移动的身后。 */
+    private val aiMinPredictionValue = float("AiMinPrediction", 1f, 0f..3f) {
+        aiAimSpot && options.aimStrategy != "Default"
+    }
+    private val aiMinPrediction by aiMinPredictionValue
+
+    /** AI 距离化选点的滞回状态（阈值见 AiFarSpotDistance / AiFarSpotRecoverDistance）。 */
+    private var aiFarSpot = false
 
     private val forceFirstHit by boolean("ForceFirstHit", false) { !respectMissCooldown && !useHitDelay }
 
@@ -314,9 +337,38 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     // Box option
     private val boxOutline by boolean("Outline", true) { mark == "Box" }.subjective()
 
+    // Range circle - attack range display
+    /** 在 [range] 攻击范围边界绕玩家绘制一圈圆（颜色含透明度、边数可自定义）。 */
+    private val rangeCircleValue = boolean("RangeCircle", false).subjective()
+
+    /** 范围圈颜色（ColorValue 自带透明度滑条）。 */
+    private val rangeCircleColorValue = color("RangeCircleColor", Color(37, 126, 255, 120)) {
+        rangeCircleValue.get()
+    }.subjective()
+
+    /**
+     * 范围圈边数：顶点 = 边数，调低可省性能、调高更圆润；180 顶点以上每帧开销
+     * 仍只有一次 LINE_LOOP，但建议保持默认 60 的流畅度折中。
+     */
+    private val rangeCircleSidesValue = int("RangeCircleSides", 60, 8..180) {
+        rangeCircleValue.get()
+    }.subjective()
+
     /**
      * MODULE
      */
+
+    init {
+        // GUI 顺序调整：把「转头模式」(AimStrategy) 移到 rotation 相关设置的最下方。
+        // 默认它插在 RotationSettings 组末尾（MinRotationDifferenceResetTiming 之后、
+        // RayCast 之前），把 Rotations/AngleChange 与 RayCast/选点/随机化/BodPoints/
+        // 预判隔成两截；移到 PredictEnemyPosition 之后可以一次读完整个转头区块。
+        val strategy = options.aimStrategyValue
+        val list = get()
+        if (list.remove(strategy)) {
+            list.add(list.indexOf(predictEnemyPositionValue) + 1, strategy)
+        }
+    }
 
     // Target
     var target: EntityLivingBase? = null
@@ -341,6 +393,10 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     // Switch Delay
     private val switchTimer = MSTimer()
 
+    // HurtTime AutoBlock 状态：本次格挡窗口剩余 tick / 上 tick 自己的 hurtTime
+    private var hurtBlockTicksLeft = 0
+    private var lastOwnHurtTime = 0
+
     // Blink AutoBlock
     private var blinked = false
 
@@ -357,6 +413,10 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         attackTickTimes.clear()
         attackTimer.reset()
         clicks = 0
+
+        // HurtTime AutoBlock 状态复位
+        hurtBlockTicksLeft = 0
+        lastOwnHurtTime = 0
 
         if (blinkAutoBlock) {
             BlinkUtils.unblink()
@@ -478,6 +538,12 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             }
         }
 
+        // HurtTime AutoBlock：hurtTime 回落到阈值下且目标仍在 stopblock 范围内时
+        // 起格挡，按 HurtTimeBlockTicks 随机时长维持后松开（见 hurtTimeBlockTick）
+        if (autoBlock == "HurtTime") {
+            hurtTimeBlockTick(player)
+        }
+
         if (target == null && !blockStopInDead) {
             blockStopInDead = true
             stopBlocking()
@@ -561,6 +627,11 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         handleFailedSwings()
 
         drawAimPointBox()
+
+        // 攻击范围显示：独立于目标，只要开启就在玩家脚下画范围圈
+        if (rangeCircleValue.get()) {
+            drawRangeCircle()
+        }
 
         if (cancelRun) {
             target = null
@@ -864,6 +935,68 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     }
 
     /**
+     * HurtTime AutoBlock 状态机（每 tick 调用，autoBlock == "HurtTime" 时生效）：
+     *
+     * - 刚挨打（own hurtTime 上升）：立即松开既有格挡 —— 受击期间原版不给格挡
+     *   减伤，继续白挡只会拖累收招/反打；
+     * - hurtTime 回落到 [blockOwnHurtTime] 以下且目标仍在 [blockMaxRange]
+     *   （stopblock 范围）内 → 起格挡，持续 [hurtTimeBlockTicksValue] 随机
+     *   取值（默认 2..4 tick）后松开；
+     * - 持续窗口内补挡：若窗口还没走完就因受击/异常被取消，重新补上格挡，
+     *   让「保持 block 的时长」始终接近设定区间；
+     * - 松开后等待下一次挨打（hurtTime 重新抬升）再进入新一轮，避免 hurtTime
+     *   一直低于阈值时无限反复 block。
+     */
+    private fun hurtTimeBlockTick(player: EntityPlayer) {
+        if (player.heldItem?.item !is ItemSword) {
+            if (blockStatus) stopBlocking(true)
+
+            hurtBlockTicksLeft = 0
+            lastOwnHurtTime = player.hurtTime
+            return
+        }
+
+        // 挨打：own hurtTime 被重新拉起 → 松开格挡，等待下次回落再起挡
+        if (player.hurtTime > lastOwnHurtTime) {
+            hurtBlockTicksLeft = 0
+            if (blockStatus) stopBlocking(true)
+        }
+        lastOwnHurtTime = player.hurtTime
+
+        // 格挡保持窗口：还没到点就持挡；目标离开 stopblock 范围则提前收起
+        if (hurtBlockTicksLeft > 0) {
+            if (target == null || player.getDistanceToEntityBox(target!!) > blockMaxRange) {
+                if (blockStatus) stopBlocking(true)
+                hurtBlockTicksLeft = 0
+                return
+            }
+
+            hurtBlockTicksLeft--
+            if (hurtBlockTicksLeft <= 0) {
+                stopBlocking(true)
+            } else if (!blockStatus) {
+                // 窗口内被打断（受击取消格挡等）→ 补上
+                startBlocking(target!!, interactAutoBlock)
+            }
+            return
+        }
+
+        // 仍在受击恢复期（hurtTime ≥ 阈值）却已被别的路径起挡 → 收掉，保持节奏
+        if (blockStatus && player.hurtTime >= blockOwnHurtTime) {
+            stopBlocking(true)
+        }
+
+        // hurtTime 回落到阈值以下且目标在 stopblock 范围内 → 新一轮格挡，
+        // 持续时长按 HurtTimeBlockTicks 区间随机取值
+        if (!blockStatus && player.hurtTime < blockOwnHurtTime && target != null) {
+            if (player.getDistanceToEntityBox(target!!) <= blockMaxRange) {
+                hurtBlockTicksLeft = hurtTimeBlockTicksValue.get().random()
+                startBlocking(target!!, interactAutoBlock)
+            }
+        }
+    }
+
+    /**
      * Attack [entity]
      */
     private fun attackEntity(entity: EntityLivingBase, isLastClick: Boolean) {
@@ -903,7 +1036,9 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         }
 
         // Start blocking after attack
-        if (autoBlock !in arrayOf("Off", "BlockOnNoHit") && (thePlayer.isBlocking || canBlock) && (!blinkAutoBlock && isLastClick || blinkAutoBlock && (!blinked || !BlinkUtils.isBlinking))) {
+        // HurtTime 模式由 hurtTimeBlockTick 状态机管理格挡节奏（受击后回落才起挡），
+        // 攻击后不直接起挡，否则会绕过 hurtTime/blockWindows 的节拍
+        if (autoBlock !in arrayOf("Off", "BlockOnNoHit", "HurtTime") && (thePlayer.isBlocking || canBlock) && (!blinkAutoBlock && isLastClick || blinkAutoBlock && (!blinked || !BlinkUtils.isBlinking))) {
             startBlocking(entity, interactAutoBlock, autoBlock == "Fake")
         }
 
@@ -922,9 +1057,48 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             return player.getDistanceToEntityBox(entity) <= range
         }
 
-        val prediction = entity.currPos.subtract(entity.prevPos).times(2 + predictEnemyPosition.toDouble())
+        // AI 瞄准激活判定：本模块 RotationSettings 的 aimStrategy 非 Default 即 AI 引擎接管转换。
+        // 后续两处联动 —— ① AI 瞄准点稳定（随机化限流跳点）② 瞄准点改进（AiAimSpot 总开关）。
+        val aiAimActive = options.aimStrategy != "Default"
+
+        // 瞄准点改进（AiAimSpot，仅 Template / Neural 下可见生效）：① 预判下限 ② 远距收敛上半身。
+        // Default 模式走秒响应管线，保持用户原始的 PredictEnemyPosition / bodyPoints 配置。
+        val aiAimSpotActive = aiAimActive && aiAimSpot
+
+        // 预判（追踪数据联动）：瞄准点基于对方动向偏移到未来位置。
+        // prediction = (currPos - prevPos) × (2 + predictEnemyPosition)。
+        // AI 瞄准点改进开启时 enforce 最小预判（AiMinPrediction）：AI 逐 tick
+        // 平滑收差到达需要数 tick，不领先目标移动轴心就会一直打在身后；
+        // 纯 Default 秒响应管线保持用户原值。
+        val enemyPredict = if (aiAimSpotActive) predictEnemyPosition.coerceAtLeast(aiMinPrediction) else predictEnemyPosition
+        val prediction = entity.currPos.subtract(entity.prevPos).times(2 + enemyPredict.toDouble())
 
         val boundingBox = entity.hitBox.offset(prediction)
+
+        // 距离化选点：远距离时躯干点视角内变化率低但被身体遮挡的概率高，头部是最稳定
+        // 的命中目标 —— 距离 >= AiFarSpotDistance 时把竖直选点区间收敛到上半身
+        // （与 0.5..0.9 即旧 Head..Body 档取交集，交集为空则回退该区间）；近距保持
+        // 用户配置的 VerticalBodySearchRange。
+        // 滞回（AiFarSpotDistance 收敛 / AiFarSpotRecoverDistance 恢复）：目标在阈值
+        // 附近移动时避免每 tick 反复切换搜索范围。
+        val targetDist = player.getDistanceToEntityBox(entity)
+        if (aiAimSpotActive) {
+            if (aiFarSpot) {
+                // 恢复距离强制低于收敛起始距离，保证滞回区间存在
+                if (targetDist < aiFarSpotRecoverDistance.coerceAtMost(aiFarSpotDistance - 0.1f)) aiFarSpot = false
+            } else if (targetDist >= aiFarSpotDistance) {
+                aiFarSpot = true
+            }
+        } else {
+            aiFarSpot = false
+        }
+        val effectiveVerticalRange = if (aiFarSpot) {
+            val lo = max(verticalBodySearchRange.start, 0.5f)
+            val hi = min(verticalBodySearchRange.endInclusive, 0.9f)
+            if (lo <= hi) lo..hi else 0.5f..0.9f
+        } else {
+            verticalBodySearchRange
+        }
         val (currPos, oldPos) = player.currPos to player.prevPos
 
         val simPlayer = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput)
@@ -960,17 +1134,29 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 
         player.setPosAndPrevPos(pos)
 
+        // 瞄准点改进 ③ 追踪禁跳（v5.1）：随机化跳点的语义是「把瞄准点甩到 hitbox
+        // 另一处」，准星已经压在目标上（AimScene.TRACK）时跳点会把 5~10° 的差重新
+        // 注入，刚建立的追踪状态被强制打回成一次新的 FLICK 定位 —— 表现为追踪中
+        // 突然重新甩头。因此 AI 模式下「在身上」不跳点；亚度级的注视点微游走由
+        // RotationUtils 的 wander 提供，跟踪continuity不受影响。不在身上时维持
+        // AiSpotHopInterval 冷却限流的原节奏。
+        val aiSpotHopAllowed = if (aiAimActive && randomization.randomizationChosen) {
+            val currentRot = currentRotation
+            currentRot == null || !AimScene.crosshairOnEntity(currentRot.yaw, currentRot.pitch)
+        } else true
+
         val rotation = searchCenter(
             boundingBox,
             generateSpotBasedOnDistance,
             outBorder && !attackTimer.hasTimePassed(attackDelay / 2),
-            randomization,
+            if (aiSpotHopAllowed) randomization else null,
             predict = false,
             lookRange = range + scanRange,
             attackRange = range,
             throughWallsRange = throughWallsRange,
-            bodyPoints = listOf(highestBodyPointToTarget, lowestBodyPointToTarget),
-            horizontalSearch = horizontalBodySearchRange
+            verticalRange = effectiveVerticalRange,
+            horizontalSearch = horizontalBodySearchRange,
+            aiStableSpot = aiAimActive,
         )
 
         if (rotation == null) {
@@ -1293,6 +1479,84 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
                 RenderUtils.drawAxisAlignedBB(offSetBox, aimPointBoxColor)
             }
         }
+    }
+
+    /**
+     * 攻击范围显示：在 [range] 攻击范围边界绕玩家绘制一个圆（高度略抬离地面，
+     * 避免与地形 z-fighting）。颜色/透明度走 [rangeCircleColorValue]，边数走
+     * [rangeCircleSidesValue]。
+     *
+     * 性能考虑：每帧只有一个 LINE_LOOP，顶点数 = 边数（8..180）；三角函数查表
+     * 缓存，只在边数变化时重算一次 —— 常态开销接近于零。
+     */
+    private fun drawRangeCircle() {
+        val player = mc.thePlayer ?: return
+        val radius = range
+        if (radius <= 0f) return
+
+        val sides = rangeCircleSidesValue.get().coerceIn(8, 180)
+        val cosTable = rangeCircleCos(sides)
+        val sinTable = rangeCircleSin(sides)
+
+        val renderManager = mc.renderManager
+        val pos = player.interpolatedPosition(player.prevPos)
+        val cx = pos.xCoord - renderManager.renderPosX
+        val cy = pos.yCoord + 0.3 - renderManager.renderPosY
+        val cz = pos.zCoord - renderManager.renderPosZ
+
+        GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS)
+        GL11.glPushMatrix()
+
+        GL11.glDisable(GL11.GL_TEXTURE_2D)
+        GL11.glEnable(GL11.GL_BLEND)
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA)
+        GL11.glEnable(GL11.GL_LINE_SMOOTH)
+        GL11.glHint(GL11.GL_LINE_SMOOTH_HINT, GL11.GL_NICEST)
+        GL11.glDisable(GL11.GL_DEPTH_TEST)
+        GL11.glDisable(GL11.GL_CULL_FACE)
+
+        RenderUtils.glColor(rangeCircleColorValue.get())
+        GL11.glLineWidth(1.5f)
+        GL11.glBegin(GL11.GL_LINE_LOOP)
+        for (i in 0 until sides) {
+            GL11.glVertex3d(cx + cosTable[i] * radius, cy, cz + sinTable[i] * radius)
+        }
+        GL11.glEnd()
+
+        GL11.glColor4f(1f, 1f, 1f, 1f)
+        GL11.glDisable(GL11.GL_LINE_SMOOTH)
+        GL11.glEnable(GL11.GL_CULL_FACE)
+        GL11.glEnable(GL11.GL_DEPTH_TEST)
+        GL11.glEnable(GL11.GL_TEXTURE_2D)
+        GL11.glDisable(GL11.GL_BLEND)
+        GL11.glPopMatrix()
+        GL11.glPopAttrib()
+    }
+
+    /** 范围圈顶点 trig 查表缓存：只在边数变化时重算。 */
+    private var rangeCircleSidesCache = 0
+    private var rangeCircleCosCache = FloatArray(0)
+    private var rangeCircleSinCache = FloatArray(0)
+
+    private fun rangeCircleCos(sides: Int): FloatArray {
+        if (sides != rangeCircleSidesCache) {
+            rangeCircleSidesCache = sides
+            val cos = FloatArray(sides)
+            val sin = FloatArray(sides)
+            for (i in 0 until sides) {
+                val angle = Math.PI * 2.0 * i / sides
+                cos[i] = Math.cos(angle).toFloat()
+                sin[i] = Math.sin(angle).toFloat()
+            }
+            rangeCircleCosCache = cos
+            rangeCircleSinCache = sin
+        }
+        return rangeCircleCosCache
+    }
+
+    private fun rangeCircleSin(sides: Int) = run {
+        rangeCircleCos(sides)
+        rangeCircleSinCache
     }
 
     /**

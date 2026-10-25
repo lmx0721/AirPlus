@@ -6,9 +6,11 @@
 package net.airplus.injection.forge.mixins.render;
 
 import net.airplus.features.module.modules.combat.HitBox;
+import net.airplus.features.module.modules.render.Execution;
 import net.airplus.features.module.modules.render.FreeCam;
 import net.minecraft.client.renderer.entity.RenderManager;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.util.AxisAlignedBB;
 import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
@@ -52,5 +54,15 @@ public abstract class MixinRenderManager {
     @Inject(method = "renderEntityStatic", at = @At("TAIL"))
     private void injectFreeCam(Entity p_renderEntityStatic_1_, float p_renderEntityStatic_2_, boolean p_renderEntityStatic_3_, CallbackInfoReturnable<Boolean> cir) {
         FreeCam.INSTANCE.useModifiedPosition();
+    }
+
+    /**
+     * Execution: 被处决者化作烟雾后到实体真正消失前不再渲染（玩家与生物统一在此拦截）
+     */
+    @Inject(method = "renderEntityStatic", at = @At("HEAD"), cancellable = true)
+    private void executionHideVictim(Entity entity, float tickDelta, boolean bool, CallbackInfoReturnable<Boolean> cir) {
+        if (entity instanceof EntityLivingBase && Execution.INSTANCE.shouldHideRender((EntityLivingBase) entity)) {
+            cir.setReturnValue(false);
+        }
     }
 }

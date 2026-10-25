@@ -90,6 +90,8 @@ object Island : Module("Island", Category.RENDER) {
     // 每个样式的展开动画设置
     private val legacyExpandAnim by choices("Legacy-ExpandAnim", arrayOf("Bounce", "EaseOut", "Linear", "Back"), "Bounce") { style == "legacy" }
     private val iosExpandAnim by choices("iOS-ExpandAnim", arrayOf("Bounce", "EaseOut", "Linear", "Back"), "Bounce") { style == "ios" }
+    private val prismExpandAnim by choices("Prism-ExpandAnim", arrayOf("Bounce", "EaseOut", "Linear", "Back"), "Bounce") { style == "prism" }
+    private val opaiExpandAnim by choices("Opai-ExpandAnim", arrayOf("Bounce", "EaseOut", "Linear", "Back"), "Bounce") { style == "opai" }
 
     // iOS样式设置
     private val iosBlurStrength by float("iOS-BlurStrength", 15F, 0F..50F) { style == "ios" }
@@ -418,7 +420,8 @@ object Island : Module("Island", Category.RENDER) {
     private fun getCurrentExpandAnim(): String {
         return when (style) {
             "ios" -> iosExpandAnim
-            "legacy" -> legacyExpandAnim
+            "prism" -> prismExpandAnim
+            "opai" -> opaiExpandAnim
             else -> legacyExpandAnim
         }
     }
@@ -1124,7 +1127,7 @@ object Island : Module("Island", Category.RENDER) {
             val currentAnim = getCurrentExpandAnim()
             val isOpaiMode = renderMode.startsWith("OPAI_")
 
-            if (isOpaiMode) {
+            if (isOpaiMode && currentAnim == "Bounce") {
                 // Samsara DynamicIsland 解析阻尼弹簧（宽 / 高 / 顶三个独立 Morph，任意帧率一致、打断保留速度）
                 // x 不单独弹簧：由动画宽度推导保持水平居中（对照 Samsara paintShell）
                 val nowMs = System.currentTimeMillis()
@@ -1341,11 +1344,12 @@ object Island : Module("Island", Category.RENDER) {
                 EmbeddedStencil.write(false)
                 RenderUtils.drawRoundedRect(drawX, drawY, drawX + drawW, drawY + drawH, Color.WHITE.rgb, currentRadius, islandCorners)
                 EmbeddedStencil.erase(true)
-                renderIslandContent(renderMode, drawX, drawY, drawW, drawH, playerList, headerLines, footerLines, chestSlots)
+                // 内容按目标几何布局：外壳做展开动画时图标 / 文字不会跟着弹跳，只由圆角模板逐帧揭示
+                renderIslandContent(renderMode, targetX, targetY, targetWidth, targetHeight, playerList, headerLines, footerLines, chestSlots)
             } catch (e: Exception) {
                 // 裁剪失败时按原样（无裁剪）兜底渲染，避免整块内容消失
                 EmbeddedStencil.dispose()
-                renderIslandContent(renderMode, drawX, drawY, drawW, drawH, playerList, headerLines, footerLines, chestSlots)
+                renderIslandContent(renderMode, targetX, targetY, targetWidth, targetHeight, playerList, headerLines, footerLines, chestSlots)
             } finally {
                 EmbeddedStencil.dispose()
             }
@@ -4044,7 +4048,8 @@ object Island : Module("Island", Category.RENDER) {
     private fun renderOpaiIdle(x: Float, y: Float, w: Float, h: Float) {
         val measure = Fonts.fontRegular30
         val centerY = y + OPAI_IDLE_HEIGHT / 2f
-        val textBaseY = centerY - measure.FONT_HEIGHT / 2f
+        // 文本按视觉行盒居中（与 OpaiSurface 同一公式），保证与 11px 图标同一垂直中心
+        val textBaseY = centerY - measure.visualLineHeight / 2f + 2.75f
         val iconY = centerY - OPAI_ICON_SIZE / 2f
         var cx = x + 9f
 

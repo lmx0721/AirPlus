@@ -1,4 +1,4 @@
-﻿/run/
+/run/
 /out/
 /logs/
 /build/
@@ -16,5 +16,7 @@
 /.vscode/
 
 /.eclipse/
+
+__pycache__/
 
 airplus.code-workspace

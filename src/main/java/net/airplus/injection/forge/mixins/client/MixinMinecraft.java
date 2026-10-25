@@ -12,6 +12,7 @@ import net.airplus.features.module.modules.combat.TickBase;
 import net.airplus.features.module.modules.exploit.AbortBreaking;
 import net.airplus.features.module.modules.exploit.MultiActions;
 import net.airplus.features.module.modules.render.BetterFPS;
+import net.airplus.features.module.modules.render.Execution;
 import net.airplus.features.module.modules.render.MotionBlur;
 import net.airplus.features.module.modules.world.FastPlace;
 import net.airplus.file.configs.models.ClientConfiguration;
@@ -268,8 +269,14 @@ public abstract class MixinMinecraft implements IMinecraft {
         MiscUtils.showErrorPopup(crashReport.getCrashCause(), "Game crashed! ", MiscUtils.generateCrashInfo());
     }
 
-    @Inject(method = "clickMouse", at = @At("HEAD"))
+    @Inject(method = "clickMouse", at = @At("HEAD"), cancellable = true)
     private void clickMouse(CallbackInfo callbackInfo) {
+        // 处决动画期间锁定攻击输入（不触发挥手/攻击）
+        if (Execution.INSTANCE.isPlaying()) {
+            callbackInfo.cancel();
+            return;
+        }
+
         if (AutoClicker.INSTANCE.handleEvents()) {
             leftClickCounter = 0;
         }
