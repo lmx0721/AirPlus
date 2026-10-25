@@ -24,6 +24,7 @@ import net.airplus.utils.render.RenderUtils.glStateManagerColor
 import net.airplus.utils.render.WorldToScreen
 import net.airplus.utils.render.shader.shaders.GlowShader
 import net.airplus.utils.rotation.RotationUtils.isEntityHeightVisible
+import net.minecraft.client.model.ModelBiped
 import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.client.renderer.GlStateManager.enableTexture2D
 import net.minecraft.client.renderer.OpenGlHelper
@@ -33,6 +34,7 @@ import net.minecraft.entity.player.EntityPlayer
 import org.lwjgl.opengl.GL11.*
 import org.lwjgl.util.vector.Vector3f
 import java.awt.Color
+import java.util.WeakHashMap
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -79,6 +81,23 @@ object ESP : Module("ESP", Category.RENDER) {
 
     private val thruBlocks by boolean("ThruBlocks", true)
 
+    val skeleton by boolean("Skeleton", false)
+    private val skeletonWidth by float("Skeleton-Width", 1F, 0.5F..4F) { skeleton }
+    private val skeletonThruBlocks by boolean("Skeleton-ThruBlocks", true) { skeleton }
+
+    /** 骨骼旋转缓存：由 MixinModelBiped 在 setRotationAngles 末尾写入 */
+    val skeletonRotations = WeakHashMap<EntityPlayer, Array<FloatArray>>()
+
+    fun updateSkeleton(player: EntityPlayer, model: ModelBiped) {
+        skeletonRotations[player] = arrayOf(
+            floatArrayOf(model.bipedHead.rotateAngleX, model.bipedHead.rotateAngleY, model.bipedHead.rotateAngleZ),
+            floatArrayOf(model.bipedRightArm.rotateAngleX, model.bipedRightArm.rotateAngleY, model.bipedRightArm.rotateAngleZ),
+            floatArrayOf(model.bipedLeftArm.rotateAngleX, model.bipedLeftArm.rotateAngleY, model.bipedLeftArm.rotateAngleZ),
+            floatArrayOf(model.bipedRightLeg.rotateAngleX, model.bipedRightLeg.rotateAngleY, model.bipedRightLeg.rotateAngleZ),
+            floatArrayOf(model.bipedLeftLeg.rotateAngleX, model.bipedLeftLeg.rotateAngleY, model.bipedLeftLeg.rotateAngleZ)
+        )
+    }
+
     private var maxRenderDistanceSq = 0.0
         set(value) {
             field = if (value <= 0.0) maxRenderDistance.toDouble().pow(2.0) else value
@@ -94,6 +113,8 @@ object ESP : Module("ESP", Category.RENDER) {
     val onRender3D = handler<Render3DEvent> {
         if (entities.isEmpty())
             return@handler
+
+        drawSkeletonPass(it.partialTicks)
 
         val mvMatrix = WorldToScreen.getMatrix(GL_MODELVIEW_MATRIX)
         val projectionMatrix = WorldToScreen.getMatrix(GL_PROJECTION_MATRIX)
@@ -252,6 +273,132 @@ object ESP : Module("ESP", Category.RENDER) {
         }
 
         renderNameTags = true
+    }
+
+    /**
+     * 骨骼透视：用缓存的 ModelBiped 旋转角绘制火柴人骨架
+     */
+    private fun drawSkeletonPass(partialTicks: Float) {
+        if (!skeleton) return
+
+        val world = mc.theWorld ?: return
+        val cacheIterator = skeletonRotations.keys.iterator()
+        while (cacheIterator.hasNext()) {
+            val player = cacheIterator.next()
+            if (world.playerEntities.none { it === player }) cacheIterator.remove()
+        }
+
+        val renderPosX = mc.renderManager.renderPosX
+        val renderPosY = mc.renderManager.renderPosY
+        val renderPosZ = mc.renderManager.renderPosZ
+
+        glPushAttrib(GL_ENABLE_BIT or GL_LINE_BIT)
+        glPushMatrix()
+        glEnable(GL_BLEND)
+        glDisable(GL_TEXTURE_2D)
+        glDisable(GL_LIGHTING)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glDepthMask(false)
+        if (skeletonThruBlocks) glDisable(GL_DEPTH_TEST) else glEnable(GL_DEPTH_TEST)
+        glLineWidth(skeletonWidth)
+        glEnable(GL_LINE_SMOOTH)
+        glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
+
+        for (entity in entities) {
+            if (entity !is EntityPlayer || entity === mc.thePlayer || entity.isInvisible) continue
+
+            val rotations = skeletonRotations[entity] ?: continue
+            val color = getColor(entity)
+            GlStateManager.color(color.red / 255f, color.green / 255f, color.blue / 255f, 1f)
+
+            val x = entity.lastTickPosX + (entity.posX - entity.lastTickPosX) * partialTicks - renderPosX
+            val y = entity.lastTickPosY + (entity.posY - entity.lastTickPosY) * partialTicks - renderPosY
+            val z = entity.lastTickPosZ + (entity.posZ - entity.lastTickPosZ) * partialTicks - renderPosZ
+
+            val sneaking = entity.isSneaking
+            val bodyYaw = entity.prevRenderYawOffset +
+                    (entity.renderYawOffset - entity.prevRenderYawOffset) * partialTicks
+            val headYaw = entity.prevRotationYawHead +
+                    (entity.rotationYawHead - entity.prevRotationYawHead) * partialTicks
+            val legHeight = if (sneaking) 0.6f else 0.75f
+
+            glPushMatrix()
+            glTranslated(x, y, z)
+            glRotatef(-bodyYaw, 0f, 1f, 0f)
+            glTranslated(0.0, 0.0, if (sneaking) -0.235 else 0.0)
+
+            // 双腿
+            drawSkeletonBone(rotations[3], -0.125F, legHeight, -legHeight, 1f)
+            drawSkeletonBone(rotations[4], 0.125F, legHeight, -legHeight, 1f)
+
+            glTranslated(0.0, 0.0, if (sneaking) 0.25 else 0.0)
+
+            glPushMatrix()
+            if (sneaking) glTranslated(0.0, -0.05, -0.01725)
+
+            // 双臂
+            drawSkeletonBone(rotations[1], -0.375F, legHeight + 0.55F, -0.5F, -1f)
+            drawSkeletonBone(rotations[2], 0.375F, legHeight + 0.55F, -0.5F, -1f)
+
+            // 头（相对身体朝向）
+            glRotatef(bodyYaw - headYaw, 0f, 1f, 0f)
+            glPushMatrix()
+            glTranslated(0.0, (legHeight + 0.55F).toDouble(), 0.0)
+            if (rotations[0][0] != 0f) glRotatef(rotations[0][0] * 57.295776f, 1f, 0f, 0f)
+            glBegin(GL_LINES)
+            glVertex3d(0.0, 0.0, 0.0)
+            glVertex3d(0.0, 0.3, 0.0)
+            glEnd()
+            glPopMatrix()
+
+            glPopMatrix()
+
+            // 躯干（潜行时前倾）
+            if (sneaking) {
+                glRotatef(25f, 1f, 0f, 0f)
+                glTranslated(0.0, -0.16175, -0.48025)
+            }
+
+            // 髋线 / 脊柱 / 肩线
+            glPushMatrix()
+            glTranslated(0.0, legHeight.toDouble(), 0.0)
+            glBegin(GL_LINES)
+            glVertex3d(-0.125, 0.0, 0.0)
+            glVertex3d(0.125, 0.0, 0.0)
+            glVertex3d(0.0, 0.0, 0.0)
+            glVertex3d(0.0, 0.55, 0.0)
+            glEnd()
+            glTranslated(0.0, 0.55, 0.0)
+            glBegin(GL_LINES)
+            glVertex3d(-0.375, 0.0, 0.0)
+            glVertex3d(0.375, 0.0, 0.0)
+            glEnd()
+            glPopMatrix()
+
+            glPopMatrix()
+        }
+
+        glDisable(GL_LINE_SMOOTH)
+        glDepthMask(true)
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_TEXTURE_2D)
+        glDisable(GL_BLEND)
+        glPopMatrix()
+        glPopAttrib()
+        GlStateManager.color(1f, 1f, 1f, 1f)
+    }
+
+    private fun drawSkeletonBone(rotation: FloatArray, x: Float, y: Float, length: Float, zAxisSign: Float) {
+        glPushMatrix()
+        glTranslated(x.toDouble(), y.toDouble(), 0.0)
+        if (rotation[0] != 0f) glRotatef(rotation[0] * 57.295776f, 1f, 0f, 0f)
+        if (rotation[1] != 0f) glRotatef(rotation[1] * 57.295776f, 0f, 1f, 0f)
+        if (rotation[2] != 0f) glRotatef(rotation[2] * zAxisSign * 57.295776f, 0f, 0f, 1f)
+        glBegin(GL_LINES)
+        glVertex3d(0.0, 0.0, 0.0)
+        glVertex3d(0.0, length.toDouble(), 0.0)
+        glEnd()
+        glPopMatrix()
     }
 
     override val tag

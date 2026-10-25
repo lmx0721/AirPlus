@@ -169,6 +169,12 @@
 
         "module.breadcrumbs.description": "在你身后留下足迹。",
 
+        "module.glint.description": "自定义附魔光效的颜色与样式，也可让未附魔物品发光。",
+
+        "module.particles.description": "在周围生成可自定义颜色与大小的漂浮粒子。",
+
+        "module.trail.description": "在身后留下带淡出的拖尾。",
+
         "module.bufferSpeed.description": "允许你在台阶和楼梯上走得更快。",
 
         "module.cameraClip.description": "允许你在第三人称视角中透过墙壁看到另一边。",

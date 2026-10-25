@@ -5,6 +5,7 @@
  */
 package net.airplus.injection.forge.mixins.render;
 
+import net.airplus.features.module.modules.render.ESP;
 import net.airplus.features.module.modules.render.Rotations;
 import net.minecraft.client.model.ModelBiped;
 import net.minecraft.client.model.ModelRenderer;
@@ -39,6 +40,13 @@ public class MixinModelBiped {
 
         if (Rotations.INSTANCE.shouldRotate() && p_setRotationAngles_7_ instanceof EntityPlayer && p_setRotationAngles_7_.equals(mc.thePlayer)) {
             bipedHead.rotateAngleX = (float) Math.toRadians(Rotations.INSTANCE.lerp(mc.timer.renderPartialTicks, Rotations.INSTANCE.getPrevHeadPitch(), Rotations.INSTANCE.getHeadPitch()));
+        }
+    }
+
+    @Inject(method = "setRotationAngles", at = @At("TAIL"))
+    private void airplus$captureSkeleton(float limbSwing, float limbSwingAmount, float ageInTicks, float netHeadYaw, float headPitch, float scaleFactor, Entity entity, CallbackInfo callbackInfo) {
+        if (entity instanceof EntityPlayer && ESP.INSTANCE.getSkeleton()) {
+            ESP.INSTANCE.updateSkeleton((EntityPlayer) entity, (ModelBiped) (Object) this);
         }
     }
 }

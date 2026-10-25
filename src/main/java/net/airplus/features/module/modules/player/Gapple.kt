@@ -18,10 +18,12 @@ import net.minecraft.client.gui.ScaledResolution
 import net.minecraft.item.ItemAppleGold
 import net.minecraft.network.Packet
 import net.minecraft.network.play.client.*
+import net.minecraft.network.play.server.S08PacketPlayerPosLook
 import java.awt.Color
 
 object Gapple : Module("Gapple", Category.PLAYER) {
-    // Stuck = 定身 + 拦截 C03 计数 + 结束后补发；NoC03 = Freeze 原理（取消 C03 且不补发）；
+    // Stuck = 定身 + 拦截 C03 计数 + 结束后补发；NoC03 = Freeze 原理（取消 C03 且不补发，
+    // 并与 Freeze 逻辑对齐做本地冻结：清零动量 + 钉住坐标，结束后恢复动量）；
     // None = 不拦截任何包，仅按游戏 tick 计时后发送使用包
     private val mode by choices("Mode", arrayOf("Stuck", "NoC03", "None"), "Stuck")
     private val c by int("C03PacketPlayer", 32, 32..40)
@@ -45,6 +47,15 @@ object Gapple : Module("Gapple", Category.PLAYER) {
 
     private var slot = -1
 
+    // NoC03 本地冻结（对齐 Freeze）：基准坐标 / 冻结前动量 / 是否冻结中
+    private var fx = 0.0
+    private var fy = 0.0
+    private var fz = 0.0
+    private var fmx = 0.0
+    private var fmy = 0.0
+    private var fmz = 0.0
+    private var frozen = false
+
     fun getEatingProgress(): Float {
         return if (isEating && c > 0) {
             (ticks.toFloat() / c.toFloat()).coerceIn(0f, 1f)
@@ -57,6 +68,7 @@ object Gapple : Module("Gapple", Category.PLAYER) {
         isEating = false
         ticks = 0
         pauseTicks = 0
+        frozen = false
         stopStuck()
 
         slot = getGApple()
@@ -67,6 +79,9 @@ object Gapple : Module("Gapple", Category.PLAYER) {
         }
 
         isEating = true
+        if (mode == "NoC03") {
+            startFreeze()
+        }
         if (chatMessage) chat("§a开始吃金苹果")
     }
 
@@ -75,6 +90,7 @@ object Gapple : Module("Gapple", Category.PLAYER) {
         pauseTicks = 0
         isEating = false
         stopStuck()
+        stopFreeze()
     }
 
     val onPacket = handler<PacketEvent> { event ->
@@ -94,6 +110,16 @@ object Gapple : Module("Gapple", Category.PLAYER) {
             }
             ticks++
             event.cancelEvent()
+        }
+
+        // 对齐 Freeze：冻结期间收到服务端位置校正 → 更新基准坐标（放行不拦截）
+        if (frozen && packet is S08PacketPlayerPosLook) {
+            fx = packet.x
+            fy = packet.y
+            fz = packet.z
+            fmx = 0.0
+            fmy = 0.0
+            fmz = 0.0
         }
     }
 
@@ -168,6 +194,41 @@ object Gapple : Module("Gapple", Category.PLAYER) {
             mc.thePlayer.motionZ = z
             r = false
         }
+    }
+
+    // NoC03：与 Freeze 模块逻辑对齐 —— 记录冻结前状态，本地同步冻结
+    private fun startFreeze() {
+        val player = mc.thePlayer ?: return
+        fx = player.posX
+        fy = player.posY
+        fz = player.posZ
+        fmx = player.motionX
+        fmy = player.motionY
+        fmz = player.motionZ
+        frozen = true
+    }
+
+    private fun stopFreeze() {
+        if (!frozen) return
+        frozen = false
+        mc.thePlayer?.let {
+            it.motionX = fmx
+            it.motionY = fmy
+            it.motionZ = fmz
+            it.setPositionAndRotation(fx, fy, fz, it.rotationYaw, it.rotationPitch)
+        }
+    }
+
+    val onUpdate = handler<UpdateEvent> {
+        if (!frozen) return@handler
+        val player = mc.thePlayer ?: return@handler
+
+        // 与 Freeze 一致：每 tick 清零动量 + 钉住坐标（保留视角），
+        // 服务端因收不到 C03 冻结玩家时本地保持一致，避免结束后位置对不上被回拉
+        player.motionX = 0.0
+        player.motionY = 0.0
+        player.motionZ = 0.0
+        player.setPositionAndRotation(fx, fy, fz, player.rotationYaw, player.rotationPitch)
     }
 
     private fun release() {

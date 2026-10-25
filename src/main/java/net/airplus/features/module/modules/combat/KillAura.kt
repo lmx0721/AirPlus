@@ -150,6 +150,8 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
      * hurtTime 回落到 [blockOwnHurtTime] 以下且目标仍在 [blockMaxRange]
      * （stopblock 范围，默认 3 格）内时再起格挡，按 [hurtTimeBlockTicksValue]
      * 随机持续时长（默认 2..4 tick）维持后松开，等待下一次挨打再重置节奏。
+     * 起挡原理为模拟按住右键（keyBindUseItem），由 vanilla 自行走 use-item
+     * 流程发包，不直接手搓 C08/C07。
      */
     private val blockOwnHurtTime by int("BlockOwnHurtTime", 2, 0..10) { autoBlock == "HurtTime" }
     private val hurtTimeBlockTicksValue = intRange("HurtTimeBlockTicks", 2..4, 1..10) { autoBlock == "HurtTime" }
@@ -167,7 +169,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             "Off", "Fake", "BlockOnNoHit"
         ) && releaseAutoBlock
     }
-    private val blockRate by int("BlockRate", 100, 1..100) { autoBlock !in arrayOf("Off", "Fake") && releaseAutoBlock }
+    private val blockRate by int("BlockRate", 100, 1..100) { autoBlock !in arrayOf("Off", "Fake", "HurtTime") && releaseAutoBlock }
 
     private val uncpAutoBlock by boolean("UpdatedNCPAutoBlock", false) {
         autoBlock !in arrayOf(
@@ -177,7 +179,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 
     private val switchStartBlock by boolean("SwitchStartBlock", false) { autoBlock !in arrayOf("Off", "Fake", "BlockOnNoHit") }
 
-    private val interactAutoBlock by boolean("InteractAutoBlock", true) { autoBlock !in arrayOf("Off", "Fake", "BlockOnNoHit") }
+    private val interactAutoBlock by boolean("InteractAutoBlock", true) { autoBlock !in arrayOf("Off", "Fake", "BlockOnNoHit", "HurtTime") }
 
     val blinkAutoBlock by boolean("BlinkAutoBlock", false) { autoBlock !in arrayOf("Off", "Fake", "BlockOnNoHit") }
 
@@ -396,6 +398,8 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     // HurtTime AutoBlock 状态：本次格挡窗口剩余 tick / 上 tick 自己的 hurtTime
     private var hurtBlockTicksLeft = 0
     private var lastOwnHurtTime = 0
+    // HurtTime 模拟右键：true 表示当前格挡由本模块按着 keyBindUseItem
+    private var hurtBlockKeyDown = false
 
     // Blink AutoBlock
     private var blinked = false
@@ -417,6 +421,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         // HurtTime AutoBlock 状态复位
         hurtBlockTicksLeft = 0
         lastOwnHurtTime = 0
+        if (hurtBlockKeyDown) stopHurtBlockKey()
 
         if (blinkAutoBlock) {
             BlinkUtils.unblink()
@@ -475,6 +480,16 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
      */
     val onTick = handler<GameTickEvent>(priority = 2) {
         val player = mc.thePlayer ?: return@handler
+
+        // HurtTime 模拟右键清理：模式切换或本 tick 会提前中断的场景（界面打开/
+        // 取消运行/容器占用等）先松开模拟按键，避免右键被卡按
+        if (hurtBlockKeyDown && (autoBlock != "HurtTime" || mc.currentScreen != null || cancelRun || shouldPrioritize() ||
+                    (clickOnly && !mc.gameSettings.keyBindAttack.isKeyDown) ||
+                    (noInventoryAttack && (mc.currentScreen is GuiContainer || System.currentTimeMillis() - containerOpen < noInventoryDelay))
+                )) {
+            stopHurtBlockKey()
+            hurtBlockTicksLeft = 0
+        }
 
         if (blockStatus && player.heldItem?.item !is ItemSword) {
             blockStatus = false
@@ -542,6 +557,12 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         // 起格挡，按 HurtTimeBlockTicks 随机时长维持后松开（见 hurtTimeBlockTick）
         if (autoBlock == "HurtTime") {
             hurtTimeBlockTick(player)
+
+            // 格挡期间暂停攻击：清空本 tick 积累的点击，松挡后恢复输出
+            if (hurtBlockKeyDown) {
+                clicks = 0
+                return@handler
+            }
         }
 
         if (target == null && !blockStopInDead) {
@@ -935,21 +956,41 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     }
 
     /**
+     * HurtTime 模式起挡：模拟按住右键，由 vanilla 自行走 use-item 流程
+     * （本地起格挡动画 + 自行发送 C08），不直接手搓包。
+     */
+    private fun startHurtBlockKey() {
+        hurtBlockKeyDown = true
+        mc.gameSettings.keyBindUseItem.pressed = true
+        renderBlocking = true
+        CPSCounter.registerClick(CPSCounter.MouseButton.RIGHT)
+    }
+
+    /**
+     * HurtTime 模式松挡：松开模拟的右键，vanilla 检测到松键后自行结束格挡并释放
+     */
+    private fun stopHurtBlockKey() {
+        hurtBlockKeyDown = false
+        mc.gameSettings.keyBindUseItem.pressed = false
+        renderBlocking = false
+    }
+
+    /**
      * HurtTime AutoBlock 状态机（每 tick 调用，autoBlock == "HurtTime" 时生效）：
      *
      * - 刚挨打（own hurtTime 上升）：立即松开既有格挡 —— 受击期间原版不给格挡
      *   减伤，继续白挡只会拖累收招/反打；
      * - hurtTime 回落到 [blockOwnHurtTime] 以下且目标仍在 [blockMaxRange]
-     *   （stopblock 范围）内 → 起格挡，持续 [hurtTimeBlockTicksValue] 随机
-     *   取值（默认 2..4 tick）后松开；
-     * - 持续窗口内补挡：若窗口还没走完就因受击/异常被取消，重新补上格挡，
+     *   （stopblock 范围）内 → 起格挡（模拟按住右键），持续
+     *   [hurtTimeBlockTicksValue] 随机取值（默认 2..4 tick）后松开；
+     * - 持续窗口内补挡：若窗口还没走完就因受击/异常被取消，重新按住右键补上，
      *   让「保持 block 的时长」始终接近设定区间；
      * - 松开后等待下一次挨打（hurtTime 重新抬升）再进入新一轮，避免 hurtTime
      *   一直低于阈值时无限反复 block。
      */
     private fun hurtTimeBlockTick(player: EntityPlayer) {
         if (player.heldItem?.item !is ItemSword) {
-            if (blockStatus) stopBlocking(true)
+            if (hurtBlockKeyDown) stopHurtBlockKey()
 
             hurtBlockTicksLeft = 0
             lastOwnHurtTime = player.hurtTime
@@ -959,39 +1000,39 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         // 挨打：own hurtTime 被重新拉起 → 松开格挡，等待下次回落再起挡
         if (player.hurtTime > lastOwnHurtTime) {
             hurtBlockTicksLeft = 0
-            if (blockStatus) stopBlocking(true)
+            if (hurtBlockKeyDown) stopHurtBlockKey()
         }
         lastOwnHurtTime = player.hurtTime
 
         // 格挡保持窗口：还没到点就持挡；目标离开 stopblock 范围则提前收起
         if (hurtBlockTicksLeft > 0) {
             if (target == null || player.getDistanceToEntityBox(target!!) > blockMaxRange) {
-                if (blockStatus) stopBlocking(true)
+                if (hurtBlockKeyDown) stopHurtBlockKey()
                 hurtBlockTicksLeft = 0
                 return
             }
 
             hurtBlockTicksLeft--
             if (hurtBlockTicksLeft <= 0) {
-                stopBlocking(true)
-            } else if (!blockStatus) {
-                // 窗口内被打断（受击取消格挡等）→ 补上
-                startBlocking(target!!, interactAutoBlock)
+                stopHurtBlockKey()
+            } else {
+                // 窗口内被打断（受击取消格挡/物理松键等）→ 持续按住右键补上
+                startHurtBlockKey()
             }
             return
         }
 
-        // 仍在受击恢复期（hurtTime ≥ 阈值）却已被别的路径起挡 → 收掉，保持节奏
-        if (blockStatus && player.hurtTime >= blockOwnHurtTime) {
-            stopBlocking(true)
+        // 仍在受击恢复期（hurtTime ≥ 阈值）却仍按着右键 → 松开，保持节奏
+        if (hurtBlockKeyDown && player.hurtTime >= blockOwnHurtTime) {
+            stopHurtBlockKey()
         }
 
         // hurtTime 回落到阈值以下且目标在 stopblock 范围内 → 新一轮格挡，
         // 持续时长按 HurtTimeBlockTicks 区间随机取值
-        if (!blockStatus && player.hurtTime < blockOwnHurtTime && target != null) {
+        if (!hurtBlockKeyDown && player.hurtTime < blockOwnHurtTime && target != null) {
             if (player.getDistanceToEntityBox(target!!) <= blockMaxRange) {
                 hurtBlockTicksLeft = hurtTimeBlockTicksValue.get().random()
-                startBlocking(target!!, interactAutoBlock)
+                startHurtBlockKey()
             }
         }
     }

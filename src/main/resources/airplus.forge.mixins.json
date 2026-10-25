@@ -63,6 +63,7 @@
     "render.MixinModelBiped",
     "render.MixinRender",
     "render.MixinRenderEntityItem",
+    "render.MixinRenderItem",
     "render.MixinRendererLivingEntity",
     "render.MixinRenderManager",
     "render.MixinRenderPlayer",
