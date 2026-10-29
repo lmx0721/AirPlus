@@ -3,7 +3,7 @@
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
  */
-package net.airplus.features.module.modules.exploit
+package net.airplus.features.module.modules.misc
 
 import net.airplus.event.PacketEvent
 import net.airplus.event.UpdateEvent
@@ -16,7 +16,7 @@ import net.airplus.utils.timing.TickTimer
 import net.minecraft.network.play.client.C14PacketTabComplete
 import net.minecraft.network.play.server.S3APacketTabComplete
 
-object Plugins : Module("Plugins", Category.EXPLOIT, subjective = true, gameDetecting = false) {
+object Plugins : Module("Plugins", Category.MISC, subjective = true, gameDetecting = false) {
 
     private val tickTimer = TickTimer()
 

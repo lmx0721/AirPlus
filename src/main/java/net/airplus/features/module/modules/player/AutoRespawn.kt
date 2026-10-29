@@ -9,7 +9,7 @@ import net.airplus.event.UpdateEvent
 import net.airplus.event.handler
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
-import net.airplus.features.module.modules.exploit.Ghost
+import net.airplus.features.module.modules.misc.Ghost
 import net.minecraft.client.gui.GuiGameOver
 
 object AutoRespawn : Module("AutoRespawn", Category.PLAYER, gameDetecting = false) {

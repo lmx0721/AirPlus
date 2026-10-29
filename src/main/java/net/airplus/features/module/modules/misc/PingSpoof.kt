@@ -3,7 +3,7 @@
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
  */
-package net.airplus.features.module.modules.exploit
+package net.airplus.features.module.modules.misc
 
 import net.airplus.event.GameLoopEvent
 import net.airplus.event.PacketEvent
@@ -17,7 +17,7 @@ import net.minecraft.network.Packet
 import net.minecraft.network.play.client.C0CPacketInput
 import net.minecraft.network.play.server.*
 
-object PingSpoof : Module("PingSpoof", Category.EXPLOIT) {
+object PingSpoof : Module("PingSpoof", Category.MISC) {
 
     private val pingOnly by boolean("PingOnly", true)
 

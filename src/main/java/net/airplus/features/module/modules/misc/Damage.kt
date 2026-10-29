@@ -3,7 +3,7 @@
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
  */
-package net.airplus.features.module.modules.exploit
+package net.airplus.features.module.modules.misc
 
 import net.airplus.event.EventState
 import net.airplus.event.PacketEvent
@@ -20,7 +20,7 @@ import net.minecraft.network.play.client.C03PacketPlayer.C04PacketPlayerPosition
 import net.minecraft.network.play.client.C03PacketPlayer.C06PacketPlayerPosLook
 import net.minecraft.network.play.server.S19PacketEntityStatus
 
-object Damage : Module("Damage", Category.EXPLOIT, canBeEnabled = false) {
+object Damage : Module("Damage", Category.MISC, canBeEnabled = false) {
 
     private val mode by choices("Mode", arrayOf("Fake", "NCP", "AAC", "Verus"), "NCP")
 

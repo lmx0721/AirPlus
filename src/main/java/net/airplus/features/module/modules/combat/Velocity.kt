@@ -9,7 +9,7 @@ import net.airplus.config.*
 import net.airplus.event.*
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
-import net.airplus.features.module.modules.exploit.Disabler
+import net.airplus.features.module.modules.misc.Disabler
 import net.airplus.features.module.modules.movement.Speed
 import net.airplus.features.module.modules.world.scaffolds.Scaffold
 import net.airplus.utils.attack.EntityUtils.isLookingOnEntities

@@ -3,7 +3,7 @@
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
  */
-package net.airplus.features.module.modules.exploit
+package net.airplus.features.module.modules.misc
 
 import net.airplus.event.*
 import net.airplus.features.module.Category
@@ -43,7 +43,7 @@ import java.awt.Color
 import java.lang.Math.round
 import javax.vecmath.Vector3d
 
-object Teleport : Module("Teleport", Category.EXPLOIT) {
+object Teleport : Module("Teleport", Category.MISC) {
     private val ignoreNoCollision by boolean("IgnoreNoCollision", true)
     private val mode by choices(
         "Mode",

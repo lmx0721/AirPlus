@@ -8,7 +8,7 @@ package net.airplus.features.module.modules.misc
 import net.airplus.event.*
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
-import net.airplus.features.module.modules.exploit.Disabler
+import net.airplus.features.module.modules.misc.Disabler
 import net.airplus.ui.font.Fonts
 import net.airplus.utils.client.chat
 import net.airplus.utils.extensions.*

@@ -8,7 +8,7 @@ package net.airplus.injection.forge.mixins.block;
 import net.airplus.event.BlockBBEvent;
 import net.airplus.event.EventManager;
 import net.airplus.features.module.modules.combat.Criticals;
-import net.airplus.features.module.modules.exploit.GhostHand;
+import net.airplus.features.module.modules.misc.GhostHand;
 import net.airplus.features.module.modules.player.NoFall;
 import net.airplus.features.module.modules.render.XRay;
 import net.airplus.features.module.modules.world.NoSlowBreak;

@@ -9,6 +9,7 @@ import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
 import net.airplus.event.EventManager;
 import net.airplus.event.EventState;
 import net.airplus.event.JumpEvent;
+import net.airplus.features.module.modules.combat.AutoClicker;
 import net.airplus.features.module.modules.movement.LiquidWalk;
 import net.airplus.features.module.modules.movement.NoJumpDelay;
 import net.airplus.features.module.modules.movement.Sprint;
@@ -179,6 +180,23 @@ public abstract class MixinEntityLivingBase extends MixinEntity {
         Animations module = Animations.INSTANCE;
 
         return module.handleEvents() ? (2 + (20 - module.getSwingSpeed())) : constant;
+    }
+
+    /**
+     * AutoClicker CustomSwingSpeed：本地挥手动画按设定的 CPS（次/秒）重新播放，
+     * 与实际点击 CPS 解耦。玩家判定在前 —— shouldGateSwingAnimation() 有盖章副作用
+     * （间隔已到时会记录本次动画开始时间），非本地玩家绝不能触发。命中时仅取消
+     * EntityLivingBase.swingItem 的本地动画重播（动画进度不重置，手臂保持当前状态）；
+     * EntityPlayerSP.swingItem 继续执行照发 C0APacketAnimation，
+     * 服务端行为不变（不动发包，只改本地渲染）。
+     */
+    @Inject(method = "swingItem", at = @At("HEAD"), cancellable = true)
+    private void gateSwingAnimation(CallbackInfo callbackInfo) {
+        if ((Object) this == Minecraft.getMinecraft().thePlayer
+                && AutoClicker.INSTANCE.handleEvents()
+                && AutoClicker.INSTANCE.shouldGateSwingAnimation()) {
+            callbackInfo.cancel();
+        }
     }
 
     /**

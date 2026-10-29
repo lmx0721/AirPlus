@@ -33,7 +33,6 @@ object CommandManager {
         registerCommand(SayCommand)
         registerCommand(FriendCommand)
         registerCommand(SettingsCommand)
-        registerCommand(PacketDebuggerCommand)
         registerCommand(LocalSettingsCommand)
         registerCommand(LocalThemesCommand)
         registerCommand(ServerInfoCommand)

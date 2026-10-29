@@ -80,67 +80,82 @@ import kotlin.math.exp
 import kotlin.math.roundToInt
 object Island : Module("Island", Category.RENDER) {
     private val ClientName by text("ClientName", "Air")
+    // 全局默认风格（沿用旧版 "Style" 设置名以保持配置兼容；未单独设置风格的界面回退到此）
     val style by choices("Style", arrayOf("ios", "legacy", "prism", "opai"), "legacy")
+
+    // ===== 每个界面的独立风格覆盖（"Default" = 跟随全局默认风格 style）=====
+    private val watermarkIslandStyle by choices("Watermark-Style", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
+    private val musicIslandStyle by choices("Music-Style", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
+    private val notifyIslandStyle by choices("Notify-Style", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
+    private val chestIslandStyle by choices("Chest-Style", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
+    private val tabListIslandStyle by choices("TabList-Style", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
+    private val pearlIslandStyle by choices("Pearl-Style", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
+    private val scaffoldIslandStyle by choices("Scaffold-IslandStyle", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
+    private val gappleIslandStyle by choices("Gapple-Style", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
+    private val blinkIslandStyle by choices("Blink-Style", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
+    // 挖掘进度目前仅 legacy 有渲染实现，故只提供 Default / legacy
+    private val breakIslandStyle by choices("Break-Style", arrayOf("Default", "legacy"), "Default")
+
     private val animTension by float("BounceTension", 0.01f, 0.01f..1.0f)
     private val animFriction by float("BounceFriction", 0.12f, 0.01f..1.0f)
     // 每个样式的圆角设置
-    private val iosRadius by float("iOS-Radius", 15F, 0F..50F) { style == "ios" }
-    private val legacyRadius by float("Legacy-Radius", 14F, 0F..50F) { style == "legacy" }
+    private val iosRadius by float("iOS-Radius", 15F, 0F..50F) { styleUsed("ios") }
+    private val legacyRadius by float("Legacy-Radius", 14F, 0F..50F) { styleUsed("legacy") }
 
     // 每个样式的展开动画设置
-    private val legacyExpandAnim by choices("Legacy-ExpandAnim", arrayOf("Bounce", "EaseOut", "Linear", "Back"), "Bounce") { style == "legacy" }
-    private val iosExpandAnim by choices("iOS-ExpandAnim", arrayOf("Bounce", "EaseOut", "Linear", "Back"), "Bounce") { style == "ios" }
-    private val prismExpandAnim by choices("Prism-ExpandAnim", arrayOf("Bounce", "EaseOut", "Linear", "Back"), "Bounce") { style == "prism" }
-    private val opaiExpandAnim by choices("Opai-ExpandAnim", arrayOf("Bounce", "EaseOut", "Linear", "Back"), "Bounce") { style == "opai" }
+    private val legacyExpandAnim by choices("Legacy-ExpandAnim", arrayOf("Bounce", "EaseOut", "Linear", "Back"), "Bounce") { styleUsed("legacy") }
+    private val iosExpandAnim by choices("iOS-ExpandAnim", arrayOf("Bounce", "EaseOut", "Linear", "Back"), "Bounce") { styleUsed("ios") }
+    private val prismExpandAnim by choices("Prism-ExpandAnim", arrayOf("Bounce", "EaseOut", "Linear", "Back"), "Bounce") { styleUsed("prism") }
+    private val opaiExpandAnim by choices("Opai-ExpandAnim", arrayOf("Bounce", "EaseOut", "Linear", "Back"), "Bounce") { styleUsed("opai") }
 
     // iOS样式设置
-    private val iosBlurStrength by float("iOS-BlurStrength", 15F, 0F..50F) { style == "ios" }
+    private val iosBlurStrength by float("iOS-BlurStrength", 15F, 0F..50F) { styleUsed("ios") }
 
     private val logoIcon by choices("LogoIcon", arrayOf("Default", "A", "Diamond", "Radioactive", "Start", "Start2", "Earth"), "A")
-    private val pingIcon by choices("PingIcon", arrayOf("Default", "Ping2", "Ping3", "Ping4", "Ping5"), "Ping3") { style == "legacy" }
-    private val gappleIcon by choices("GappleIcon", arrayOf("Default", "Heart", "Heart2"), "Default") { style == "legacy" }
-    private val userIcon by choices("UserIcon", arrayOf("Default", "User2", "User3", "User4"), "Default") { style == "legacy" }
+    private val pingIcon by choices("PingIcon", arrayOf("Default", "Ping2", "Ping3", "Ping4", "Ping5"), "Ping3") { styleUsed("legacy") || styleUsed("opai") }
+    private val gappleIcon by choices("GappleIcon", arrayOf("Default", "Heart", "Heart2"), "Default") { styleUsed("legacy") || styleUsed("opai") }
+    private val userIcon by choices("UserIcon", arrayOf("Default", "User2", "User3", "User4"), "Default") { styleUsed("legacy") || styleUsed("opai") }
 
-    private val customip by boolean("customIP", false) { style == "legacy" }
+    private val customip by boolean("customIP", false) { styleUsed("legacy") || styleUsed("prism") || styleUsed("opai") }
     private val ip by text("IP", "hidden.ip") { customip }
 
     // legacy 样式背景：颜色与透明度统一由 color 类型设置控制（alpha 通道即透明度）
-    private val legacyBackground by color("Background", Color(0, 0, 0, 160)) { style == "legacy" }
+    private val legacyBackground by color("Background", Color(0, 0, 0, 160)) { styleUsed("legacy") }
     // legacy 样式品牌色（图标染色 / 客户端名文字等）
-    private val legacyAccent by color("Accent", Color(255, 255, 255)) { style == "legacy" }
+    private val legacyAccent by color("Accent", Color(255, 255, 255)) { styleUsed("legacy") }
 
     // iOS 样式背景自定义颜色（含 alpha 通道，透明度直接由颜色 alpha 控制）
-    private val iosBackgroundColor by color("iOS-Background", Color(0, 0, 0)) { style == "ios" }
+    private val iosBackgroundColor by color("iOS-Background", Color(0, 0, 0)) { styleUsed("ios") }
 
-    private val ShadowCheck by boolean("Shadow", false) { style == "legacy" }
+    private val ShadowCheck by boolean("Shadow", false) { styleUsed("legacy") }
     private val shadowRadiusValue by float("Shadow-Radius", 15F, 1F..50F) { ShadowCheck }
     private val shadowColor by color("Shadow-Color", Color(0, 0, 0, 120)) { ShadowCheck }
 
     // iOS 样式阴影
-    private val iosShadowCheck by boolean("iOS-Shadow", false) { style == "ios" }
-    private val iosShadowRadius by float("iOS-Shadow-Radius", 14F, 1F..50F) { style == "ios" && iosShadowCheck }
-    private val iosShadowColor by color("iOS-Shadow-Color", Color(0, 0, 0, 110)) { style == "ios" && iosShadowCheck }
+    private val iosShadowCheck by boolean("iOS-Shadow", false) { styleUsed("ios") }
+    private val iosShadowRadius by float("iOS-Shadow-Radius", 14F, 1F..50F) { styleUsed("ios") && iosShadowCheck }
+    private val iosShadowColor by color("iOS-Shadow-Color", Color(0, 0, 0, 110)) { styleUsed("ios") && iosShadowCheck }
 
     // ===== Prism 新样式设置 =====
     // 背景透明度直接由颜色 alpha 控制；blur 使用全局 Blur 设置
-    private val prismBackground by color("Prism-Background", Color(0, 0, 0, 235)) { style == "prism" }
-    private val prismAccent by color("Prism-Accent", Color(108, 166, 255)) { style == "prism" }
-    private val newRadius by float("New-Radius", 16F, 0F..50F) { style == "prism" }
-    private val newShadowCheck by boolean("New-Shadow", true) { style == "prism" }
-    private val newShadowRadius by float("New-Shadow-Radius", 14F, 1F..50F) { newShadowCheck && style == "prism" }
-    private val newShadowColor by color("New-Shadow-Color", Color(0, 0, 0, 110)) { newShadowCheck && style == "prism" }
+    private val prismBackground by color("Prism-Background", Color(0, 0, 0, 235)) { styleUsed("prism") }
+    private val prismAccent by color("Prism-Accent", Color(108, 166, 255)) { styleUsed("prism") }
+    private val newRadius by float("New-Radius", 16F, 0F..50F) { styleUsed("prism") }
+    private val newShadowCheck by boolean("New-Shadow", true) { styleUsed("prism") }
+    private val newShadowRadius by float("New-Shadow-Radius", 14F, 1F..50F) { newShadowCheck && styleUsed("prism") }
+    private val newShadowColor by color("New-Shadow-Color", Color(0, 0, 0, 110)) { newShadowCheck && styleUsed("prism") }
 
     // ===== Opai 样式设置（视觉常量对照 Samsara DynamicIsland）=====
     // 背景透明度/强调色等样式属性统一由 color 类型设置的 alpha/RGB 控制
-    private val opaiBackground by color("Opai-Background", Color(0, 0, 0, 152)) { style == "opai" }
-    private val opaiAccent by color("Opai-Accent", Color(187, 195, 255)) { style == "opai" }
-    private val opaiRadius by float("Opai-Radius", 8.5F, 0F..24F) { style == "opai" }
-    private val opaiSpeed by float("Opai-AnimSpeed", 1F, 0.25F..3F) { style == "opai" }
-    private val opaiStatusBar by boolean("Opai-StatusBar", true) { style == "opai" }
-    private val opaiProgress by boolean("Opai-Progress", true) { style == "opai" }
-    private val opaiTabList by boolean("Opai-TabList", true) { style == "opai" }
-    private val opaiTabListRows by int("Opai-TabList-Rows", 10, 5..20) { opaiTabList && style == "opai" }
-    private val opaiChest by boolean("Opai-Chest", true) { style == "opai" }
+    private val opaiBackground by color("Opai-Background", Color(0, 0, 0, 152)) { styleUsed("opai") }
+    private val opaiAccent by color("Opai-Accent", Color(187, 195, 255)) { styleUsed("opai") }
+    private val opaiRadius by float("Opai-Radius", 8.5F, 0F..24F) { styleUsed("opai") }
+    private val opaiSpeed by float("Opai-AnimSpeed", 1F, 0.25F..3F) { styleUsed("opai") }
+    private val opaiStatusBar by boolean("Opai-StatusBar", true) { styleUsed("opai") }
+    private val opaiProgress by boolean("Opai-Progress", true) { styleUsed("opai") }
+    private val opaiTabList by boolean("Opai-TabList", true) { styleUsed("opai") }
+    private val opaiTabListRows by int("Opai-TabList-Rows", 10, 5..20) { opaiTabList && styleUsed("opai") }
+    private val opaiChest by boolean("Opai-Chest", true) { styleUsed("opai") }
 
 
     // Blink 面板：Blink 启用时显示当前 blink 时间，Pulse 启用时显示进度条
@@ -152,17 +167,17 @@ object Island : Module("Island", Category.RENDER) {
     private val kawaseIterations by int("Kawase-Iterations", 4, 1..10) { blurCheck && blurMode == "Kawase" }
     private val kawaseOffset by int("Kawase-Offset", 3, 1..10) { blurCheck && blurMode == "Kawase" }
 
-    private val notifyDuration by int("NotifyTime(ms)", 1000, 100..10000) { style == "legacy" || style == "prism" || style == "opai" }
+    private val notifyDuration by int("NotifyTime(ms)", 1000, 100..10000)
     private val versionNameUp by text("VersionName", "development") { false }
-    private val ButtonColor by color("Button-Color", Color(20, 150, 180, 255)) { style == "legacy" }
+    private val ButtonColor by color("Button-Color", Color(20, 150, 180, 255)) { screenStyleOf(notifyIslandStyle) == "legacy" }
     private val ModuleNotify by boolean("Notification", true)
     private val isScaffold by boolean("Scaffold", true)
-    private val scaffoldStyle by choices("ScaffoldStyle", arrayOf("Classic", "Bar", "Minimal", "Compact", "Standard", "Circle", "Split", "Modern", "Outline"), "Classic") { isScaffold && style == "legacy" }
-    private val ScaffoldTheme by color("ScaffoldTheme", Color(65, 130, 225)) { style == "legacy" }
-    private val standardShowBlockCount by boolean("StandardShowBlockCount", true) { isScaffold && scaffoldStyle == "Standard" }
+    private val scaffoldStyle by choices("ScaffoldStyle", arrayOf("Classic", "Bar", "Minimal", "Compact", "Standard", "Circle", "Split", "Modern", "Outline"), "Classic") { isScaffold && screenStyleOf(scaffoldIslandStyle) == "legacy" }
+    private val ScaffoldTheme by color("ScaffoldTheme", Color(65, 130, 225)) { screenStyleOf(scaffoldIslandStyle) == "legacy" }
+    private val standardShowBlockCount by boolean("StandardShowBlockCount", true) { isScaffold && scaffoldStyle == "Standard" && screenStyleOf(scaffoldIslandStyle) == "legacy" }
 
-    private val breakProgressCheck by boolean("BreakProgress", true) { style == "legacy" }
-    private val breakProgressTheme by color("BreakProgressTheme", Color(225, 150, 65)) { style == "legacy" }
+    private val breakProgressCheck by boolean("BreakProgress", true) { screenStyleOf(breakIslandStyle) == "legacy" }
+    private val breakProgressTheme by color("BreakProgressTheme", Color(225, 150, 65)) { screenStyleOf(breakIslandStyle) == "legacy" }
     private val breakProgressOnlyFuckerNuker by boolean("OnlyFuckerAndNuker", true) { breakProgressCheck }
 
     private val showGappleProgress by boolean("GappleProgress", true)
@@ -171,15 +186,15 @@ object Island : Module("Island", Category.RENDER) {
     private val pearlCountdown by boolean("PearlCountdown", true)
 
     private val ChestTheme by boolean("Chest", true)
-    private val ChestRounded by float("ChestRoundRadius", 4F, 0.0F..8.0F)
+    private val ChestRounded by float("ChestRoundRadius", 4F, 0.0F..8.0F) { screenStyleOf(chestIslandStyle) == "legacy" || screenStyleOf(tabListIslandStyle) == "legacy" }
 
     private val tabListCheck by boolean("TabList", true)
     private val tabListMaxRows by int("TabList-MaxRows", 20, 5..100)
 
-    private val bpsUpdateInterval by int("BPS-Update-Interval(ms)", 100, 50..500) { style == "legacy" }
+    private val bpsUpdateInterval by int("BPS-Update-Interval(ms)", 100, 50..500) { screenStyleOf(scaffoldIslandStyle) == "legacy" }
     private val versionNameDown = clientVersionText
 
-    private val showLyricOnIsland by boolean("ShowLyric", true) { style == "legacy" }
+    private val showLyricOnIsland by boolean("ShowLyric", true) { screenStyleOf(musicIslandStyle) == "legacy" }
     private val lyricDisplayMode by choices("LyricMode", arrayOf("None", "Below", "Inside", "Float", "Full"), "None") { showLyricOnIsland }
     private val lyricHeight by int("LyricHeight", 40, 20..80) { showLyricOnIsland && lyricDisplayMode != "None" }
     private val lyricFloatOffsetY by int("LyricFloatOffsetY", 20, 0..200) { showLyricOnIsland && (lyricDisplayMode == "Float" || lyricDisplayMode == "Full") }
@@ -202,6 +217,17 @@ object Island : Module("Island", Category.RENDER) {
     private val lyricFullHeight by int("LyricFullHeight", 50, 30..150) { showLyricOnIsland && lyricDisplayMode == "Full" }
     private val lyricFullAnimation by choices("LyricFullAnimation", arrayOf("None", "Fade", "SlideLeft", "SlideRight", "SlideUp", "SlideDown", "Scale", "Typewriter"), "Fade") { showLyricOnIsland && lyricDisplayMode == "Full" }
     private val lyricFullAnimTime by int("LyricFullAnimTime", 300, 100..1000) { showLyricOnIsland && lyricDisplayMode == "Full" && lyricFullAnimation != "None" }
+
+    /** 界面风格解析：单独覆盖为 "Default" 时回退到全局默认风格 */
+    private fun screenStyleOf(override: String): String = if (override == "Default") style else override
+
+    /** 某一风格是否正被全局默认或任一界面使用（用于设置项的可见性） */
+    private fun styleUsed(s: String): Boolean =
+        style == s || screenStyleOf(watermarkIslandStyle) == s || screenStyleOf(musicIslandStyle) == s ||
+            screenStyleOf(notifyIslandStyle) == s || screenStyleOf(chestIslandStyle) == s ||
+            screenStyleOf(tabListIslandStyle) == s || screenStyleOf(pearlIslandStyle) == s ||
+            screenStyleOf(scaffoldIslandStyle) == s || screenStyleOf(gappleIslandStyle) == s ||
+            screenStyleOf(blinkIslandStyle) == s || screenStyleOf(breakIslandStyle) == s
 
     private var breakProgressTarget = 0F
     private var animatedBreakProgress = 0F
@@ -405,9 +431,8 @@ object Island : Module("Island", Category.RENDER) {
         return 1f + c3 * (t - 1f).pow(3) + c1 * (t - 1f).pow(2)
     }
 
-    private fun applyExpandAnim(current: Float, start: Float, target: Float, elapsed: Float): Float {
+    private fun applyExpandAnim(current: Float, start: Float, target: Float, elapsed: Float, anim: String): Float {
         val t = (elapsed / ANIM_DURATION.toFloat()).coerceIn(0f, 1f)
-        val anim = getCurrentExpandAnim()
         val eased = when (anim) {
             "EaseOut" -> easeOutCubic(t)
             "Linear" -> linear(t)
@@ -417,11 +442,12 @@ object Island : Module("Island", Category.RENDER) {
         return start + (target - start) * eased
     }
 
-    private fun getCurrentExpandAnim(): String {
-        return when (style) {
-            "ios" -> iosExpandAnim
-            "prism" -> prismExpandAnim
-            "opai" -> opaiExpandAnim
+    /** 展开动画曲线按当前激活界面的风格取值（renderMode 前缀决定风格） */
+    private fun getCurrentExpandAnim(renderMode: String): String {
+        return when {
+            renderMode.startsWith("OPAI_") -> opaiExpandAnim
+            renderMode.startsWith("IOS_") -> iosExpandAnim
+            renderMode.startsWith("NEW_") -> prismExpandAnim
             else -> legacyExpandAnim
         }
     }
@@ -789,342 +815,298 @@ object Island : Module("Island", Category.RENDER) {
         var targetHeight = 0F
         var targetX = 0F
         var targetY = start_y
-        var renderMode = "NONE"
 
-        if (style == "legacy" && showLyricOnIsland && lyricDisplayMode == "Full" && MusicHub.currentLyricDisplay.isNotEmpty()) {
-            renderMode = "LYRIC_FULL"
-            val textFont = getLyricTextFont()
-            val currentLyric = MusicHub.currentLyricDisplay
-            val textWidth = textFont.getStringWidth(currentLyric).toFloat()
-            targetWidth = (textWidth + 40F).coerceIn(100F, lyricFullWidth.toFloat())
-            targetHeight = if (lyricShowProgress) 50F else 35F
-            targetX = (width - targetWidth) / 2
-            targetY = lyricFloatOffsetY.toFloat()
-        } else if (style == "legacy" && chestSlots.isNotEmpty()) {
-            renderMode = "CHEST"
-            val columns = 9
-            val rows = (chestSlots.size + 8) / 9
-            val padding = 8F
-            val slotSize = 16F
-            targetWidth = columns * slotSize + padding * 2
-            targetHeight = rows * slotSize + padding * 2
-            targetX = (width - targetWidth) / 2
-            targetY = start_y.coerceIn(5f, height - targetHeight - 5f)
+        // ===== 统一界面优先级链：每个界面独立选择风格（"Default" 回退到全局 style）=====
+        val musicSt = screenStyleOf(musicIslandStyle)
+        val chestSt = screenStyleOf(chestIslandStyle)
+        val tabListSt = screenStyleOf(tabListIslandStyle)
+        val pearlSt = screenStyleOf(pearlIslandStyle)
+        val scaffoldSt = screenStyleOf(scaffoldIslandStyle)
+        val gappleSt = screenStyleOf(gappleIslandStyle)
+        val blinkSt = screenStyleOf(blinkIslandStyle)
+        val notifySt = screenStyleOf(notifyIslandStyle)
+        val breakSt = screenStyleOf(breakIslandStyle)
+        val watermarkSt = screenStyleOf(watermarkIslandStyle)
 
-        } else if (style == "legacy" && showTabList && playerList.isNotEmpty()) {
-            renderMode = "TABLIST"
-            val (tw, th) = calcTabListSize(playerList, headerLines, footerLines)
-            targetWidth = tw
-            targetHeight = th
-            targetX = (width - targetWidth) / 2
-            targetY = start_y
+        // 音乐界面：legacy 走歌词特性（Full 模式占满岛体，优先级最高，与旧版一致）
+        val musicLyricOn = musicSt == "legacy" && showLyricOnIsland && lyricDisplayMode == "Full" &&
+                MusicHub.currentLyricDisplay.isNotEmpty()
+        // 其余风格使用音乐胶囊
+        val musicPillOn = musicSt != "legacy" && MusicHub.isCurrentlyPlaying &&
+                (MusicHub.currentLyricDisplay.isNotEmpty() || MusicHub.currentMusicName != "None")
+        // opai 的开箱 / TabList 面板有独立开关（关闭时该界面不显示）
+        val chestOn = isChestOpen && chestSlots.isNotEmpty() && (chestSt != "opai" || opaiChest)
+        val tabListOn = showTabList && playerList.isNotEmpty() && (tabListSt != "opai" || opaiTabList)
+        val pearlOn = pearlCountdown && pearlTicksRemaining >= 0f
+        val scaffoldOn = isScaffold && (scaffoldModule?.state == true || scaffoldModule2?.state == true)
+        val gappleOn = showGappleProgress && animatedGappleProgress > 0.01f && gappleModuleRef?.state == true
+        val notifyOn = ModuleNotify && notifications.isNotEmpty()
+        val breakOn = breakProgressCheck && animatedBreakProgress > 0.01f && shouldShowBreakProgress()
 
-        } else if (style == "legacy" && pearlCountdown && pearlTicksRemaining >= 0f) {
-            renderMode = "PEARL"
-            targetWidth = 190F
-            targetHeight = 58F
-            targetX = (width - targetWidth) / 2
-            targetY = start_y
-
-        } else if (style == "legacy" && (scaffoldModule?.state == true ||  scaffoldModule2?.state == true && isScaffold)) {
-            renderMode = "SCAFFOLD"
-            when (scaffoldStyle) {
-                "Classic" -> { targetWidth = 190F; targetHeight = 58F }
-                "Bar" -> { targetWidth = 280F; targetHeight = 28F }
-                "Minimal" -> { targetWidth = 120F; targetHeight = 24F }
-                "Compact" -> { targetWidth = 160F; targetHeight = 40F }
-                "Standard" -> { targetWidth = 280F; targetHeight = 28F }
-                "Circle" -> { targetWidth = 80F; targetHeight = 80F }
-                "Split" -> { targetWidth = 200F; targetHeight = 50F }
-                "Modern" -> { targetWidth = 220F; targetHeight = 65F }
-                "Outline" -> { targetWidth = 180F; targetHeight = 35F }
-                else -> { targetWidth = 190F; targetHeight = 58F }
+        // renderMode 前缀即该界面所选风格：IOS_ / NEW_(prism) / OPAI_ / 无前缀(legacy)
+        val renderMode = when {
+            musicLyricOn -> "LYRIC_FULL"
+            chestOn -> when (chestSt) {
+                "ios" -> "IOS_CHEST"
+                "prism" -> "NEW_CHEST"
+                "opai" -> "OPAI_CHEST"
+                else -> "CHEST"
             }
-            targetX = (width - targetWidth) / 2
-        } else if (style == "legacy" && showGappleProgress && animatedGappleProgress > 0.01f && gappleModuleRef?.state == true) {
-            renderMode = "GAPPLE_PROGRESS"
-            targetWidth = 190F
-            targetHeight = 58F
-            targetX = (width - targetWidth) / 2
-            targetY = start_y
-        } else if (style == "legacy" && blinkOn) {
-            renderMode = "BLINK"
-            if (blinkPulse) {
-                targetWidth = 190F
-                targetHeight = 58F
-            } else {
-                targetWidth = 16F + Fonts.fontSemibold40.getStringWidth("Blink").toFloat() + 8F +
-                        Fonts.fontRegular40.getStringWidth(blinkTimeString()).toFloat() + 16F
-                targetHeight = 48F
+            tabListOn -> when (tabListSt) {
+                "ios" -> "IOS_TABLIST"
+                "prism" -> "NEW_TABLIST"
+                "opai" -> "OPAI_TABLIST"
+                else -> "TABLIST"
             }
-            targetX = (width - targetWidth) / 2
-            targetY = start_y
-        } else if (style == "legacy" && notifications.isNotEmpty() && ModuleNotify) {
-            renderMode = "NOTIFY_STACK"
-            val borderInfo = calcMaxNotificationWidth()
-            targetWidth = borderInfo.coerceAtLeast(180F)
-            targetHeight = (notifications.size * ITEM_NOTIFY_HEIGHT).toFloat()
-            targetX = (width - targetWidth) / 2
-        } else if (style == "legacy" && breakProgressCheck && animatedBreakProgress > 0.01f && shouldShowBreakProgress()) {
-            renderMode = "BREAK_PROGRESS"
-            targetWidth = 190F
-            targetHeight = 58F
-            targetX = (width - targetWidth) / 2
-            targetY = start_y
-        } else {
-            when (style) {
-                "prism" -> {
-                    val scaffoldOn = isScaffold && (scaffoldModuleRef?.state == true || scaffold2ModuleRef?.state == true)
-                    val musicOn = MusicHub.isCurrentlyPlaying && (MusicHub.currentLyricDisplay.isNotEmpty() || MusicHub.currentMusicName != "None")
-                    val toggleActive = ModuleNotify && notifications.isNotEmpty()
-                    val gappleOn = showGappleProgress && animatedGappleProgress > 0.01f && gappleModuleRef?.state == true
-                    val tabListOn = showTabList && playerList.isNotEmpty()
-                    val pearlOn = pearlCountdown && pearlTicksRemaining >= 0f
-                    val styleBlinkOn = blinkOn
-
-                    when {
-                        isChestOpen && chestSlots.isNotEmpty() -> {
-                            renderMode = "NEW_CHEST"
-                            val columns = 9
-                            val rows = (chestSlots.size + 8) / 9
-                            val slotSize = 18f
-                            val padding = 10f
-                            targetWidth = columns * slotSize + padding * 2
-                            targetHeight = rows * slotSize + padding * 2
-                            targetX = (width - targetWidth) / 2
-                            targetY = start_y.coerceIn(5f, height - targetHeight - 5f)
-                        }
-                        tabListOn -> {
-                            renderMode = "NEW_TABLIST"
-                            val (tw, th2) = calcTabListSize(playerList, headerLines, footerLines)
-                            targetWidth = tw
-                            targetHeight = th2
-                            targetX = (width - targetWidth) / 2
-                            targetY = start_y.coerceIn(5f, height - targetHeight - 5f)
-                        }
-                        scaffoldOn -> {
-                            renderMode = "NEW_SCAFFOLD"
-                            val (tw, th2) = calcNewScaffoldSize()
-                            targetWidth = tw
-                            targetHeight = th2
-                            targetX = (width - targetWidth) / 2
-                        }
-                        pearlOn -> {
-                            renderMode = "NEW_PEARL"
-                            val (tw, th2) = calcNewPearlSize()
-                            targetWidth = tw
-                            targetHeight = th2
-                            targetX = (width - targetWidth) / 2
-                        }
-                        gappleOn -> {
-                            renderMode = "NEW_GAPPLE"
-                            targetWidth = 210f
-                            targetHeight = 34f
-                            targetX = (width - targetWidth) / 2
-                        }
-                        styleBlinkOn -> {
-                            renderMode = "NEW_BLINK"
-                            targetWidth = if (blinkPulse) 210f else calcNewBlinkWidth()
-                            targetHeight = 34f
-                            targetX = (width - targetWidth) / 2
-                        }
-                        musicOn -> {
-                            renderMode = "NEW_MUSIC"
-                            val musicName = MusicHub.currentMusicName
-                            val coverSize = 38f
-                            val pad = 10f
-                            val textAreaW = (Fonts.fontSemibold35.getStringWidth(musicName).toFloat() + 40f).coerceAtMost(200f)
-                            targetWidth = (pad + coverSize + 10f + textAreaW + pad).coerceIn(210f, 360f)
-                            targetHeight = 56f
-                            targetX = (width - targetWidth) / 2
-                        }
-                        toggleActive -> {
-                            renderMode = "NEW_NOTIFY"
-                            val (tw, th2) = calcNewNotifySize()
-                            targetWidth = tw
-                            targetHeight = th2
-                            targetX = (width - targetWidth) / 2
-                        }
-                        else -> {
-                            renderMode = "NEW_WATERMARK"
-                            targetWidth = calcNewWatermarkWidth()
-                            targetHeight = 30f
-                            targetX = (width - targetWidth) / 2
-                        }
-                    }
-                }
-                "ios" -> {
-                    val scaffoldOn = isScaffold && (scaffoldModuleRef?.state == true || scaffold2ModuleRef?.state == true)
-                    val musicOn = MusicHub.isCurrentlyPlaying && (MusicHub.currentLyricDisplay.isNotEmpty() || MusicHub.currentMusicName != "None")
-                    val toggleActive = ModuleNotify && notifications.isNotEmpty()
-                    val gappleOn = showGappleProgress && animatedGappleProgress > 0.01f && gappleModuleRef?.state == true
-                    val tabListOn = showTabList && playerList.isNotEmpty()
-                    val pearlOn = pearlCountdown && pearlTicksRemaining >= 0f
-                    val styleBlinkOn = blinkOn
-
-                    when {
-                        isChestOpen && chestSlots.isNotEmpty() -> {
-                            renderMode = "IOS_CHEST"
-                            val columns = 9
-                            val rows = (chestSlots.size + 8) / 9
-                            val slotSize = 18f
-                            val padding = 10f
-                            targetWidth = columns * slotSize + padding * 2
-                            targetHeight = rows * slotSize + padding * 2
-                            targetX = (width - targetWidth) / 2
-                            targetY = start_y.coerceIn(5f, height - targetHeight - 5f)
-                        }
-                        tabListOn -> {
-                            renderMode = "IOS_TABLIST"
-                            val (tw, th) = calcTabListSize(playerList, headerLines, footerLines)
-                            targetWidth = tw
-                            targetHeight = th
-                            targetX = (width - targetWidth) / 2
-                            targetY = start_y.coerceIn(5f, height - targetHeight - 5f)
-                        }
-                        pearlOn -> {
-                            renderMode = "IOS_PEARL"
-                            targetWidth = 170f
-                            targetHeight = 34f
-                            targetX = (width - targetWidth) / 2
-                        }
-                        gappleOn -> {
-                            renderMode = "IOS_GAPPLE"
-                            targetWidth = 210f
-                            targetHeight = 34f
-                            targetX = (width - targetWidth) / 2
-                        }
-                        styleBlinkOn -> {
-                            renderMode = "IOS_BLINK"
-                            targetWidth = if (blinkPulse) 210f else calcIosBlinkWidth()
-                            targetHeight = 34f
-                            targetX = (width - targetWidth) / 2
-                        }
-                        scaffoldOn -> {
-                            renderMode = "IOS_SCAFFOLD"
-                            targetWidth = 210f
-                            targetHeight = 34f
-                            targetX = (width - targetWidth) / 2
-                        }
-                        musicOn -> {
-                            renderMode = "IOS_MUSIC"
-                            val musicName = MusicHub.currentMusicName
-                            val lyricText = MusicHub.currentLyricDisplay.take(20)
-                            // iOS Dynamic Island music: compact pill with album art + text
-                            val coverSize = 36f
-                            val pad = 8f
-                            val textAreaW = Fonts.fontSemibold35.getStringWidth(musicName).toFloat().coerceAtMost(160f) + pad * 2
-                            targetWidth = (pad + coverSize + 6f + textAreaW + pad).coerceIn(200f, 360f)
-                            targetHeight = 52f
-                            targetX = (width - targetWidth) / 2
-                        }
-                        toggleActive -> {
-                            renderMode = "IOS_TOGGLE"
-                            val borderInfo = calcMaxNotificationWidth()
-                            targetWidth = borderInfo.coerceAtLeast(180F)
-                            targetHeight = 34f
-                            targetX = (width - targetWidth) / 2
-                        }
-                        else -> {
-                            renderMode = "IOS_WATERMARK"
-                            targetWidth = calcIosWatermarkWidth()
-                            targetHeight = 30f
-                            targetX = (width - targetWidth) / 2
-                        }
-                    }
-                }
-                "opai" -> {
-                    val scaffoldOn = isScaffold && (scaffoldModuleRef?.state == true || scaffold2ModuleRef?.state == true)
-                    val musicOn = MusicHub.isCurrentlyPlaying && (MusicHub.currentLyricDisplay.isNotEmpty() || MusicHub.currentMusicName != "None")
-                    val toggleActive = ModuleNotify && notifications.isNotEmpty()
-                    val gappleOn = showGappleProgress && animatedGappleProgress > 0.01f && gappleModuleRef?.state == true
-                    val tabListOn = opaiTabList && showTabList && playerList.isNotEmpty()
-                    val pearlOn = pearlCountdown && pearlTicksRemaining >= 0f
-                    val styleBlinkOn = blinkOn
-                    // Opai 可用视口宽度（对照 Samsara available = viewportWidth - 16）
-                    val opaiAvailable = (width - 16f).coerceAtLeast(1f)
-
-                    when {
-                        opaiChest && isChestOpen && chestSlots.isNotEmpty() -> {
-                            renderMode = "OPAI_CHEST"
-                            val rows = (chestSlots.size + 8) / 9
-                            targetWidth = OPAI_PANEL_W
-                            targetHeight = rows * 20f + 8f
-                            targetX = (width - targetWidth) / 2
-                            targetY = OPAI_IDLE_TOP
-                        }
-                        tabListOn -> {
-                            renderMode = "OPAI_TABLIST"
-                            val rows = playerList.size.coerceAtMost(opaiTabListRows)
-                            targetWidth = OPAI_PANEL_W
-                            targetHeight = rows * OPAI_TABLIST_ROW + 4f
-                            targetX = (width - targetWidth) / 2
-                            targetY = OPAI_IDLE_TOP
-                        }
-                        scaffoldOn -> {
-                            renderMode = "OPAI_SCAFFOLD"
-                            targetWidth = calcOpaiPanelWidth("Scaffold Toggled", opaiScaffoldDetail())
-                            targetHeight = OPAI_PANEL_HEIGHT
-                            targetX = (width - targetWidth) / 2
-                            targetY = OPAI_TOP
-                        }
-                        pearlOn -> {
-                            renderMode = "OPAI_PEARL"
-                            targetWidth = calcOpaiPanelWidth("Pearl Landing", opaiPearlDetail())
-                            targetHeight = OPAI_PANEL_HEIGHT
-                            targetX = (width - targetWidth) / 2
-                            targetY = OPAI_TOP
-                        }
-                        gappleOn -> {
-                            renderMode = "OPAI_GAPPLE"
-                            targetWidth = calcOpaiPanelWidth("Eating Gapple", opaiGappleDetail())
-                            targetHeight = OPAI_PANEL_HEIGHT
-                            targetX = (width - targetWidth) / 2
-                            targetY = OPAI_TOP
-                        }
-                        styleBlinkOn -> {
-                            renderMode = "OPAI_BLINK"
-                            targetWidth = calcOpaiPanelWidth("Blink", blinkTimeString())
-                            targetHeight = OPAI_PANEL_HEIGHT
-                            targetX = (width - targetWidth) / 2
-                            targetY = OPAI_TOP
-                        }
-                        musicOn -> {
-                            renderMode = "OPAI_MUSIC"
-                            targetWidth = calcOpaiPanelWidth(opaiMusicTitle(), opaiMusicDetail())
-                            targetHeight = OPAI_PANEL_HEIGHT
-                            targetX = (width - targetWidth) / 2
-                            targetY = OPAI_TOP
-                        }
-                        toggleActive -> {
-                            renderMode = "OPAI_NOTIFY"
-                            targetWidth = (OPAI_TEXT_X + opaiNotifyContentWidth() + OPAI_NOTICE_RIGHT)
-                                .coerceAtLeast(60f).coerceAtMost(opaiAvailable)
-                            targetHeight = OPAI_ROW_HEIGHT * notifications.size.coerceAtMost(OPAI_MAX_NOTICES)
-                            targetX = (width - targetWidth) / 2
-                            targetY = OPAI_IDLE_TOP
-                        }
-                        else -> {
-                            renderMode = "OPAI_WATERMARK"
-                            targetWidth = calcOpaiIdleWidth().coerceIn(1f, opaiAvailable)
-                            targetHeight = OPAI_IDLE_HEIGHT
-                            targetX = (width - targetWidth) / 2
-                            targetY = OPAI_IDLE_TOP
-                        }
-                    }
-                }
-                "legacy" -> {
-                    renderMode = "NORMAL_OPAI"
-                    val info = calcNormal3Info()
-                    targetWidth = info.width
-                    targetHeight = NORMAL_WATERMARK_HEIGHT
-                    targetX = (width - targetWidth) / 2
-                }
+            pearlOn -> when (pearlSt) {
+                "ios" -> "IOS_PEARL"
+                "prism" -> "NEW_PEARL"
+                "opai" -> "OPAI_PEARL"
+                else -> "PEARL"
+            }
+            scaffoldOn -> when (scaffoldSt) {
+                "ios" -> "IOS_SCAFFOLD"
+                "prism" -> "NEW_SCAFFOLD"
+                "opai" -> "OPAI_SCAFFOLD"
+                else -> "SCAFFOLD"
+            }
+            gappleOn -> when (gappleSt) {
+                "ios" -> "IOS_GAPPLE"
+                "prism" -> "NEW_GAPPLE"
+                "opai" -> "OPAI_GAPPLE"
+                else -> "GAPPLE_PROGRESS"
+            }
+            blinkOn -> when (blinkSt) {
+                "ios" -> "IOS_BLINK"
+                "prism" -> "NEW_BLINK"
+                "opai" -> "OPAI_BLINK"
+                else -> "BLINK"
+            }
+            musicPillOn -> when (musicSt) {
+                "ios" -> "IOS_MUSIC"
+                "prism" -> "NEW_MUSIC"
+                else -> "OPAI_MUSIC"
+            }
+            notifyOn -> when (notifySt) {
+                "ios" -> "IOS_TOGGLE"
+                "prism" -> "NEW_NOTIFY"
+                "opai" -> "OPAI_NOTIFY"
+                else -> "NOTIFY_STACK"
+            }
+            // 挖掘进度仅 legacy 有渲染实现
+            breakOn && breakSt == "legacy" -> "BREAK_PROGRESS"
+            else -> when (watermarkSt) {
+                "ios" -> "IOS_WATERMARK"
+                "prism" -> "NEW_WATERMARK"
+                "opai" -> "OPAI_WATERMARK"
+                else -> "NORMAL_OPAI"
             }
         }
 
         if (renderMode != "NONE") {
-            val currentAnim = getCurrentExpandAnim()
+            // ===== 目标几何：按 renderMode（即该界面所选风格）计算 =====
+            when (renderMode) {
+                "LYRIC_FULL" -> {
+                    val textFont = getLyricTextFont()
+                    val currentLyric = MusicHub.currentLyricDisplay
+                    val textWidth = textFont.getStringWidth(currentLyric).toFloat()
+                    targetWidth = (textWidth + 40F).coerceIn(100F, lyricFullWidth.toFloat())
+                    targetHeight = if (lyricShowProgress) 50F else 35F
+                    targetY = lyricFloatOffsetY.toFloat()
+                }
+                "CHEST" -> {
+                    val columns = 9
+                    val rows = (chestSlots.size + 8) / 9
+                    val padding = 8F
+                    val slotSize = 16F
+                    targetWidth = columns * slotSize + padding * 2
+                    targetHeight = rows * slotSize + padding * 2
+                    targetY = start_y.coerceIn(5f, height - targetHeight - 5f)
+                }
+                "IOS_CHEST", "NEW_CHEST" -> {
+                    val columns = 9
+                    val rows = (chestSlots.size + 8) / 9
+                    val slotSize = 18f
+                    val padding = 10f
+                    targetWidth = columns * slotSize + padding * 2
+                    targetHeight = rows * slotSize + padding * 2
+                    targetY = start_y.coerceIn(5f, height - targetHeight - 5f)
+                }
+                "OPAI_CHEST" -> {
+                    val rows = (chestSlots.size + 8) / 9
+                    targetWidth = OPAI_PANEL_W
+                    targetHeight = rows * 20f + 8f
+                    targetY = OPAI_IDLE_TOP
+                }
+                "TABLIST" -> {
+                    val (tw, th) = calcTabListSize(playerList, headerLines, footerLines)
+                    targetWidth = tw
+                    targetHeight = th
+                }
+                "IOS_TABLIST", "NEW_TABLIST" -> {
+                    val (tw, th) = calcTabListSize(playerList, headerLines, footerLines)
+                    targetWidth = tw
+                    targetHeight = th
+                    targetY = start_y.coerceIn(5f, height - targetHeight - 5f)
+                }
+                "OPAI_TABLIST" -> {
+                    val rows = playerList.size.coerceAtMost(opaiTabListRows)
+                    targetWidth = OPAI_PANEL_W
+                    targetHeight = rows * OPAI_TABLIST_ROW + 4f
+                    targetY = OPAI_IDLE_TOP
+                }
+                "PEARL" -> {
+                    targetWidth = 190F
+                    targetHeight = 58F
+                }
+                "IOS_PEARL" -> {
+                    targetWidth = 170f
+                    targetHeight = 34f
+                }
+                "NEW_PEARL" -> {
+                    val (tw, th) = calcNewPearlSize()
+                    targetWidth = tw
+                    targetHeight = th
+                }
+                "OPAI_PEARL" -> {
+                    targetWidth = calcOpaiPanelWidth("Pearl Landing", opaiPearlDetail())
+                    targetHeight = OPAI_PANEL_HEIGHT
+                    targetY = OPAI_TOP
+                }
+                "SCAFFOLD" -> {
+                    when (scaffoldStyle) {
+                        "Classic" -> { targetWidth = 190F; targetHeight = 58F }
+                        "Bar" -> { targetWidth = 280F; targetHeight = 28F }
+                        "Minimal" -> { targetWidth = 120F; targetHeight = 24F }
+                        "Compact" -> { targetWidth = 160F; targetHeight = 40F }
+                        "Standard" -> { targetWidth = 280F; targetHeight = 28F }
+                        "Circle" -> { targetWidth = 80F; targetHeight = 80F }
+                        "Split" -> { targetWidth = 200F; targetHeight = 50F }
+                        "Modern" -> { targetWidth = 220F; targetHeight = 65F }
+                        "Outline" -> { targetWidth = 180F; targetHeight = 35F }
+                        else -> { targetWidth = 190F; targetHeight = 58F }
+                    }
+                }
+                "IOS_SCAFFOLD" -> {
+                    targetWidth = 210f
+                    targetHeight = 34f
+                }
+                "NEW_SCAFFOLD" -> {
+                    val (tw, th) = calcNewScaffoldSize()
+                    targetWidth = tw
+                    targetHeight = th
+                }
+                "OPAI_SCAFFOLD" -> {
+                    targetWidth = calcOpaiPanelWidth("Scaffold Toggled", opaiScaffoldDetail())
+                    targetHeight = OPAI_PANEL_HEIGHT
+                    targetY = OPAI_TOP
+                }
+                "GAPPLE_PROGRESS" -> {
+                    targetWidth = 190F
+                    targetHeight = 58F
+                }
+                "IOS_GAPPLE", "NEW_GAPPLE" -> {
+                    targetWidth = 210f
+                    targetHeight = 34f
+                }
+                "OPAI_GAPPLE" -> {
+                    targetWidth = calcOpaiPanelWidth("Eating Gapple", opaiGappleDetail())
+                    targetHeight = OPAI_PANEL_HEIGHT
+                    targetY = OPAI_TOP
+                }
+                "BLINK" -> {
+                    if (blinkPulse) {
+                        targetWidth = 190F
+                        targetHeight = 58F
+                    } else {
+                        targetWidth = 16F + Fonts.fontSemibold40.getStringWidth("Blink").toFloat() + 8F +
+                                Fonts.fontRegular40.getStringWidth(blinkTimeString()).toFloat() + 16F
+                        targetHeight = 48F
+                    }
+                }
+                "IOS_BLINK" -> {
+                    targetWidth = if (blinkPulse) 210f else calcIosBlinkWidth()
+                    targetHeight = 34f
+                }
+                "NEW_BLINK" -> {
+                    targetWidth = if (blinkPulse) 210f else calcNewBlinkWidth()
+                    targetHeight = 34f
+                }
+                "OPAI_BLINK" -> {
+                    targetWidth = calcOpaiPanelWidth("Blink", blinkTimeString())
+                    targetHeight = OPAI_PANEL_HEIGHT
+                    targetY = OPAI_TOP
+                }
+                "IOS_MUSIC" -> {
+                    val musicName = MusicHub.currentMusicName
+                    val coverSize = 36f
+                    val pad = 8f
+                    val textAreaW = Fonts.fontSemibold35.getStringWidth(musicName).toFloat().coerceAtMost(160f) + pad * 2
+                    targetWidth = (pad + coverSize + 6f + textAreaW + pad).coerceIn(200f, 360f)
+                    targetHeight = 52f
+                }
+                "NEW_MUSIC" -> {
+                    val musicName = MusicHub.currentMusicName
+                    val coverSize = 38f
+                    val pad = 10f
+                    val textAreaW = (Fonts.fontSemibold35.getStringWidth(musicName).toFloat() + 40f).coerceAtMost(200f)
+                    targetWidth = (pad + coverSize + 10f + textAreaW + pad).coerceIn(210f, 360f)
+                    targetHeight = 56f
+                }
+                "OPAI_MUSIC" -> {
+                    targetWidth = calcOpaiPanelWidth(opaiMusicTitle(), opaiMusicDetail())
+                    targetHeight = OPAI_PANEL_HEIGHT
+                    targetY = OPAI_TOP
+                }
+                "NOTIFY_STACK" -> {
+                    val borderInfo = calcMaxNotificationWidth()
+                    targetWidth = borderInfo.coerceAtLeast(180F)
+                    targetHeight = (notifications.size * ITEM_NOTIFY_HEIGHT).toFloat()
+                }
+                "IOS_TOGGLE" -> {
+                    val borderInfo = calcMaxNotificationWidth()
+                    targetWidth = borderInfo.coerceAtLeast(180F)
+                    targetHeight = 34f
+                }
+                "NEW_NOTIFY" -> {
+                    val (tw, th) = calcNewNotifySize()
+                    targetWidth = tw
+                    targetHeight = th
+                }
+                "OPAI_NOTIFY" -> {
+                    val opaiAvailable = (width - 16f).coerceAtLeast(1f)
+                    targetWidth = (OPAI_TEXT_X + opaiNotifyContentWidth() + OPAI_NOTICE_RIGHT)
+                        .coerceAtLeast(60f).coerceAtMost(opaiAvailable)
+                    targetHeight = OPAI_ROW_HEIGHT * notifications.size.coerceAtMost(OPAI_MAX_NOTICES)
+                    targetY = OPAI_IDLE_TOP
+                }
+                "BREAK_PROGRESS" -> {
+                    targetWidth = 190F
+                    targetHeight = 58F
+                }
+                "IOS_WATERMARK" -> {
+                    targetWidth = calcIosWatermarkWidth()
+                    targetHeight = 30f
+                }
+                "NEW_WATERMARK" -> {
+                    targetWidth = calcNewWatermarkWidth()
+                    targetHeight = 30f
+                }
+                "OPAI_WATERMARK" -> {
+                    val opaiAvailable = (width - 16f).coerceAtLeast(1f)
+                    targetWidth = calcOpaiIdleWidth().coerceIn(1f, opaiAvailable)
+                    targetHeight = OPAI_IDLE_HEIGHT
+                    targetY = OPAI_IDLE_TOP
+                }
+                "NORMAL_OPAI" -> {
+                    val info = calcNormal3Info()
+                    targetWidth = info.width
+                    targetHeight = NORMAL_WATERMARK_HEIGHT
+                }
+            }
+            targetX = (width - targetWidth) / 2
+
+            val currentAnim = getCurrentExpandAnim(renderMode)
             val isOpaiMode = renderMode.startsWith("OPAI_")
 
             if (isOpaiMode && currentAnim == "Bounce") {
@@ -1180,10 +1162,10 @@ object Island : Module("Island", Category.RENDER) {
                 }
 
                 val elapsed = (System.currentTimeMillis() - animStartTime).toFloat()
-                AnimGlobalWidth = applyExpandAnim(AnimGlobalWidth, animStartW, animTargetW, elapsed).coerceAtLeast(0F)
-                AnimGlobalHeight = applyExpandAnim(AnimGlobalHeight, animStartH, animTargetH, elapsed).coerceAtLeast(0F)
-                AnimGlobalX = applyExpandAnim(AnimGlobalX, animStartX, animTargetX, elapsed)
-                AnimGlobalY = applyExpandAnim(AnimGlobalY, animStartY, animTargetY, elapsed)
+                AnimGlobalWidth = applyExpandAnim(AnimGlobalWidth, animStartW, animTargetW, elapsed, currentAnim).coerceAtLeast(0F)
+                AnimGlobalHeight = applyExpandAnim(AnimGlobalHeight, animStartH, animTargetH, elapsed, currentAnim).coerceAtLeast(0F)
+                AnimGlobalX = applyExpandAnim(AnimGlobalX, animStartX, animTargetX, elapsed, currentAnim)
+                AnimGlobalY = applyExpandAnim(AnimGlobalY, animStartY, animTargetY, elapsed, currentAnim)
             }
 
             val isIosMode = renderMode.startsWith("IOS_")
@@ -1220,7 +1202,7 @@ object Island : Module("Island", Category.RENDER) {
             val drawW = AnimGlobalWidth
             val drawH = AnimGlobalHeight
             
-            val isBelowMode = style == "legacy" && showLyricOnIsland && lyricDisplayMode == "Below"
+            val isBelowMode = screenStyleOf(musicIslandStyle) == "legacy" && showLyricOnIsland && lyricDisplayMode == "Below"
             val islandCorners = if (isBelowMode) RenderUtils.RoundedCorners.TOP_ONLY else RenderUtils.RoundedCorners.ALL
 
             try {
@@ -1355,7 +1337,7 @@ object Island : Module("Island", Category.RENDER) {
             }
         }
 
-        if (style == "legacy" && showLyricOnIsland && lyricDisplayMode != "None") {
+        if (screenStyleOf(musicIslandStyle) == "legacy" && showLyricOnIsland && lyricDisplayMode != "None") {
             renderLyricDisplay()
         }
 
@@ -3452,8 +3434,9 @@ object Island : Module("Island", Category.RENDER) {
     // Prism 新样式
     // ============================================================
 
+    /** 是否有任一界面正在使用 Prism（新样式）风格 */
     val isNewStyle: Boolean
-        get() = style == "prism"
+        get() = styleUsed("prism")
 
     /** 新样式背景色（含 alpha 透明度） */
     private fun newBackgroundColor(mode: String): Color = prismBackground

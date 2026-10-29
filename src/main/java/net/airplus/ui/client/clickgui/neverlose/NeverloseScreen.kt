@@ -1914,7 +1914,6 @@ class NeverloseScreen : GuiScreen() {
             Category.RENDER -> RENDER_ICON
             Category.WORLD -> WORLD_ICON
             Category.MISC -> MISC_ICON
-            Category.EXPLOIT -> EXPLOIT_ICON
             Category.CLIENT -> SETTING_ICON
         }
         RenderUtils.drawImage(res, x.toInt(), y.toInt(), 14, 14, color)
@@ -1948,6 +1947,5 @@ class NeverloseScreen : GuiScreen() {
         val RENDER_ICON = ResourceLocation("airplus/clickgui/render.png")
         val WORLD_ICON = ResourceLocation("airplus/clickgui/world.png")
         val MISC_ICON = ResourceLocation("airplus/clickgui/misc.png")
-        val EXPLOIT_ICON = ResourceLocation("airplus/clickgui/exploit.png")
     }
 }

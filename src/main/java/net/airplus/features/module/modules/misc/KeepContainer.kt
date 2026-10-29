@@ -3,7 +3,7 @@
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
  */
-package net.airplus.features.module.modules.exploit
+package net.airplus.features.module.modules.misc
 
 import net.airplus.event.KeyEvent
 import net.airplus.event.PacketEvent
@@ -18,7 +18,7 @@ import net.minecraft.network.play.client.C0DPacketCloseWindow
 import net.minecraft.network.play.server.S2EPacketCloseWindow
 import org.lwjgl.input.Keyboard
 
-object KeepContainer : Module("KeepContainer", Category.EXPLOIT) {
+object KeepContainer : Module("KeepContainer", Category.MISC) {
     private var container: GuiContainer? = null
 
     override fun onDisable() {

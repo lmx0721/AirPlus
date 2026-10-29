@@ -16,7 +16,6 @@ enum class Category(val displayName: String) {
     RENDER("Render"),
     WORLD("World"),
     MISC("Misc"),
-    EXPLOIT("Exploit"),
     CLIENT("Client");
 
     val iconResourceLocation = ResourceLocation("${CLIENT_NAME.lowercase()}/tabgui/${name.lowercase()}.png")

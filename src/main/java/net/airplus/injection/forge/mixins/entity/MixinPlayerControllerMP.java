@@ -9,7 +9,7 @@ import net.airplus.event.AttackEvent;
 import net.airplus.event.ClickWindowEvent;
 import net.airplus.event.ClientSlotChangeEvent;
 import net.airplus.event.EventManager;
-import net.airplus.features.module.modules.exploit.AbortBreaking;
+import net.airplus.features.module.modules.misc.AbortBreaking;
 import net.airplus.features.module.modules.render.Execution;
 import net.airplus.utils.attack.CooldownHelper;
 import net.airplus.utils.inventory.SilentHotbar;

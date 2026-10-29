@@ -3,7 +3,7 @@
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
  */
-package net.airplus.features.module.modules.exploit
+package net.airplus.features.module.modules.misc
 
 import io.netty.buffer.Unpooled
 import kotlinx.coroutines.delay
@@ -24,7 +24,7 @@ import net.minecraft.network.play.client.C17PacketCustomPayload
 import kotlin.random.Random.Default.nextBoolean
 import kotlin.random.Random.Default.nextBytes
 
-object ConsoleSpammer : Module("ConsoleSpammer", Category.EXPLOIT, subjective = true) {
+object ConsoleSpammer : Module("ConsoleSpammer", Category.MISC, subjective = true) {
 
     private val mode by choices("Mode", arrayOf("Payload", "MineSecure"), "Payload")
     private val delay by int("Delay", 0, 0..500)

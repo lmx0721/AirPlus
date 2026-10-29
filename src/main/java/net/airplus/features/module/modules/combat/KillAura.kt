@@ -25,6 +25,8 @@ import net.airplus.utils.client.ClientUtils.runTimeTicks
 import net.airplus.utils.client.PacketUtils.sendPacket
 import net.airplus.utils.client.PacketUtils.sendPackets
 import net.airplus.utils.extensions.*
+import net.airplus.utils.human.StackedClickGenerator
+import net.airplus.utils.human.StackedClickParams
 import net.airplus.utils.inventory.InventoryUtils.serverOpenInventory
 import net.airplus.utils.inventory.ItemUtils.isConsumingItem
 import net.airplus.utils.inventory.SilentHotbar
@@ -51,6 +53,8 @@ import net.airplus.utils.rotation.RotationUtils.serverRotation
 import net.airplus.utils.rotation.RotationUtils.setTargetRotation
 import net.airplus.utils.rotation.RotationUtils.toRotation
 import net.airplus.utils.rotation.aim.AimScene
+import net.airplus.utils.rotation.aim.Noise3Context
+import net.airplus.utils.rotation.aim.Noise3Params
 import net.airplus.utils.simulation.SimulatedPlayer
 import net.airplus.utils.timing.MSTimer
 import net.airplus.utils.timing.TickedActions.nextTick
@@ -87,15 +91,56 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 
     // CPS - Attack speed
     private val cps by intRange("CPS", 5..8, 1..50) { !simulateCooldown }.onChanged {
-        attackDelay = randomClickDelay(it.first, it.last)
+        attackDelay = nextAttackDelay()
     }
+
+    /**
+     * 点击模式：
+     * - 普通：原有随机 CPS 延迟（区间均匀采样）。
+     * - 拟真堆叠：堆叠算法模拟真实人类点击 —— 慢漂移 / 连点惯性 / 疲劳累积 /
+     *   双击打滑 / 走神卡顿 多层独立噪声逐层叠加（见 [StackedClickGenerator]），
+     *   参数见下方拟人点击组。与 AutoClicker 的堆叠点击互不共享状态。
+     */
+    private val clickMode by choices("点击模式", arrayOf("普通", "拟真堆叠"), "普通") { !simulateCooldown }
+
+    private val isStackClickMode
+        get() = clickMode == "拟真堆叠"
+
+    // 拟人点击参数（仅拟真堆叠点击模式可见，中文面板，与 AutoClicker 面板同风格）
+    private val acDriftAmplitude by float("点击漂移幅度", 0.12f, 0f..0.4f) { isStackClickMode }
+    private val acBurstInertia by float("点击连点惯性", 0.3f, 0f..0.9f) { isStackClickMode }
+    private val acBurstChance by float("点击爆发概率", 20f, 0f..100f) { isStackClickMode }
+    private val acFatigueAmplitude by float("点击疲劳幅度", 0.1f, 0f..0.3f) { isStackClickMode }
+    private val acFatiguePerClick by float("点击单次疲劳", 0.004f, 0f..0.02f) { isStackClickMode }
+    private val acFatigueRecovery by float("点击疲劳恢复ms", 400f, 50f..2000f) { isStackClickMode }
+    private val acDoubleClickChance by float("点击双击概率", 8f, 0f..100f) { isStackClickMode }
+    private val acHesitationChance by float("点击卡顿概率", 3f, 0f..100f) { isStackClickMode }
+
+    /** 拟真堆叠点击生成器（KillAura 独立实例）。 */
+    private val stackGenerator = StackedClickGenerator()
+
+    /**
+     * 下一次攻击延迟：拟真堆叠点击模式走堆叠生成器（跨点击维护漂移/惯性/疲劳
+     * 状态），普通模式保持原有均匀随机。
+     */
+    private fun nextAttackDelay(): Int =
+        if (isStackClickMode) {
+            stackGenerator.nextDelay(cps.first, cps.last, stackedClickParams())
+        } else {
+            randomClickDelay(cps.first, cps.last)
+        }
+
+    private fun stackedClickParams() = StackedClickParams(
+        acDriftAmplitude, acBurstInertia, acBurstChance, acFatigueAmplitude,
+        acFatiguePerClick, acFatigueRecovery, acDoubleClickChance, acHesitationChance,
+    )
 
     private val hurtTime by int("HurtTime", 10, 0..10) { !simulateCooldown }
 
-    private val activationSlot by boolean("ActivationSlot", false)
+    private val activationSlot by boolean("ActivationSlot", false) { !isSimpleMode }
     private val preferredSlot by int("PreferredSlot", 1, 1..9) { activationSlot }
 
-    private val clickOnly by boolean("ClickOnly", false)
+    private val clickOnly by boolean("ClickOnly", false) { !isSimpleMode }
 
     // Range
     // TODO: Make block range independent from attack range
@@ -131,13 +176,17 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     private val switchDelay by int("SwitchDelay", 15, 1..1000) { targetMode == "Switch" }
 
     // Bypass
-    private val swing by boolean("Swing", true)
-    private val keepSprint by boolean("KeepSprint", true)
+    private val swingValue = boolean("Swing", true) { !isSimpleMode }
+    private val swing
+        get() = isSimpleMode || swingValue.isActive()
+    private val keepSprintValue = boolean("KeepSprint", true)
+    private val keepSprint
+        get() = keepSprintValue.isActive()
 
     // Settings
-    private val autoF5 by boolean("AutoF5", false)
-    private val onScaffold by boolean("OnScaffold", false)
-    private val onDestroyBlock by boolean("OnDestroyBlock", false)
+    private val autoF5 by boolean("AutoF5", false) { !isSimpleMode }
+    private val onScaffold by boolean("OnScaffold", false) { !isSimpleMode }
+    private val onDestroyBlock by boolean("OnDestroyBlock", false) { !isSimpleMode }
 
     // AutoBlock
     val autoBlock by choices("AutoBlock", arrayOf("Off", "Packet", "Fake", "BlockOnNoHit", "HurtTime"), "Packet")
@@ -150,11 +199,16 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
      * hurtTime 回落到 [blockOwnHurtTime] 以下且目标仍在 [blockMaxRange]
      * （stopblock 范围，默认 3 格）内时再起格挡，按 [hurtTimeBlockTicksValue]
      * 随机持续时长（默认 2..4 tick）维持后松开，等待下一次挨打再重置节奏。
-     * 起挡原理为模拟按住右键（keyBindUseItem），由 vanilla 自行走 use-item
-     * 流程发包，不直接手搓 C08/C07。
+     * 起挡为直发 C08PacketPlayerBlockPlacement（use-item 形式）、松挡直发
+     * C07 RELEASE_USE_ITEM —— 不能模拟右键走 vanilla 流程：准星压在目标上时
+     * vanilla rightClickMouse 走实体 interact 路径（C08PacketUseEntity），
+     * 既不会真正起格挡，又会把 interact 包夹进攻击序列（multiaction 命中）。
      */
     private val blockOwnHurtTime by int("BlockOwnHurtTime", 2, 0..10) { autoBlock == "HurtTime" }
     private val hurtTimeBlockTicksValue = intRange("HurtTimeBlockTicks", 2..4, 1..10) { autoBlock == "HurtTime" }
+    // HurtTime 方向检查：对方视线与「对方 → 自己 hitbox 中心」方向的夹角超过该值
+    // （对方根本没看向自己）时不格挡
+    private val hurtTimeDirectionDiff by float("HurtTimeDirectionDiff", 40f, 0f..180f) { autoBlock == "HurtTime" }
     private val unblockMode by choices(
         "UnblockMode", arrayOf("Stop", "Switch", "Empty"), "Stop"
     ) { autoBlock == "Packet" }
@@ -177,7 +231,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         ) && !releaseAutoBlock
     }
 
-    private val switchStartBlock by boolean("SwitchStartBlock", false) { autoBlock !in arrayOf("Off", "Fake", "BlockOnNoHit") }
+    private val switchStartBlock by boolean("SwitchStartBlock", false) { autoBlock !in arrayOf("Off", "Fake", "BlockOnNoHit", "HurtTime") }
 
     private val interactAutoBlock by boolean("InteractAutoBlock", true) { autoBlock !in arrayOf("Off", "Fake", "BlockOnNoHit", "HurtTime") }
 
@@ -217,103 +271,158 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     // Rotations
     private val options = RotationSettings(this).withoutKeepRotation()
 
-    // Raycast
-    private val raycastValue = boolean("RayCast", true) { options.rotationsActive }
-    private val raycast by raycastValue
+    /**
+     * 转头模式（位于 Rotations 下方，init 里调整 GUI 顺序）：
+     * - Legacy：原有管线，无改动（默认）。
+     * - Simple：瞄准 hitbox 上与当前视角夹角最小的点（最近点瞄准），固定速度转头；
+     *   该模式下设置精简为 AutoBlock / Strafe / Strict / RotationSpeed（+ Range / CPS /
+     *   目标选择 / Mark），RayCast 隐藏但强制启用。
+     * - Template / Neural：AI 学习转头（无转头速度设置），无数据时自动回退 Legacy 管线。
+     * - Noise3：C40N 路径规划器转头（无转头速度设置），参数面板见下方 Noise3 组。
+     */
+    private val rotationModeValue = choices(
+        "RotationMode", arrayOf("Legacy", "Simple", "Template", "Neural", "Noise3"), "Legacy"
+    ) { options.rotationsActive }
+    private val rotationMode by rotationModeValue
+
+    private val isSimpleMode
+        get() = rotationMode == "Simple"
+
+    /** Simple 模式固定转头速度（每 tick 度数，同时控制水平与竖直方向）。 */
+    private val rotationSpeedValue = int("RotationSpeed", 60, 1..180) { isSimpleMode }
+    private val rotationSpeed by rotationSpeedValue
+
+    // RayCast（Simple 模式下隐藏但强制启用）
+    private val raycastValue = boolean("RayCast", true) { options.aimMode != "Simple" && options.rotationsActive }
+    private val raycast
+        get() = isSimpleMode || raycastValue.isActive()
     private val raycastIgnored by boolean(
         "RayCastIgnored", false
     ) { raycastValue.isActive() && options.rotationsActive }
-    private val livingRaycast by boolean("LivingRayCast", true) { raycastValue.isActive() && options.rotationsActive }
+    private val livingRaycastValue = boolean("LivingRayCast", true) { raycastValue.isActive() && options.rotationsActive }
+    private val livingRaycast
+        get() = isSimpleMode || livingRaycastValue.isActive()
 
     // Hit delay
-    private val useHitDelay by boolean("UseHitDelay", false)
+    private val useHitDelay by boolean("UseHitDelay", false) { !isSimpleMode }
     private val hitDelayTicks by int("HitDelayTicks", 1, 1..5) { useHitDelay }
 
-    private val generateClicksBasedOnDist by boolean("GenerateClicksBasedOnDistance", false)
+    private val generateClicksBasedOnDist by boolean("GenerateClicksBasedOnDistance", false) { !isSimpleMode }
     private val cpsMultiplier by intRange("CPS-Multiplier", 1..2, 1..10) { generateClicksBasedOnDist }
     private val distanceFactor by floatRange("DistanceFactor", 5F..10F, 1F..10F) { generateClicksBasedOnDist }
 
-    private val generateSpotBasedOnDistance by boolean("GenerateSpotBasedOnDistance", false) { options.rotationsActive }
+    private val generateSpotBasedOnDistance by boolean("GenerateSpotBasedOnDistance", false) {
+        !isSimpleMode && options.rotationsActive
+    }
 
-    private val randomization = RandomizationSettings(this) { options.rotationsActive }
-    private val outBorder by boolean("OutBorder", false) { options.rotationsActive }
+    // Simple 模式下随机化整组隐藏且不生效（randomizationChosen 依赖 generalApply）
+    private val randomization = RandomizationSettings(this) {
+        options.rotationsActive && !isSimpleMode
+    }
+    private val outBorder by boolean("OutBorder", false) { !isSimpleMode && options.rotationsActive }
 
     // 竖直方向选点范围（hitbox 高度比例：0 = 脚底，1 = 头顶），取代旧的 Head/Body/Feet 三档。
     // 默认 0.1..0.9 与旧 Head..Feet 档位等价；searchCenter 会在该区间内均匀采样候选点。
     private val verticalBodySearchRangeValue = floatRange(
         "VerticalBodySearchRange", 0.1f..0.9f, 0f..1f
-    ) { options.rotationsActive }
+    ) { !isSimpleMode && options.rotationsActive }
     private val verticalBodySearchRange by verticalBodySearchRangeValue
 
     private val horizontalBodySearchRange by floatRange(
         "HorizontalBodySearchRange", 0f..1f, 0f..1f
-    ) { options.rotationsActive }
+    ) { !isSimpleMode && options.rotationsActive }
 
     private val fov by float("FOV", 180f, 0f..180f)
 
     // Prediction
-    private val predictClientMovement by int("PredictClientMovement", 2, 0..5)
+    private val predictClientMovement by int("PredictClientMovement", 2, 0..5) { !isSimpleMode }
     private val predictOnlyWhenOutOfRange by boolean(
         "PredictOnlyWhenOutOfRange", false
-    ) { predictClientMovement != 0 }
-    // 保留 Value 引用：init 里把「转头模式」(AimStrategy) 移到该值之后展示（rotation 相关设置的最下方）
-    private val predictEnemyPositionValue = float("PredictEnemyPosition", 1.5f, -1f..2f)
+    ) { predictClientMovement != 0 && !isSimpleMode }
+    // 保留 Value 引用：init 里把「转头模式」(RotationMode) 移到该值之后展示（rotation 相关设置的最下方）
+    private val predictEnemyPositionValue = float("PredictEnemyPosition", 1.5f, -1f..2f) { !isSimpleMode }
     private val predictEnemyPosition by predictEnemyPositionValue
 
-    // AI 瞄准点改进（仅 Template / Neural 模式可见且生效；Default 模式保持用户原始选点与预判）
+    // AI 瞄准点改进（仅 Template / Neural 模式可见且生效；其余模式保持用户原始选点与预判）
     /** 总开关：远距自动收敛上半身选点 + 预判下限。 */
-    private val aiAimSpotValue = boolean("AiAimSpot", true) { options.aimStrategy != "Default" }
+    private val aiAimSpotValue = boolean("AiAimSpot", true) { options.aimMode == "Template" || options.aimMode == "Neural" }
     private val aiAimSpot by aiAimSpotValue
 
     /** 远距收敛起始距离：目标 hitbox 距离 >= 该值时把选点范围收敛 Head..Body（上半身视角内变化率低且不易被遮挡）。 */
     private val aiFarSpotDistanceValue = float("AiFarSpotDistance", 8f, 3f..20f) {
-        aiAimSpot && options.aimStrategy != "Default"
+        aiAimSpot && (options.aimMode == "Template" || options.aimMode == "Neural")
     }
     private val aiFarSpotDistance by aiFarSpotDistanceValue
 
     /** 远距收敛恢复距离（滞回下界）：目标贴近该距离以下才恢复用户的 bodyPoints 配置，避免阈值附近每 tick 反复切范围。 */
     private val aiFarSpotRecoverDistanceValue = float("AiFarSpotRecoverDistance", 7.5f, 2f..20f) {
-        aiAimSpot && options.aimStrategy != "Default"
+        aiAimSpot && (options.aimMode == "Template" || options.aimMode == "Neural")
     }
     private val aiFarSpotRecoverDistance by aiFarSpotRecoverDistanceValue
 
     /** AI 预判下限：AI 逐 tick 平滑收差需要数 tick，预判低于该值会一直打在目标移动的身后。 */
     private val aiMinPredictionValue = float("AiMinPrediction", 1f, 0f..3f) {
-        aiAimSpot && options.aimStrategy != "Default"
+        aiAimSpot && (options.aimMode == "Template" || options.aimMode == "Neural")
     }
     private val aiMinPrediction by aiMinPredictionValue
 
     /** AI 距离化选点的滞回状态（阈值见 AiFarSpotDistance / AiFarSpotRecoverDistance）。 */
     private var aiFarSpot = false
 
+    // Noise3 参数（仅 Noise3 模式可见；规格 noise3.txt 的全部可调参数）
+    private val n3PointSelection by choices(
+        "Noise3选点模式", arrayOf("直接选点", "预判平滑"), "预判平滑"
+    ) { rotationMode == "Noise3" }
+    private val n3AimSpeed by float("Noise3瞄准速度", 15f, 1f..100f) { rotationMode == "Noise3" }
+    private val n3DecelPre by float("Noise3减速前系数", 1f, 0.5f..2f) { rotationMode == "Noise3" }
+    private val n3DecelPost by float("Noise3减速后系数", 1f, 0.5f..8f) { rotationMode == "Noise3" }
+    private val n3DecelPostHighspeed by float("Noise3高速减速系数", 2f, 0.5f..8f) { rotationMode == "Noise3" }
+    private val n3HighspeedThreshold by float("Noise3高速阈值", 10f, 5f..20f) { rotationMode == "Noise3" }
+    private val n3SpeedAtLargeRot by float("Noise3大角度速度", 30f, 1f..100f) { rotationMode == "Noise3" }
+    private val n3SpeedAtInitialRot by float("Noise3小角度速度", 30f, 1f..100f) { rotationMode == "Noise3" }
+    private val n3LargeRotThreshold by float("Noise3大角度阈值", 30f, 20f..180f) { rotationMode == "Noise3" }
+    private val n3ResyncChance by float("Noise3重同步概率", 0f, 0f..100f) { rotationMode == "Noise3" }
+    private val n3ResyncUpdateDelay by float("Noise3重同步间隔", 1f, 1f..5f) { rotationMode == "Noise3" }
+    private val n3RemoveNoiseChance by float("Noise3去噪概率", 0f, 0f..100f) { rotationMode == "Noise3" }
+    private val n3NoNoiseRecalcDelay by float("Noise3去噪间隔", 1f, 1f..8f) { rotationMode == "Noise3" }
+    private val n3ResyncDelayMs by float("Noise3重同步延迟ms", 0f, 0f..1000f) { rotationMode == "Noise3" }
+    private val n3ResyncRateMin by float("Noise3重同步下限", 0.4f, 0f..1f) { rotationMode == "Noise3" }
+    private val n3ResyncRateMax by float("Noise3重同步上限", 0.6f, 0f..1f) { rotationMode == "Noise3" }
+
     private val forceFirstHit by boolean("ForceFirstHit", false) { !respectMissCooldown && !useHitDelay }
 
     // Extra swing
-    private val failSwing by boolean("FailSwing", true) { swing && options.rotationsActive }
+    private val failSwingValue = boolean("FailSwing", true) { swing && !isSimpleMode && options.rotationsActive }
+    private val failSwing
+        get() = isSimpleMode || failSwingValue.isActive()
     private val respectMissCooldown by boolean(
         "RespectMissCooldown", false
-    ) { swing && failSwing && options.rotationsActive }
-    private val swingOnlyInAir by boolean("SwingOnlyInAir", true) { swing && failSwing && options.rotationsActive }
+    ) { swing && failSwing && !isSimpleMode && options.rotationsActive }
+    private val swingOnlyInAirValue = boolean("SwingOnlyInAir", true) {
+        swing && failSwing && !isSimpleMode && options.rotationsActive
+    }
+    private val swingOnlyInAir
+        get() = isSimpleMode || swingOnlyInAirValue.isActive()
     private val maxRotationDifferenceToSwing by float(
         "MaxRotationDifferenceToSwing", 180f, 0f..180f
-    ) { swing && failSwing && options.rotationsActive }
+    ) { swing && failSwing && !isSimpleMode && options.rotationsActive }
     private val swingWhenTicksLate = boolean("SwingWhenTicksLate", false) {
-        swing && failSwing && maxRotationDifferenceToSwing != 180f && options.rotationsActive
+        swing && failSwing && maxRotationDifferenceToSwing != 180f && !isSimpleMode && options.rotationsActive
     }
     private val ticksLateToSwing by int(
         "TicksLateToSwing", 4, 0..20
     ) { swing && failSwing && swingWhenTicksLate.isActive() && options.rotationsActive }
-    private val renderBoxOnSwingFail by boolean("RenderBoxOnSwingFail", false) { failSwing }
+    private val renderBoxOnSwingFail by boolean("RenderBoxOnSwingFail", false) { failSwing && !isSimpleMode }
     private val renderBoxColor = ColorSettingsInteger(this, "RenderBoxColor") { renderBoxOnSwingFail }.with(Color.CYAN)
     private val renderBoxFadeSeconds by float("RenderBoxFadeSeconds", 1f, 0f..5f) { renderBoxOnSwingFail }
 
     // Inventory
     private val simulateClosingInventory by boolean("SimulateClosingInventory", false) { !noInventoryAttack }
-    private val noInventoryAttack by boolean("NoInvAttack", false)
+    private val noInventoryAttack by boolean("NoInvAttack", false) { !isSimpleMode }
     private val noInventoryDelay by int("NoInvDelay", 200, 0..500) { noInventoryAttack }
     private val noConsumeAttack by choices(
         "NoConsumeAttack", arrayOf("Off", "NoHits", "NoRotation"), "Off"
-    ).subjective()
+    ) { !isSimpleMode }.subjective()
 
     // Visuals
     private val mark by choices("Mark", arrayOf("None", "Platform", "Box", "Circle"), "Circle").subjective()
@@ -361,14 +470,17 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
      */
 
     init {
-        // GUI 顺序调整：把「转头模式」(AimStrategy) 移到 rotation 相关设置的最下方。
-        // 默认它插在 RotationSettings 组末尾（MinRotationDifferenceResetTiming 之后、
-        // RayCast 之前），把 Rotations/AngleChange 与 RayCast/选点/随机化/BodPoints/
-        // 预判隔成两截；移到 PredictEnemyPosition 之后可以一次读完整个转头区块。
-        val strategy = options.aimStrategyValue
+        // GUI 顺序调整：把「转头模式」(RotationMode) 与 Simple 模式的「RotationSpeed」
+        // 移到 Rotations 正下方，一次读完整个转头模式区块。
+        options.modeProvider = { rotationMode }
+        options.speedProvider = { rotationSpeed.toFloat() }
+
         val list = get()
-        if (list.remove(strategy)) {
-            list.add(list.indexOf(predictEnemyPositionValue) + 1, strategy)
+        if (list.remove(rotationModeValue)) {
+            list.add(list.indexOf(options.rotationsValue) + 1, rotationModeValue)
+
+            list.remove(rotationSpeedValue)
+            list.add(list.indexOf(rotationModeValue) + 1, rotationSpeedValue)
         }
     }
 
@@ -380,7 +492,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 
     // Attack delay
     private val attackTimer = MSTimer()
-    private var attackDelay = 0
+    private var attackDelay = nextAttackDelay()
     private var clicks = 0
     private var attackTickTimes = mutableListOf<Pair<MovingObjectPosition, Int>>()
 
@@ -398,8 +510,12 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     // HurtTime AutoBlock 状态：本次格挡窗口剩余 tick / 上 tick 自己的 hurtTime
     private var hurtBlockTicksLeft = 0
     private var lastOwnHurtTime = 0
-    // HurtTime 模拟右键：true 表示当前格挡由本模块按着 keyBindUseItem
+    // HurtTime 格挡窗口：true 表示当前格挡由本模块状态机持有（C08 已发、待 C07）
     private var hurtBlockKeyDown = false
+    // 窗口自然走完后等下一次挨打再开新一轮（hurtTime 长期低于阈值时不无限反复 block）
+    private var hurtBlockAwaitHit = false
+    // 本 tick 刚松过挡：C07 释放包已直发，该 tick 禁止攻击，留出包序间隔
+    private var hurtBlockReleasedThisTick = false
 
     // Blink AutoBlock
     private var blinked = false
@@ -412,15 +528,21 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
      */
     override fun onToggle(state: Boolean) {
         target = null
+        // 清掉 Noise3 上下文，避免模块关闭后残留上下文劫持视角重置路径（审查 B1）
+        options.noise3Context = null
         hittable = false
         prevTargetEntities.clear()
         attackTickTimes.clear()
         attackTimer.reset()
         clicks = 0
+        // 拟真堆叠点击生成器复位（连点惯性/疲劳状态不跨开关保留）
+        stackGenerator.reset()
 
         // HurtTime AutoBlock 状态复位
         hurtBlockTicksLeft = 0
         lastOwnHurtTime = 0
+        hurtBlockAwaitHit = false
+        hurtBlockReleasedThisTick = false
         if (hurtBlockKeyDown) stopHurtBlockKey()
 
         if (blinkAutoBlock) {
@@ -481,8 +603,8 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     val onTick = handler<GameTickEvent>(priority = 2) {
         val player = mc.thePlayer ?: return@handler
 
-        // HurtTime 模拟右键清理：模式切换或本 tick 会提前中断的场景（界面打开/
-        // 取消运行/容器占用等）先松开模拟按键，避免右键被卡按
+        // HurtTime 格挡清理：模式切换或本 tick 会提前中断的场景（界面打开/
+        // 取消运行/容器占用等）先收挡补发 C07，避免服务端残留格挡状态
         if (hurtBlockKeyDown && (autoBlock != "HurtTime" || mc.currentScreen != null || cancelRun || shouldPrioritize() ||
                     (clickOnly && !mc.gameSettings.keyBindAttack.isKeyDown) ||
                     (noInventoryAttack && (mc.currentScreen is GuiContainer || System.currentTimeMillis() - containerOpen < noInventoryDelay))
@@ -491,9 +613,10 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             hurtBlockTicksLeft = 0
         }
 
+        // 手持非剑但模块仍处于持挡状态（C08 已发）：必须补发 C07 释放，
+        // 否则服务端格挡状态残留（直发包模式下 vanilla 不会代为收挡）
         if (blockStatus && player.heldItem?.item !is ItemSword) {
-            blockStatus = false
-            renderBlocking = false
+            stopBlocking(forceStop = true)
             return@handler
         }
 
@@ -560,6 +683,15 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 
             // 格挡期间暂停攻击：清空本 tick 积累的点击，松挡后恢复输出
             if (hurtBlockKeyDown) {
+                clicks = 0
+                return@handler
+            }
+
+            // 刚松挡的 tick 同样禁止攻击：C07 已在本 tick 直发，留出一整 tick
+            // 间隔再恢复攻击，模拟真人「松挡 → 收招 → 出刀」的节奏，避免
+            // C07 → C02 同 tick 贴脸连发被 multiaction / post 类反作弊命中
+            if (hurtBlockReleasedThisTick) {
+                hurtBlockReleasedThisTick = false
                 clicks = 0
                 return@handler
             }
@@ -673,7 +805,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             if (cps.last > 0) clicks++
             attackTimer.reset()
 
-            attackDelay = randomClickDelay(cps.first, cps.last)
+            attackDelay = nextAttackDelay()
         }
 
         val hittableColor = if (hittable) Color(37, 126, 255, 70) else Color(255, 0, 0, 70)
@@ -878,6 +1010,10 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 
         // Reset fixed target to null
         target = null
+        // 目标本 tick 起算清空：若后续未能重新选定目标并走到 updateRotations 的
+        // Noise3Context 组装，残留的过期上下文会在视角重置路径里
+        // 把 serverRotation 拉向已失效的瞄准点（审查 B1）
+        options.noise3Context = null
 
         val switchMode = targetMode == "Switch"
 
@@ -956,23 +1092,35 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     }
 
     /**
-     * HurtTime 模式起挡：模拟按住右键，由 vanilla 自行走 use-item 流程
-     * （本地起格挡动画 + 自行发送 C08），不直接手搓包。
+     * HurtTime 模式起挡：直发 C08PacketPlayerBlockPlacement（use-item 形式）。
+     * 不模拟右键 —— 准星压在目标上时 vanilla rightClickMouse 发的是实体
+     * interact 包（C08PacketUseEntity），既不真正起格挡，也污染攻击包序。
      */
     private fun startHurtBlockKey() {
+        val target = this.target ?: return
+
         hurtBlockKeyDown = true
-        mc.gameSettings.keyBindUseItem.pressed = true
-        renderBlocking = true
-        CPSCounter.registerClick(CPSCounter.MouseButton.RIGHT)
+        startBlocking(target, interact = false)
     }
 
     /**
-     * HurtTime 模式松挡：松开模拟的右键，vanilla 检测到松键后自行结束格挡并释放
+     * HurtTime 模式松挡：直发 C07 RELEASE_USE_ITEM（blockStatus 为真才发包，
+     * 与起挡 C08 一一对应），并标记本 tick 释放、禁止同 tick 攻击
      */
     private fun stopHurtBlockKey() {
+        if (hurtBlockKeyDown) hurtBlockReleasedThisTick = true
         hurtBlockKeyDown = false
-        mc.gameSettings.keyBindUseItem.pressed = false
-        renderBlocking = false
+        stopBlocking(forceStop = true)
+    }
+
+    /**
+     * HurtTime 模式方向检查：目标视线指向与「目标 → 自己 hitbox 中心」方向的夹角
+     * 超过 [hurtTimeDirectionDiff]（对方根本没看向自己）时不格挡。
+     */
+    private fun hurtBlockDirectionOk(player: EntityPlayer): Boolean {
+        val t = target ?: return false
+        val rotationToPlayer = toRotation(player.hitBox.center, true, t)
+        return rotationDifference(rotationToPlayer, t.rotation) <= hurtTimeDirectionDiff
     }
 
     /**
@@ -981,10 +1129,10 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
      * - 刚挨打（own hurtTime 上升）：立即松开既有格挡 —— 受击期间原版不给格挡
      *   减伤，继续白挡只会拖累收招/反打；
      * - hurtTime 回落到 [blockOwnHurtTime] 以下且目标仍在 [blockMaxRange]
-     *   （stopblock 范围）内 → 起格挡（模拟按住右键），持续
-     *   [hurtTimeBlockTicksValue] 随机取值（默认 2..4 tick）后松开；
-     * - 持续窗口内补挡：若窗口还没走完就因受击/异常被取消，重新按住右键补上，
-     *   让「保持 block 的时长」始终接近设定区间；
+     *   （stopblock 范围）内、视线未偏离自己（[hurtBlockDirectionOk]）→ 起格挡
+     *   （直发 C08 placement），持续 [hurtTimeBlockTicksValue] 随机取值（默认 2..4 tick）后松开；
+     * - 持续窗口内补挡：若窗口还没走完就因受击/异常被取消，重新起挡补上，
+     *   让「保持 block 的时长」始终接近设定区间（startBlocking 对已持挡状态幂等）；
      * - 松开后等待下一次挨打（hurtTime 重新抬升）再进入新一轮，避免 hurtTime
      *   一直低于阈值时无限反复 block。
      */
@@ -994,19 +1142,21 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 
             hurtBlockTicksLeft = 0
             lastOwnHurtTime = player.hurtTime
+            hurtBlockAwaitHit = false
             return
         }
 
         // 挨打：own hurtTime 被重新拉起 → 松开格挡，等待下次回落再起挡
         if (player.hurtTime > lastOwnHurtTime) {
             hurtBlockTicksLeft = 0
+            hurtBlockAwaitHit = false
             if (hurtBlockKeyDown) stopHurtBlockKey()
         }
         lastOwnHurtTime = player.hurtTime
 
-        // 格挡保持窗口：还没到点就持挡；目标离开 stopblock 范围则提前收起
+        // 格挡保持窗口：还没到点就持挡；目标离开 stopblock 范围 / 视线偏离自己则提前收起
         if (hurtBlockTicksLeft > 0) {
-            if (target == null || player.getDistanceToEntityBox(target!!) > blockMaxRange) {
+            if (target == null || player.getDistanceToEntityBox(target!!) > blockMaxRange || !hurtBlockDirectionOk(player)) {
                 if (hurtBlockKeyDown) stopHurtBlockKey()
                 hurtBlockTicksLeft = 0
                 return
@@ -1015,22 +1165,25 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             hurtBlockTicksLeft--
             if (hurtBlockTicksLeft <= 0) {
                 stopHurtBlockKey()
+                // 窗口自然走完：等下一次挨打（hurtTime 重新抬升）再进入新一轮，
+                // 否则 hurtTime 一直低于阈值时会无限反复 block
+                hurtBlockAwaitHit = true
             } else {
-                // 窗口内被打断（受击取消格挡/物理松键等）→ 持续按住右键补上
+                // 窗口内被打断（受击取消格挡/异常收挡等）→ 重新起挡补上
                 startHurtBlockKey()
             }
             return
         }
 
-        // 仍在受击恢复期（hurtTime ≥ 阈值）却仍按着右键 → 松开，保持节奏
+        // 仍在持挡但 hurtTime ≥ 阈值（受击恢复期）→ 松开，保持节奏
         if (hurtBlockKeyDown && player.hurtTime >= blockOwnHurtTime) {
             stopHurtBlockKey()
         }
 
-        // hurtTime 回落到阈值以下且目标在 stopblock 范围内 → 新一轮格挡，
-        // 持续时长按 HurtTimeBlockTicks 区间随机取值
-        if (!hurtBlockKeyDown && player.hurtTime < blockOwnHurtTime && target != null) {
-            if (player.getDistanceToEntityBox(target!!) <= blockMaxRange) {
+        // hurtTime 回落到阈值以下、窗口未被跳过（等挨打）、目标在 stopblock 范围内
+        // 且视线未偏离自己 → 新一轮格挡，持续时长按 HurtTimeBlockTicks 区间随机取值
+        if (!hurtBlockKeyDown && !hurtBlockAwaitHit && player.hurtTime < blockOwnHurtTime && target != null) {
+            if (player.getDistanceToEntityBox(target!!) <= blockMaxRange && hurtBlockDirectionOk(player)) {
                 hurtBlockTicksLeft = hurtTimeBlockTicksValue.get().random()
                 startHurtBlockKey()
             }
@@ -1098,9 +1251,9 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             return player.getDistanceToEntityBox(entity) <= range
         }
 
-        // AI 瞄准激活判定：本模块 RotationSettings 的 aimStrategy 非 Default 即 AI 引擎接管转换。
+        // AI 瞄准激活判定：RotationMode 为 Template / Neural 时 AI 引擎接管转换。
         // 后续两处联动 —— ① AI 瞄准点稳定（随机化限流跳点）② 瞄准点改进（AiAimSpot 总开关）。
-        val aiAimActive = options.aimStrategy != "Default"
+        val aiAimActive = options.aimMode == "Template" || options.aimMode == "Neural"
 
         // 瞄准点改进（AiAimSpot，仅 Template / Neural 下可见生效）：① 预判下限 ② 远距收敛上半身。
         // Default 模式走秒响应管线，保持用户原始的 PredictEnemyPosition / bodyPoints 配置。
@@ -1111,8 +1264,19 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         // AI 瞄准点改进开启时 enforce 最小预判（AiMinPrediction）：AI 逐 tick
         // 平滑收差到达需要数 tick，不领先目标移动轴心就会一直打在身后；
         // 纯 Default 秒响应管线保持用户原值。
-        val enemyPredict = if (aiAimSpotActive) predictEnemyPosition.coerceAtLeast(aiMinPrediction) else predictEnemyPosition
-        val prediction = entity.currPos.subtract(entity.prevPos).times(2 + enemyPredict.toDouble())
+        // Simple 模式隐藏预判设置且不生效：外推用 1 tick 前的旧速度 × 3.5，
+        // 目标变向 / 被击退时瞄准点会甩到可见 hitbox 之外的空地上（旧速度
+        // 指向的方向），表现为「瞄准奇怪的地方、不实时」—— Simple 直接瞄准
+        // 当前可见 hitbox，不做速度外推。
+        val enemyPredict = when {
+            aiAimSpotActive -> predictEnemyPosition.coerceAtLeast(aiMinPrediction)
+            else -> predictEnemyPosition
+        }
+        val prediction = if (isSimpleMode) {
+            Vec3(0.0, 0.0, 0.0)
+        } else {
+            entity.currPos.subtract(entity.prevPos).times(2 + enemyPredict.toDouble())
+        }
 
         val boundingBox = entity.hitBox.offset(prediction)
 
@@ -1142,38 +1306,46 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         }
         val (currPos, oldPos) = player.currPos to player.prevPos
 
-        val simPlayer = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput)
+        // 客户端移动预判（PredictClientMovement）：Simple 模式隐藏该设置且不生效 ——
+        // 预判会把眼睛移到未来位置，最近点瞄准便不再追踪可见 hitbox（瞄准点
+        // 跟着外推位置漂移，表现为瞄准奇怪的地方 / 不实时），故 Simple 跳过模拟。
+        if (!isSimpleMode) {
+            val selfPredictTicks = predictClientMovement
+            val usePredictOnlyWhenOutOfRange = predictOnlyWhenOutOfRange
 
-        simPlayer.rotationYaw = (currentRotation ?: player.rotation).yaw
+            val simPlayer = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput)
 
-        var pos = currPos
+            simPlayer.rotationYaw = (currentRotation ?: player.rotation).yaw
 
-        repeat(predictClientMovement) {
-            val previousPos = simPlayer.pos
+            var pos = currPos
 
-            simPlayer.tick()
+            repeat(selfPredictTicks) {
+                val previousPos = simPlayer.pos
 
-            if (predictOnlyWhenOutOfRange) {
-                player.setPosAndPrevPos(simPlayer.pos)
+                simPlayer.tick()
 
-                val currDist = player.getDistanceToEntityBox(entity)
+                if (usePredictOnlyWhenOutOfRange) {
+                    player.setPosAndPrevPos(simPlayer.pos)
 
-                player.setPosAndPrevPos(previousPos)
+                    val currDist = player.getDistanceToEntityBox(entity)
 
-                val prevDist = player.getDistanceToEntityBox(entity)
+                    player.setPosAndPrevPos(previousPos)
 
-                player.setPosAndPrevPos(currPos, oldPos)
-                pos = simPlayer.pos
+                    val prevDist = player.getDistanceToEntityBox(entity)
 
-                if (currDist <= range && currDist <= prevDist) {
-                    return@repeat
+                    player.setPosAndPrevPos(currPos, oldPos)
+                    pos = simPlayer.pos
+
+                    if (currDist <= range && currDist <= prevDist) {
+                        return@repeat
+                    }
                 }
+
+                pos = previousPos
             }
 
-            pos = previousPos
+            player.setPosAndPrevPos(pos)
         }
-
-        player.setPosAndPrevPos(pos)
 
         // 瞄准点改进 ③ 追踪禁跳（v5.1）：随机化跳点的语义是「把瞄准点甩到 hitbox
         // 另一处」，准星已经压在目标上（AimScene.TRACK）时跳点会把 5~10° 的差重新
@@ -1186,19 +1358,87 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             currentRot == null || !AimScene.crosshairOnEntity(currentRot.yaw, currentRot.pitch)
         } else true
 
-        val rotation = searchCenter(
-            boundingBox,
-            generateSpotBasedOnDistance,
-            outBorder && !attackTimer.hasTimePassed(attackDelay / 2),
-            if (aiSpotHopAllowed) randomization else null,
-            predict = false,
-            lookRange = range + scanRange,
-            attackRange = range,
-            throughWallsRange = throughWallsRange,
-            verticalRange = effectiveVerticalRange,
-            horizontalSearch = horizontalBodySearchRange,
-            aiStableSpot = aiAimActive,
-        )
+        // 按转头模式决定本 tick 的目标旋转：
+        // - Simple：当前 hitbox 上与当前视角夹角最小的点（最近点瞄准），固定
+        //   RotationSpeed，不做任何预判外推（预判设置在 Simple 下隐藏且不生效）。
+        // - Noise3：主搜索结果作为瞄准点，另取一份无预判位置的瞄准点组成双点上下文，
+        //   由 C40N 规划器在 performAngleChange 里决定每 tick 实际应用的旋转。
+        // - 其余（Legacy / Template / Neural）：原有 searchCenter 管线。
+        val rotation = when (options.aimMode) {
+            "Simple" -> {
+                if (targetDist > range + scanRange) {
+                    player.setPosAndPrevPos(currPos, oldPos)
+                    return false
+                }
+                nearestPointRotation(entity)
+            }
+            "Noise3" -> {
+                val main = searchCenter(
+                    boundingBox,
+                    generateSpotBasedOnDistance,
+                    outBorder && !attackTimer.hasTimePassed(attackDelay / 2),
+                    if (aiSpotHopAllowed) randomization else null,
+                    predict = false,
+                    lookRange = range + scanRange,
+                    attackRange = range,
+                    throughWallsRange = throughWallsRange,
+                    verticalRange = effectiveVerticalRange,
+                    horizontalSearch = horizontalBodySearchRange,
+                    aiStableSpot = aiAimActive,
+                )
+
+                if (main != null) {
+                    // 直接选点：直接使用主搜索结果（带预判）；预判平滑：与无预判位置的
+                    // 瞄准点取中值平滑。无预判份的搜索不挂随机化，避免跳点状态被双重推进。
+                    val aim1: Rotation
+                    val aim2: Rotation
+                    if (n3PointSelection == "预判平滑") {
+                        aim2 = main
+                        aim1 = searchCenter(
+                            entity.hitBox,
+                            generateSpotBasedOnDistance,
+                            false,
+                            null,
+                            predict = false,
+                            lookRange = range + scanRange,
+                            attackRange = range,
+                            throughWallsRange = throughWallsRange,
+                            verticalRange = effectiveVerticalRange,
+                            horizontalSearch = horizontalBodySearchRange,
+                            aiStableSpot = aiAimActive,
+                        ) ?: main
+                    } else {
+                        aim1 = main
+                        aim2 = main
+                    }
+
+                    options.noise3Context = Noise3Context(
+                        aim1, aim2, entity.entityId, entity.rotationYaw, entity.rotationPitch,
+                        Noise3Params(
+                            n3PointSelection, n3AimSpeed, n3DecelPre, n3DecelPost, n3DecelPostHighspeed,
+                            n3HighspeedThreshold, n3SpeedAtLargeRot, n3SpeedAtInitialRot, n3LargeRotThreshold,
+                            n3ResyncChance, n3ResyncUpdateDelay, n3RemoveNoiseChance, n3NoNoiseRecalcDelay,
+                            n3ResyncDelayMs, n3ResyncRateMin, n3ResyncRateMax,
+                        )
+                    )
+                }
+
+                main
+            }
+            else -> searchCenter(
+                boundingBox,
+                generateSpotBasedOnDistance,
+                outBorder && !attackTimer.hasTimePassed(attackDelay / 2),
+                if (aiSpotHopAllowed) randomization else null,
+                predict = false,
+                lookRange = range + scanRange,
+                attackRange = range,
+                throughWallsRange = throughWallsRange,
+                verticalRange = effectiveVerticalRange,
+                horizontalSearch = horizontalBodySearchRange,
+                aiStableSpot = aiAimActive,
+            )
+        }
 
         if (rotation == null) {
             player.setPosAndPrevPos(currPos, oldPos)
@@ -1211,6 +1451,36 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         player.setPosAndPrevPos(currPos, oldPos)
 
         return true
+    }
+
+    /**
+     * Simple 模式的最优瞄准点：取玩家眼睛到目标 hitbox 的欧氏最近点
+     * （点到 AABB 的标准解析解：逐轴把眼睛坐标 clamp 进箱子范围），
+     * 即「玩家可攻击到的最近的瞄准点」—— 按空间最短距离选点，而非最短
+     * 旋转角度。眼睛已在箱内时最近点即眼睛本身、方向未定义，沿当前视线
+     * 即可（角度差为零）。不做预判外推，瞄准点始终跟随可见 hitbox 实时刷新。
+     */
+    private fun nearestPointRotation(entity: Entity): Rotation? {
+        val player = mc.thePlayer ?: return null
+
+        val eyes = player.eyes
+        val look = getVectorForRotation(currentRotation ?: player.rotation)
+        val box = entity.hitBox
+
+        // 眼睛已在箱内：沿当前视线，角度差为零
+        if (box.isVecInside(eyes)) {
+            return toRotation(eyes.add(Vec3(look.xCoord * 4.0, look.yCoord * 4.0, look.zCoord * 4.0)), false)
+                .fixedSensitivity()
+        }
+
+        // 眼睛到 AABB 的最近点（clamp 截断）
+        val closest = Vec3(
+            eyes.xCoord.coerceIn(box.minX, box.maxX),
+            eyes.yCoord.coerceIn(box.minY, box.maxY),
+            eyes.zCoord.coerceIn(box.minZ, box.maxZ),
+        )
+
+        return toRotation(closest, false).fixedSensitivity()
     }
 
     private fun ticksSinceClick() = runTimeTicks - (attackTickTimes.lastOrNull()?.second ?: 0)

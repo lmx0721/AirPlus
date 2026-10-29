@@ -3,7 +3,7 @@
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
  */
-package net.airplus.features.module.modules.exploit
+package net.airplus.features.module.modules.misc
 
 import net.airplus.AirPlus.hud
 import net.airplus.event.*
@@ -40,7 +40,7 @@ import java.util.*
 import java.util.concurrent.LinkedBlockingQueue
 import kotlin.math.sqrt
 
-object Disabler : Module("Disabler", Category.EXPLOIT) {
+object Disabler : Module("Disabler", Category.MISC) {
 
     // OldGrim: 启用后应用并展示原 Disabler2（SilenceFix 移植）的功能
     val oldGrim by boolean("OldGrim", false)

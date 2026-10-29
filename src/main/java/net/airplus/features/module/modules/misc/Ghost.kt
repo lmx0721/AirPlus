@@ -3,7 +3,7 @@
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
  */
-package net.airplus.features.module.modules.exploit
+package net.airplus.features.module.modules.misc
 
 import net.airplus.event.UpdateEvent
 import net.airplus.event.handler
@@ -12,7 +12,7 @@ import net.airplus.features.module.Module
 import net.airplus.utils.client.chat
 import net.minecraft.client.gui.GuiGameOver
 
-object Ghost : Module("Ghost", Category.EXPLOIT) {
+object Ghost : Module("Ghost", Category.MISC) {
 
     private var isGhost = false
 

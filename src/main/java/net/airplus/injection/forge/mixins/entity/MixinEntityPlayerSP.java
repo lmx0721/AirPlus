@@ -7,9 +7,9 @@ package net.airplus.injection.forge.mixins.entity;
 
 import net.airplus.event.*;
 import net.airplus.features.module.modules.combat.KillAura;
-import net.airplus.features.module.modules.exploit.AntiHunger;
-import net.airplus.features.module.modules.exploit.Disabler;
-import net.airplus.features.module.modules.exploit.PortalMenu;
+import net.airplus.features.module.modules.misc.AntiHunger;
+import net.airplus.features.module.modules.misc.Disabler;
+import net.airplus.features.module.modules.misc.PortalMenu;
 import net.airplus.features.module.modules.player.Derp;
 import net.airplus.features.module.modules.movement.InventoryMove;
 import net.airplus.features.module.modules.movement.NoSlow;

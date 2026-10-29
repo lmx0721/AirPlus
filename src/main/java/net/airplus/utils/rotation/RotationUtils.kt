@@ -21,6 +21,8 @@ import net.airplus.utils.rotation.RaycastUtils.raycastEntity
 import net.airplus.utils.rotation.aim.AimScene
 import net.airplus.utils.rotation.aim.AimSegmentClass
 import net.airplus.utils.rotation.aim.AimTemplateEngine
+import net.airplus.utils.rotation.aim.Noise3Calculator
+import net.airplus.utils.rotation.aim.Noise3Context
 import net.airplus.utils.rotation.aim.RotationNet
 import net.airplus.utils.timing.WaitTickUtils
 import net.minecraft.entity.Entity
@@ -412,8 +414,17 @@ object RotationUtils : MinecraftInstance, Listenable {
         // AI 学习转头：Template（模板库）/ Neural（MLP）生成增量，null 则回退下方 Default 管线。
         // 短停期间跳过 AI：短停已把剩余差缩到近零，AI 引擎按「全速走剩余差」的方式
         // 一 tick 就会走完缩放后的差，完全抵消「几乎不动」的意图，交给 Default 管线处理。
-        val aiDiff = if (settings != null && !settings.instant && !isShortStopActive) {
-            aiGeneratedDiff(settings, yawDiff, pitchDiff)
+        // Noise3：C40N 路径规划器直接给出本 tick 的绝对旋转（上下文由模块每 tick
+        // 组装挂在 settings.noise3Context），完全绕过速度限幅/慢化管线；上下文缺失
+        // 时回退 Default 管线。NoRotateSet
+        // （blink/免转协议）期间全部跳过：no-rotate 契约下不该产生任何转向增量（审查 S3）。
+        val aiDiff = if (settings != null && !settings.instant &&
+            !isShortStopActive && !isNoRotateSetActive
+        ) {
+            when (settings.aimMode) {
+                "Noise3" -> settings.noise3Context?.let { noise3GeneratedDiff(it, currentRotation) }
+                else -> aiGeneratedDiff(settings, yawDiff, pitchDiff)
+            }
         } else null
         if (aiDiff != null) {
             settings?.updateSimulateShortStopData(aiDiff.first)
@@ -498,9 +509,28 @@ object RotationUtils : MinecraftInstance, Listenable {
     private var prevRawAim = 0f to 0f
     private var aimDriftValid = false
 
+    /** Noise3 引擎（跨 tick 维护 actual/target 状态，resync 自愈）。 */
+    private val noise3 = Noise3Calculator()
+
     /**
-     * AI 学习转头：按 [RotationSettings.aimStrategy] 把当前剩余角度差交给模板库或神经网络，
-     * 生成下一 tick 的 (yawDelta, pitchDelta)。无法生成时返回 null（回退 Default 管线）。
+     * Noise3 转头：把 C40N 规划器输出的绝对旋转折算成相对 [currentRotation] 的增量。
+     * 返回 null 时由调用方回退 Default 管线。
+     */
+    private fun noise3GeneratedDiff(context: Noise3Context, currentRotation: Rotation): Pair<Float, Float>? {
+        val player = mc.thePlayer ?: return null
+
+        val applied = noise3.compute(
+            currentRotation, player.hurtTime, context.targetId, context.aim1, context.aim2,
+            context.entityYaw, context.entityPitch, context.params
+        )
+
+        val diff = angleDifferences(applied, currentRotation)
+        return diff.x to diff.y
+    }
+
+    /**
+     * AI 学习转头：按 [RotationSettings.aimMode]（Template / Neural）把当前剩余角度差交给
+     * 模板库或神经网络，生成下一 tick 的 (yawDelta, pitchDelta)。无法生成时返回 null（回退 Default 管线）。
      */
     private fun aiGeneratedDiff(settings: RotationSettings, yawDiff: Float, pitchDiff: Float): Pair<Float, Float>? {
         val player = mc.thePlayer ?: return null
@@ -559,7 +589,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         // v4 传入语义：引擎收 raw needed（特征 / 分类 / 方向锁定 / 缩放全部与训练分布
         // 一致）+ 独立的 wander 偏移（由引擎按尾部衰减叠加到输出增量上，
         // 见 RotationNet/AimTemplateEngine 的拟真游走注释）。
-        val generated = when (settings.aimStrategy) {
+        val generated = when (settings.aimMode) {
             "Template" -> AimTemplateEngine.sample(
                 yawDiff, pitchDiff, wanderYaw, wanderPitch,
                 driftYaw, driftPitch,
@@ -855,13 +885,16 @@ object RotationUtils : MinecraftInstance, Listenable {
 
         if (resetTicks == 0) {
             if (isDifferenceAcceptableForReset(serverRotation, playerRotation, settings)) {
+                settings.noise3Context = null
                 resetRotation()
                 return
             }
 
-            currentRotation = limitAngleChange(
-                serverRotation, playerRotation, settings
-            ).fixedSensitivity()
+            // 回归真实视角路径：目标已丢失，清掉残留的 Noise3 上下文，
+            // 避免过期瞄准点在此路径把视角重新拉向死目标（审查 B1）
+            settings.noise3Context = null
+
+            currentRotation = limitAngleChange(serverRotation, playerRotation, settings).fixedSensitivity()
             return
         }
 

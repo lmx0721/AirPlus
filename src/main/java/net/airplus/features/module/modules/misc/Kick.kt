@@ -3,7 +3,7 @@
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
  */
-package net.airplus.features.module.modules.exploit
+package net.airplus.features.module.modules.misc
 
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
@@ -19,7 +19,7 @@ import net.minecraft.network.play.client.C09PacketHeldItemChange
 import kotlin.random.Random.Default.nextBoolean
 
 
-object Kick : Module("Kick", Category.EXPLOIT, canBeEnabled = false, subjective = true) {
+object Kick : Module("Kick", Category.MISC, canBeEnabled = false, subjective = true) {
 
     private val mode by choices(
         "Mode",

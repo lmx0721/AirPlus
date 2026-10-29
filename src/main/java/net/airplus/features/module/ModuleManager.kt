@@ -11,7 +11,6 @@ import net.airplus.event.handler
 import net.airplus.features.command.CommandManager.registerCommand
 import net.airplus.features.module.modules.client.*
 import net.airplus.features.module.modules.combat.*
-import net.airplus.features.module.modules.exploit.*
 import net.airplus.features.module.modules.misc.*
 import net.airplus.features.module.modules.movement.*
 import net.airplus.features.module.modules.music.MusicPlayer
@@ -50,6 +49,7 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             AntiFireball,
             AntiVoid,
             ArmorBreak,
+            ArmorBreaker2,
             AtAllProvider,
             AttackEffect,
             AttackEffects,
@@ -175,7 +175,6 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             Notifier,
             NoWeb,
             Nuker,
-            PacketDebugger,
             Particles,
             Parkour,
             PingSpoof,
@@ -218,7 +217,6 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             Trail,
             Tracers,
             TrueSight,
-            VehicleOneHit,
             Velocity,
             WallClimb,
             XRay,

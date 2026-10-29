@@ -948,7 +948,6 @@ class RiseClickGui : GuiScreen() {
         Category.RENDER -> "A"
         Category.WORLD -> "L"
         Category.MISC -> "J"
-        Category.EXPLOIT -> "F"
         Category.CLIENT -> "H"
     }
 

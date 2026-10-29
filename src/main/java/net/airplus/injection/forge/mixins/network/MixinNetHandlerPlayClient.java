@@ -8,7 +8,7 @@ package net.airplus.injection.forge.mixins.network;
 import io.netty.buffer.Unpooled;
 import net.airplus.event.EntityMovementEvent;
 import net.airplus.event.EventManager;
-import net.airplus.features.module.modules.exploit.AntiExploit;
+import net.airplus.features.module.modules.misc.AntiExploit;
 import net.airplus.features.module.modules.misc.NoRotateSet;
 import net.airplus.features.module.modules.player.Blink;
 import net.airplus.features.special.ClientFixes;
