@@ -48,6 +48,15 @@ object KawaseBlur {
     /** 按 iterations 缓存的 FBO 链：key=iterations，list[0]=全分辨率，list[1..n+1]=降采样级 */
     private val chains = HashMap<Int, MutableList<Framebuffer>>()
 
+    /**
+     * FBO 链代数：每次重建链（尺寸变化 → 旧链纹理被 deleteFramebuffer）时 +1。
+     * 调用方（HudBlur）用它检测自己缓存的 resultTexture 是否已作废——纹理 id 被
+     * 删除后很可能又立刻被新 WebGL/驱动分配复用，仅凭 glIsTexture 无法可靠识别，
+     * 代数比对才是确定性的失效检测（失效后继续贴 = 模糊区域整块发灰/走样）。
+     */
+    @JvmField
+    var chainGeneration = 0
+
     /** 着色器初始化失败后不再每帧重试（避免重复创建 GL 对象与报错刷屏） */
     private var initFailed = false
 
@@ -73,6 +82,12 @@ object KawaseBlur {
 
     /** active texture unit 保存用（pass 内固定 unit 0，退出恢复） */
     private var prevActiveTexture = GL13.GL_TEXTURE0
+
+    /** unit-0 原纹理绑定保存用（pass 内裸绑定会抹掉它，退出前还原） */
+    private var prevUnit0TextureBinding = 0
+
+    /** 当前颜色保存用：进入 kawaseCore 时的 GL_CURRENT_COLOR（pass 内会改写为白色） */
+    private val currentColorBuf: FloatBuffer = BufferUtils.createFloatBuffer(16)
 
     private fun initShaders() {
         if (initFailed) return
@@ -130,6 +145,8 @@ object KawaseBlur {
                 newChain.add(currentBuffer)
             }
             chains[iterations] = newChain
+            // 链重建 = 旧纹理 id 全部作废：递增代数，让调用方（HudBlur）的缓存放心失效
+            chainGeneration++
             chain = newChain
         }
         framebuffer = chain!![0]
@@ -199,15 +216,19 @@ object KawaseBlur {
         colorMaskBuf.clear()
         GL11.glGetInteger(GL11.GL_COLOR_WRITEMASK, colorMaskBuf)
         prevDepthMask = GL11.glGetInteger(GL11.GL_DEPTH_WRITEMASK) == GL11.GL_TRUE
-        GlStateManager.colorMask(true, true, true, true)
+        // colorMask 强制开启必须用裸 GL：GlStateManager.colorMask 是缓存守卫调用，
+        // 真实 colorMask 已被 raw 写入者改为 false 而缓存仍为 true 时守卫会跳过，
+        // 链上所有 pass 被静默丢弃（模糊输出全黑）。退出时两步法同步回快照值。
+        GL11.glColorMask(true, true, true, true)
         GlStateManager.depthMask(true)
     }
 
     private fun restoreColorState() {
-        GlStateManager.colorMask(
-            colorMaskBuf[0] == GL11.GL_TRUE, colorMaskBuf[1] == GL11.GL_TRUE,
-            colorMaskBuf[2] == GL11.GL_TRUE, colorMaskBuf[3] == GL11.GL_TRUE
-        )
+        // colorMask 两步法恢复：先反向写推开可能失步的缓存守卫，再写快照值
+        val m0 = colorMaskBuf[0] == GL11.GL_TRUE; val m1 = colorMaskBuf[1] == GL11.GL_TRUE
+        val m2 = colorMaskBuf[2] == GL11.GL_TRUE; val m3 = colorMaskBuf[3] == GL11.GL_TRUE
+        GlStateManager.colorMask(!m0, !m1, !m2, !m3)
+        GlStateManager.colorMask(m0, m1, m2, m3)
         GlStateManager.depthMask(prevDepthMask)
     }
 
@@ -222,12 +243,13 @@ object KawaseBlur {
      *
      * @param stencilFramebufferTexture 非 null 时最后一次 upsample 启用 check，
      *        通过 unit16 上的 stencil framebuffer 纹理把形状外的像素置 alpha=0
-     *        （供 [renderBlur] 的形状遮罩路径使用）
+     *        （check 路径目前无调用方，实际始终走全屏 check=0 分支）
      */
     private fun kawaseCore(
         iterations: Int,
         offset: Int,
-        stencilFramebufferTexture: Int?
+        stencilFramebufferTexture: Int?,
+        sourceTexture: Int? = null
     ) {
         val chain = ensureChain(iterations)
 
@@ -241,11 +263,18 @@ object KawaseBlur {
         val prevAlpha = GL11.glIsEnabled(GL11.GL_ALPHA_TEST)
         saveScissor()
         saveColorState()
+        // 记录进入时的当前颜色：pass 内会 GlStateManager.color(1,1,1,1) 改写，
+        // 退出时经 restoreCallerState 用「先写脏值推开缓存、再写原值」两步法恢复
+        currentColorBuf.clear()
+        GL11.glGetFloat(GL11.GL_CURRENT_COLOR, currentColorBuf)
 
         // 纹理单元固定到 0（pass 用裸 glBindTexture 绑定，shader 固定采样 unit 0；
         // 调用方若停留在其它 unit 会导致采样错误纹理 → 整块纯色/灰）
         prevActiveTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE)
         OpenGlHelper.setActiveTexture(GL13.GL_TEXTURE0)
+        // 记录 unit-0 原绑定：pass 期间全程裸 glBindTexture，退出前必须真实还原，
+        // 否则调用方后续渲染 unit 0 采到的是模糊链的中间纹理（灰块/噪声根因之一）
+        prevUnit0TextureBinding = GL11.glGetInteger(0x8069)
 
         // 中间 pass 写入无 stencil 的独立 FBO，必须关掉调用方的 stencil 测试
         //（例如 Island 外层 EmbeddedStencil 的 GL_EQUAL），否则结果受 stencil 残留影响
@@ -258,8 +287,9 @@ object KawaseBlur {
         try {
             pushGuiMatrix(sr)
 
-            // Downsample 阶段
-            renderFBO(chain[1], mc.framebuffer.framebufferTexture, down, offset.toFloat())
+            // Downsample 阶段（sourceTexture 非 null 时以调用方给定的预模糊基准纹理为源，
+            // 而非主 framebuffer —— HudBlur 派生强度路径保证源内容与标准强度完全一致）
+            renderFBO(chain[1], sourceTexture ?: mc.framebuffer.framebufferTexture, down, offset.toFloat())
             for (i in 1 until iterations) {
                 renderFBO(chain[i + 1], chain[i].framebufferTexture, down, offset.toFloat())
             }
@@ -303,144 +333,46 @@ object KawaseBlur {
             // 任何异常都必须恢复矩阵，否则下一帧起整个画面都会错位
             popGuiMatrix()
             restoreColorState()
+            // unit-0 绑定还原 + 两步法同步 GlStateManager 缓存：此前只恢复 active unit、
+            // 不恢复绑定，且裸 glBindTexture 让 bindTexture 缓存彻底失真——调用方后续的
+            // 缓存守卫 bindTexture 若与脏缓存撞值会被静默跳过，继续采样链纹理
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevUnit0TextureBinding)
+            GlStateManager.bindTexture(1)
+            GlStateManager.bindTexture(prevUnit0TextureBinding)
             OpenGlHelper.setActiveTexture(prevActiveTexture)
         }
 
-        // 恢复调用方的 stencil / scissor 开关（box 由 restoreCallerState 在最终 pass 后恢复）。
-        // 最终 pass 之前恢复 GL_EQUAL 形状裁剪可继续生效。
+        // 恢复调用方的 stencil 开关（func/op 未被 pass 修改，保持原样即可）
         if (prevStencil) GL11.glEnable(GL11.GL_STENCIL_TEST) else GL11.glDisable(GL11.GL_STENCIL_TEST)
-        if (prevScissorEnabled) GL11.glEnable(GL11.GL_SCISSOR_TEST) else GL11.glDisable(GL11.GL_SCISSOR_TEST)
 
-        // 记录恢复用的 blend/alpha/blendFunc（最终 pass 会改写它们）
+        // 记录恢复用的 blend/alpha/blendFunc（pass 期间从未调用 glBlendFunc，
+        // 此时读到的因数仍是调用方进入时的值）
         val prevBlendSrc = GL11.glGetInteger(GL11.GL_BLEND_SRC)
         val prevBlendDst = GL11.glGetInteger(GL11.GL_BLEND_DST)
         kawaseCoreResult = KawaseCoreResult(prevBlend, prevAlpha, prevBlendSrc, prevBlendDst)
+
+        // 关键修复：此前 restoreCallerState 是死代码、从未被调用 —— 管线退出后
+        // GL_BLEND/GL_ALPHA_TEST 停留在 forceDisable 的关闭状态、当前颜色残留白色、
+        // scissor box 未恢复，直接污染调用链之后的所有半透明 HUD 绘制（背景异常/消失）
+        restoreCallerState()
     }
 
     private var kawaseCoreResult: KawaseCoreResult = KawaseCoreResult(true, true, GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA)
 
     private class KawaseCoreResult(val prevBlend: Boolean, val prevAlpha: Boolean, val blendSrc: Int, val blendDst: Int)
 
-    fun renderBlur(stencilFrameBufferTexture: Int, iterations: Int, offset: Int) {
-        initShaders()
-        if (kawaseDown == null || kawaseUp == null) {
-            System.err.println("KawaseBlur shaders not initialized, skipping blur render")
-            return
-        }
-        kawaseCore(iterations, offset, stencilFrameBufferTexture)
-
-        // 渲染到主 framebuffer（全屏）
-        val sr = ScaledResolution(mc)
-        mc.framebuffer.bindFramebuffer(true)
-        pushGuiMatrix(sr)
-        val prevUnit = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE)
-        OpenGlHelper.setActiveTexture(GL13.GL_TEXTURE0)
-        try {
-            bindTexture(framebuffer.framebufferTexture)
-            forceDisableAlphaTest()
-            startBlend()
-            GlStateManager.color(1f, 1f, 1f, 1f)
-            ShaderUtil.drawQuads()
-            GlStateManager.bindTexture(0)
-        } finally {
-            OpenGlHelper.setActiveTexture(prevUnit)
-            popGuiMatrix()
-            restoreCallerState()
-        }
-    }
-
     /**
-     * 渲染指定区域的模糊效果
-     * 注意：此方法会先进行全屏模糊，然后在最终渲染到主framebuffer时使用scissor限制区域
-     * @param x 区域左上角 X 坐标（像素坐标）
-     * @param y 区域左上角 Y 坐标（像素坐标）
-     * @param width 区域宽度（像素坐标）
-     * @param height 区域高度（像素坐标）
+     * 全屏 downsample + upsample 链（在主 framebuffer 读取源画面），
+     * 结果只保存在 chain[0]（[framebuffer]）的纹理中，**不写回主 framebuffer**。
+     * 之后由调用方（HudBlur）把该纹理按遮罩裁剪贴回。
+     *
+     * @return 模糊结果的纹理 id；着色器不可用时返回 -1
      */
-    fun renderBlur(stencilFrameBufferTexture: Int, iterations: Int, offset: Int, x: Int, y: Int, width: Int, height: Int) {
-        if (width <= 0 || height <= 0) return
+    fun blurFullScreen(iterations: Int, offset: Int, sourceTexture: Int? = null): Int {
         initShaders()
-        if (kawaseDown == null || kawaseUp == null) {
-            System.err.println("KawaseBlur shaders not initialized, skipping blur render")
-            return
-        }
-        kawaseCore(iterations, offset, stencilFrameBufferTexture)
-
-        // 渲染到主 framebuffer，使用 scissor 限制区域
-        val sr = ScaledResolution(mc)
-        mc.framebuffer.bindFramebuffer(true)
-        pushGuiMatrix(sr)
-
-        // 输入是左上角原点的像素坐标，转换到 OpenGL 左下角原点
-        GL11.glEnable(GL11.GL_SCISSOR_TEST)
-        GL11.glScissor(x, mc.displayHeight - (y + height), width, height)
-
-        val prevUnit = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE)
-        OpenGlHelper.setActiveTexture(GL13.GL_TEXTURE0)
-        try {
-            bindTexture(framebuffer.framebufferTexture)
-            forceDisableAlphaTest()
-            startBlend()
-            GlStateManager.color(1f, 1f, 1f, 1f)
-            ShaderUtil.drawQuads()
-            GlStateManager.bindTexture(0)
-        } finally {
-            OpenGlHelper.setActiveTexture(prevUnit)
-            popGuiMatrix()
-            restoreCallerState()
-        }
-    }
-
-    /**
-     * 基于 Scissor 裁剪的区域模糊（不使用 stencil framebuffer）。
-     *
-     * 流程：
-     *  1. 对主 framebuffer 全屏进行 Kawase 下采样 + 上采样，得到全屏模糊结果。
-     *  2. 最后一次 upsample 使用 check=0（alpha=1.0），让模糊结果完全不透明。
-     *  3. 将模糊结果渲染回主 framebuffer 时，用 glScissor 限制只在指定矩形区域内绘制，
-     *     区域外保持原样，避免白屏。
-     *
-     * 坐标参数均为 framebuffer 像素坐标（原点在左下角）。
-     *
-     * @param iterations 下采样/上采样次数
-     * @param offset     模糊偏移量
-     * @param x          裁剪区域左下角 X（像素）
-     * @param y          裁剪区域左下角 Y（像素）
-     * @param width      裁剪区域宽度（像素）
-     * @param height     裁剪区域高度（像素）
-     */
-    fun renderBlurScissor(iterations: Int, offset: Int, x: Int, y: Int, width: Int, height: Int) {
-        if (width <= 0 || height <= 0) return
-        initShaders()
-        if (kawaseDown == null || kawaseUp == null) {
-            System.err.println("KawaseBlur shaders not initialized, skipping blur render")
-            return
-        }
-
-        kawaseCore(iterations, offset, null)
-
-        // 渲染到主 framebuffer，用 scissor 限制只在指定区域绘制模糊结果
-        val sr = ScaledResolution(mc)
-        mc.framebuffer.bindFramebuffer(true)
-        pushGuiMatrix(sr)
-
-        GL11.glEnable(GL11.GL_SCISSOR_TEST)
-        GL11.glScissor(x, y, width, height)
-
-        val prevUnit = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE)
-        OpenGlHelper.setActiveTexture(GL13.GL_TEXTURE0)
-        try {
-            bindTexture(framebuffer.framebufferTexture)
-            forceDisableAlphaTest()
-            startBlend()
-            GlStateManager.color(1f, 1f, 1f, 1f)
-            ShaderUtil.drawQuads()
-            GlStateManager.bindTexture(0)
-        } finally {
-            OpenGlHelper.setActiveTexture(prevUnit)
-            popGuiMatrix()
-            restoreCallerState()
-        }
+        if (kawaseDown == null || kawaseUp == null) return -1
+        kawaseCore(iterations, offset, null, sourceTexture)
+        return framebuffer.framebufferTexture
     }
 
     /** 恢复 scissor box / blend / blendFunc / alpha / 颜色，避免状态泄漏到后续渲染 */
@@ -458,7 +390,9 @@ object KawaseBlur {
             GL11.glDisable(GL11.GL_ALPHA_TEST)
             GlStateManager.disableAlpha()
         }
-        GlStateManager.color(1f, 1f, 1f, 1f)
+        // 当前颜色两步法恢复为调用方进入时的颜色（pass 内改写过，缓存守卫可能吞掉单步恢复）
+        GlStateManager.color(0f, 0f, 0f, 0f)
+        GlStateManager.color(currentColorBuf[0], currentColorBuf[1], currentColorBuf[2], currentColorBuf[3])
     }
 
     private fun renderFBO(framebuffer: Framebuffer, framebufferTexture: Int, shader: ShaderUtil, offset: Float) {

@@ -9,7 +9,7 @@ import net.airplus.AirPlus.clientVersionText
 import net.airplus.file.configs.models.ClientConfiguration
 import net.airplus.ui.client.altmanager.GuiAltManager
 import net.airplus.ui.font.Fonts
-import net.airplus.utils.render.BlurUtils
+import net.airplus.utils.render.HudBlur
 import net.airplus.utils.render.RenderUtils
 import net.airplus.utils.ui.AbstractScreen
 import net.minecraft.client.gui.GuiLanguage
@@ -82,7 +82,7 @@ class Hanabi2MainMenu : AbstractScreen() {
         // 中央面板区域模糊 + 深色面板（上半信息区 + 下半按钮条）
         val panelX = width / 2f - 50f * (buttons.size / 2f)
         val panelX2 = width / 2f + 50f * (buttons.size / 2f)
-        BlurUtils.blurArea(panelX, height / 2f - 50f, panelX2, height / 2f + 50f, 10f)
+        HudBlur.blur(panelX, height / 2f - 50f, panelX2, height / 2f + 50f)
         RenderUtils.drawRect(panelX, height / 2f - 50f, panelX2, height / 2f + 50f, 0x7D000000)
         RenderUtils.drawRect(panelX, height / 2f + 20f, panelX2, height / 2f + 50f, 0x3E000000)
 

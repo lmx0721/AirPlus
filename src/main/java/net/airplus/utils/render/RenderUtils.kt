@@ -1707,10 +1707,10 @@ object RenderUtils : MinecraftInstance {
         val x2 = x + width
         val y2 = y + height
 
-        BlurUtils.blurAreaRounded(x, y, x2, y2, radius, blurStrength)
+        // 全局 Blur 设置（全屏单次模糊 + 组件裁剪，遮罩 = 面板圆角矩形）
+        HudBlur.blur(x, y, x2, y2, radius)
 
         drawRoundedRect(x, y, x2, y2, glassBaseColor.rgb, radius)
-
         drawRoundedRect(x, y, x2, y + height * 0.3f, Color(255, 255, 255, glassHighlightAlpha).rgb, radius)
 
         try {
@@ -1729,7 +1729,8 @@ object RenderUtils : MinecraftInstance {
         val x2 = x + width
         val y2 = y + height
 
-        BlurUtils.blurAreaRounded(x, y, x2, y2, radius, blurStrength)
+        // 全局 Blur 设置（全屏单次模糊 + 组件裁剪，遮罩 = 边框圆角矩形）
+        HudBlur.blur(x, y, x2, y2, radius)
 
         drawRoundedRect(x, y, x2, y2, Color(0, 0, 0, backgroundAlpha).rgb, radius)
 

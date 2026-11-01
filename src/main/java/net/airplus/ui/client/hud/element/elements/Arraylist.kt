@@ -119,6 +119,11 @@ class Arraylist(
     private val iconFadeColor by color("IconFadeColor", Color.WHITE) { iconColorMode == "Fade" && displayIcons }
     private val iconFadeDistance by int("IconFadeDistance", 50, 0..100) { iconColorMode == "Fade" && displayIcons }
 
+    // 背景模糊（Blur-Mode，类型/强度由 Client 模块的全局 Blur 设置统一控制）：
+    // Row = 每行各自一条圆角模糊；Panel = 整块列表一个大圆角模糊面；None = 关闭
+    private val blurMode by choices("Blur-Mode", arrayOf("None", "Row", "Panel"), "None")
+    private val blurPanelRadius by float("Panel-Blur-Radius", 3F, 0F..8F) { blurMode == "Panel" }
+
     private fun isColorModeUsed(value: String) = value in listOf(textColorMode, rectMode, backgroundMode, iconColorMode)
 
     private val saturation by float("Random-Saturation", 0.9f, 0f..1f) { isColorModeUsed("Random") }
@@ -276,7 +281,70 @@ class Arraylist(
             val gradientX = 1f safeDiv gradientX
             val gradientY = 1f safeDiv gradientY
 
+            // ===== 每行局部 AABB 预计算（公式与下方绘制路径完全一致）=====
+            // Blur-Mode 使用：Row=逐行模糊，Panel=整块模糊。局部坐标经
+            // renderX/renderY 与元素 scale 换算成屏幕绝对坐标后交给 HudBlur，
+            // 遮罩在调用方当前矩阵（局部坐标）下绘制，自动跟随列表动画。
+            val rowRects = if (blurMode == "None" || modules.isEmpty()) null else {
+                ArrayList<FloatArray>(modules.size).also { rects ->
+                    modules.forEachIndexed { index, module ->
+                        val yPos = (if (side.vertical == Vertical.DOWN) -textSpacer else textSpacer) *
+                            (if (side.vertical == Vertical.DOWN) index + 1 else index)
+                        when (side.horizontal) {
+                            Horizontal.LEFT -> {
+                                val width = font.getStringWidth(getDisplayString(module))
+                                val xPos = -(width - module.slide) + if (rectMode == "Left") 6 else 3
+                                rects.add(floatArrayOf(
+                                    if (rectMode == "Left") 1f else 0f,
+                                    yPos,
+                                    xPos + width + if (rectMode == "Right") 4 else 1,
+                                    yPos + textSpacer
+                                ))
+                            }
+                            else -> {
+                                val xPos = -module.slide - if (displayIcons) 2 else 3
+                                rects.add(floatArrayOf(
+                                    xPos - if (rectMode == "Right") 5 else 2,
+                                    yPos,
+                                    if (rectMode == "Right") -3F else -1F,
+                                    yPos + textSpacer
+                                ))
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (blurMode == "Panel" && rowRects != null) {
+                val minX = rowRects.minOf { it[0] } - 3F
+                val minY = rowRects.minOf { it[1] } - 1F
+                val maxX = rowRects.maxOf { it[2] } + 3F
+                val maxY = rowRects.maxOf { it[3] } + 1F
+                val corners = when (side.horizontal) {
+                    Horizontal.LEFT -> RenderUtils.RoundedCorners.RIGHT_ONLY
+                    Horizontal.MIDDLE -> RenderUtils.RoundedCorners.ALL
+                    else -> RenderUtils.RoundedCorners.LEFT_ONLY
+                }
+                HudBlur.blur(
+                    (scale * (minX + renderX)).toFloat(), (scale * (minY + renderY)).toFloat(),
+                    (scale * (maxX + renderX)).toFloat(), (scale * (maxY + renderY)).toFloat(),
+                    blurPanelRadius, corners
+                ) {
+                    drawRoundedRect(minX, minY, maxX, maxY, -1, blurPanelRadius, corners)
+                }
+            }
+
             modules.forEachIndexed { index, module ->
+                // Row 模糊：在这一行其它内容（含背景条）绘制前，为本行贴模糊
+                if (blurMode == "Row") rowRects?.getOrNull(index)?.let { r ->
+                    HudBlur.blur(
+                        (scale * (r[0] + renderX)).toFloat(), (scale * (r[1] + renderY)).toFloat(),
+                        (scale * (r[2] + renderX)).toFloat(), (scale * (r[3] + renderY)).toFloat(),
+                        roundedBackgroundRadius
+                    ) {
+                        drawRoundedRect(r[0], r[1], r[2], r[3], -1, roundedBackgroundRadius)
+                    }
+                }
                 val yPos =
                     (if (side.vertical == Vertical.DOWN) -textSpacer else textSpacer) * if (side.vertical == Vertical.DOWN) index + 1 else index
                 val moduleColor = Color.getHSBColor(module.hue, saturation, brightness).rgb

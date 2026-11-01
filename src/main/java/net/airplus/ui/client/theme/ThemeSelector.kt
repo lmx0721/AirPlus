@@ -9,7 +9,7 @@ import net.airplus.features.module.modules.render.ThemeManager
 import net.airplus.ui.font.Fonts
 import net.airplus.utils.client.ClientThemesUtils
 import net.airplus.utils.client.ClientThemesUtils.ClientTheme
-import net.airplus.utils.render.BlurUtils
+import net.airplus.utils.render.HudBlur
 import net.airplus.utils.render.RenderUtils
 import net.airplus.utils.render.RenderUtils.drawFilledCircle
 import net.airplus.utils.render.RenderUtils.drawRect
@@ -257,7 +257,7 @@ class ThemeSelector : GuiScreen() {
             Color(overlayColor.red, overlayColor.green, overlayColor.blue, (overlayColor.alpha * uiFade).toInt()))
 
         // Frosted glass window: blurred and transparent so the game shines through
-        BlurUtils.blurAreaRounded(winX, wy, winX + windowW, wy + windowH, 12f, 14f)
+        HudBlur.blur(winX, wy, winX + windowW, wy + windowH, 12f)
         val windowColor = Color(windowBg.red, windowBg.green, windowBg.blue, (windowBg.alpha * uiFade).toInt())
         RoundedUtil.drawRound(winX, wy, windowW, windowH, 12f, windowColor)
 

@@ -175,8 +175,7 @@ class Text(x: Double = 10.0, y: Double = 10.0, scale: Float = 1F, side: Side = S
     private val bgBorderColors = ColorSettingsInteger(this, "BackgroundBorderColor").with(a = 0)
 
     private val backgroundBlur by boolean("Background-Blur", false)
-    private val backgroundBlurStrength by float("Background-Blur-Strength", 8F, 1F..30F) { backgroundBlur }
-    private val backgroundBlurMode by choices("Background-Blur-Mode", HudBlur.MODES, "InternalBlur") { backgroundBlur }
+    // 模糊类型/强度由 Client 模块的全局 Blur 设置统一控制（HudBlur）
 
     private fun isColorModeUsed(value: String) = textColorMode == value || backgroundMode == value
 
@@ -408,9 +407,7 @@ class Text(x: Double = 10.0, y: Double = 10.0, scale: Float = 1F, side: Side = S
 
                     // 遮罩在当前矩阵（含 bounce 变换）下直接绘制未变换的局部矩形
                     HudBlur.blur(
-                        absX1, absY1, absX2, absY2,
-                        backgroundBlurStrength,
-                        backgroundBlurMode
+                        absX1, absY1, absX2, absY2
                     ) {
                         drawRoundedRect(rectPos[0], rectPos[1], rectPos[2], rectPos[3], -1, roundedBackgroundRadius)
                     }

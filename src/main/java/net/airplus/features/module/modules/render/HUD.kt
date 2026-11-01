@@ -71,9 +71,8 @@ object HUD : Module("HUD", Category.RENDER, gameDetecting = false, defaultState 
     val chatPosX by float("Chat-Pos-X", 0F, -1000F..1000F) { chatCustom }
     val chatPosY by float("Chat-Pos-Y", 0F, -1000F..1000F) { chatCustom }
     val chatHeightMax by float("Chat-Height-Max", 110F, 9F..400F) { chatCustom }
+    // 背景模糊的类型/强度由 Client 模块的全局 Blur 设置统一控制（HudBlur）
     val chatBackgroundBlur by boolean("Chat-Background-Blur", true) { chatCustom && chatBackground }
-    val chatBlurStrength by float("Chat-Blur-Strength", 8F, 1F..30F) { chatCustom && chatBackground && chatBackgroundBlur }
-    val chatBlurMode by choices("Chat-Blur-Mode", HudBlur.MODES, "InternalBlur") { chatCustom && chatBackground && chatBackgroundBlur }
 
     val onRender2D = handler<Render2DEvent> {
         if (mc.currentScreen is GuiHudDesigner)

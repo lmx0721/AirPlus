@@ -58,8 +58,7 @@ class Nearby(
     private val animFriction by float("BounceFriction", 0.12f, 0.01f..1.0f) { enableBounce }
 
     private val bgBlur by boolean("Background-Blur", true)
-    private val bgBlurStrength by float("Background-Blur-Strength", 8F, 1F..30F) { bgBlur }
-    private val bgBlurMode by choices("Background-Blur-Mode", HudBlur.MODES, "InternalBlur") { bgBlur }
+    // 模糊类型/强度由 Client 模块的全局 Blur 设置统一控制（HudBlur）
 
     private val bgRadius by float("Round-Radius", 6F, 0F..12F)
     private val bgColors = ColorSettingsInteger(this, "BackgroundColor").with(Color(20, 22, 28, 150))
@@ -213,8 +212,7 @@ class Nearby(
                 val ly2 = panelPivotY + (totalH - panelPivotY) * panelS
                 HudBlur.blur(
                     (s * (lx1 + ox)).toFloat(), (s * (ly1 + oy)).toFloat(),
-                    (s * (lx2 + ox)).toFloat(), (s * (ly2 + oy)).toFloat(),
-                    bgBlurStrength, bgBlurMode
+                    (s * (lx2 + ox)).toFloat(), (s * (ly2 + oy)).toFloat()
                 ) {
                     drawRoundedRect(0F, 0F, contentW, totalH, -1, bgRadius)
                 }

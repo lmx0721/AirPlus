@@ -884,7 +884,10 @@ object RotationUtils : MinecraftInstance, Listenable {
         val serverRotation = currentRotation ?: serverRotation
 
         if (resetTicks == 0) {
-            if (isDifferenceAcceptableForReset(serverRotation, playerRotation, settings)) {
+            // 重置视角俯仰锁定（模块注入，如 Telly 低头）：回归目标仅替换 Pitch，Yaw 照常回归真实视角
+            val resetTarget = settings.lockedResetPitch?.let { Rotation(playerRotation.yaw, it) } ?: playerRotation
+
+            if (isDifferenceAcceptableForReset(serverRotation, resetTarget, settings)) {
                 settings.noise3Context = null
                 resetRotation()
                 return
@@ -894,7 +897,7 @@ object RotationUtils : MinecraftInstance, Listenable {
             // 避免过期瞄准点在此路径把视角重新拉向死目标（审查 B1）
             settings.noise3Context = null
 
-            currentRotation = limitAngleChange(serverRotation, playerRotation, settings).fixedSensitivity()
+            currentRotation = limitAngleChange(serverRotation, resetTarget, settings).fixedSensitivity()
             return
         }
 

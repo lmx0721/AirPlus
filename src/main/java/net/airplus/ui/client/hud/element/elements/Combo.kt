@@ -106,8 +106,7 @@ class Combo(
 
     private val bgRadius by float("Round-Radius", 10F, 0F..18F)
     private val bgBlur by boolean("Background-Blur", false)
-    private val bgBlurStrength by float("Background-Blur-Strength", 8F, 1F..30F) { bgBlur }
-    private val bgBlurMode by choices("Background-Blur-Mode", HudBlur.MODES, "InternalBlur") { bgBlur }
+    // 模糊类型/强度由 Client 模块的全局 Blur 设置统一控制（HudBlur）
 
     private val font by font("Font", Fonts.fontSemibold40)
     private val smallFont by font("SmallFont", Fonts.fontRegular35)
@@ -229,7 +228,7 @@ class Combo(
                     val absY1 = (scale * (ly1 + renderY)).toFloat()
                     val absX2 = (scale * (lx2 + renderX)).toFloat()
                     val absY2 = (scale * (ly2 + renderY)).toFloat()
-                    HudBlur.blur(absX1, absY1, absX2, absY2, bgBlurStrength, bgBlurMode) {
+                    HudBlur.blur(absX1, absY1, absX2, absY2) {
                         drawRoundedRect(0F, 0F, width, height, -1, bgRadius)
                     }
                 }

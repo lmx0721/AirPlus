@@ -153,8 +153,12 @@ class GameFontRenderer(
             return 0
         }
 
-        // Basic blend（必须走 GlStateManager：裸调用绕过缓存，
-        // 会让后续 enableBlend 被跳过 → 主文本无混合渲染，且状态残留影响后续绘制）
+        // Basic blend 两步法（必须走 GlStateManager 并同时同步缓存）：
+        // 项目里多处渲染路径（GlowUtils/HudBlur/模块特效等）会裸 glDisable(GL_BLEND)，
+        // 此时缓存可能仍误记「已启用」——单步 enableBlend 会被缓存守卫静默跳过，
+        // 字形 quad 就在无混合状态下渲染，字形贴图的透明像素以 (0,0,0) 写入画面，
+        // 表现为文字变成纯黑色块。先 disable 再 enable 强制 缓存 == 真实状态。
+        GlStateManager.disableBlend()
         GlStateManager.enableBlend()
         GlStateManager.blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
@@ -210,8 +214,17 @@ class GameFontRenderer(
         // Position & GL states
         glTranslated(x - 1.5, y + 0.5, 0.0)
         enableAlpha()
+        // 两步法 enableBlend + blendFunc：先写「相反值」推开缓存守卫，再写目标状态，
+        // 确保无论调用链此前如何用裸 GL 改过混合开关/因数（GlowUtils 的 (1,1) 叠加、
+        // 模糊贴回等），到达字形绘制时 真实状态 == 缓存 == 期望状态，
+        // 否则字形 quad 可能无混合（透明像素变黑块）或因数错误（颜色异常/闪烁）。
+        disableBlend()
         enableBlend()
+        tryBlendFuncSeparate(GL_ZERO, GL_ONE, GL_ZERO, GL_ONE)
         tryBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ZERO)
+        // TEXTURE_2D 开关两步法：上游裸 GL 关过纹理采样开关而缓存未同步时，
+        // 单步 enableTexture2D 会被守卫跳过 → 所有顶点无法采样 → 字形整块消失/发黑
+        disableTexture2D()
         enableTexture2D()
 
         var drawColor = if ((color and -0x4000000) == 0) (color or -16777216) else color

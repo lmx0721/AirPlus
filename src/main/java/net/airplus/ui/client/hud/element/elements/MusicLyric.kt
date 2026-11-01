@@ -6,8 +6,8 @@ import net.airplus.ui.client.hud.element.Element
 import net.airplus.ui.client.hud.element.ElementInfo
 import net.airplus.ui.client.hud.element.Side
 import net.airplus.ui.font.Fonts
-import net.airplus.utils.render.BlurUtils
 import net.airplus.utils.render.ColorSettingsFloat
+import net.airplus.utils.render.HudBlur
 import net.airplus.utils.render.ColorSettingsInteger
 import net.airplus.utils.render.ColorUtils
 import net.airplus.utils.render.RenderUtils.drawRoundedBorder
@@ -78,7 +78,7 @@ class MusicLyric(x: Double = 10.0, y: Double = 100.0, scale: Float = 1F, side: S
         .with(r = 100, g = 150, b = 255, a = 200)
 
     private val blur by boolean("Blur", false)
-    private val blurStrength by float("Blur-Strength", 10F, 1F..50F) { blur }
+    // 模糊类型/强度由 Client 模块的全局 Blur 设置统一控制（HudBlur）
 
     private fun isColorModeUsed(value: String) = textColorMode == value || backgroundMode == value
 
@@ -206,12 +206,12 @@ class MusicLyric(x: Double = 10.0, y: Double = 100.0, scale: Float = 1F, side: S
             glScalef(1F, 1F, 1F)
             glPushMatrix()
 
-            BlurUtils.blurArea(
+            // 全局 Blur 设置 + 全屏单次模糊架构（遮罩用整个歌词 AABB）
+            HudBlur.blur(
                 renderX.toFloat() + rectPos[0] * totalScale,
                 renderY.toFloat() + rectPos[1] * totalScale,
                 renderX.toFloat() + rectPos[2] * totalScale,
-                renderY.toFloat() + rectPos[3] * totalScale,
-                blurStrength
+                renderY.toFloat() + rectPos[3] * totalScale
             )
 
             glPopMatrix()

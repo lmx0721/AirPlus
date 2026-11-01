@@ -37,11 +37,17 @@ open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true 
     /** Noise3 决策上下文（模块每 tick 组装：双瞄准点 + 目标标识 + 参数）。 */
     var noise3Context: Noise3Context? = null
 
+    /**
+     * 重置视角时的俯仰角锁定（模块注入，如 Telly 低头）：
+     * 非 null 时回归视角阶段仅 Yaw 回归真实视角，Pitch 恒定为该值（正数即向下）。
+     */
+    var lockedResetPitch: Float? = null
+
     val aimMode: String
         get() = modeProvider?.invoke() ?: "Legacy"
 
     open val rotationsValue = boolean("Rotations", true) { aimMode != "Simple" && generalApply() }
-    open val applyServerSideValue = boolean("ApplyServerSide", true) { rotationsActive && aimMode != "Simple" && generalApply() }
+    open val applyServerSideValue = boolean("ApplyServerSide", true) { rotationsActive && generalApply() }
     open val simulateShortStopValue = boolean("SimulateShortStop", false) { rotationsActive && aimMode != "Simple" && generalApply() }
     open val rotationDiffBuildUpToStopValue = float("RotationDiffBuildUpToStop", 180f, 50f..720f) { simulateShortStop }
     open val maxThresholdAttemptsToStopValue = int("MaxThresholdAttemptsToStop", 1, 0..5) { simulateShortStop }
@@ -76,12 +82,12 @@ open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true 
     ) { rotationsActive && aimMode != "Simple" && generalApply() }
 
     // Variables for easier access
-    // Simple 模式强制开启转头与服务端应用（对应设置隐藏，读值走强制分支）
+    // Simple 模式强制开启转头（Rotations 设置隐藏，读值走强制分支）；ApplyServerSide 开放为可见设置
     val rotations: Boolean
         get() = aimMode == "Simple" || rotationsValue.isActive()
 
     val applyServerSide: Boolean
-        get() = aimMode == "Simple" || applyServerSideValue.isActive()
+        get() = applyServerSideValue.isActive()
     val simulateShortStop by simulateShortStopValue
     val rotationDiffBuildUpToStop by rotationDiffBuildUpToStopValue
     val maxThresholdAttemptsToStop by maxThresholdAttemptsToStopValue

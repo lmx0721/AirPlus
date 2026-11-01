@@ -176,9 +176,9 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     private val switchDelay by int("SwitchDelay", 15, 1..1000) { targetMode == "Switch" }
 
     // Bypass
-    private val swingValue = boolean("Swing", true) { !isSimpleMode }
+    private val swingValue = boolean("Swing", true)
     private val swing
-        get() = isSimpleMode || swingValue.isActive()
+        get() = swingValue.isActive()
     private val keepSprintValue = boolean("KeepSprint", true)
     private val keepSprint
         get() = keepSprintValue.isActive()
@@ -276,7 +276,8 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
      * - Legacy：原有管线，无改动（默认）。
      * - Simple：瞄准 hitbox 上与当前视角夹角最小的点（最近点瞄准），固定速度转头；
      *   该模式下设置精简为 AutoBlock / Strafe / Strict / RotationSpeed（+ Range / CPS /
-     *   目标选择 / Mark），RayCast 隐藏但强制启用。
+     *   目标选择 / Mark），ApplyServerSide / Swing / RayCast 开放为可见设置，
+     *   FailSwing / SwingOnlyInAir 不再强制启用（默认关闭）。
      * - Template / Neural：AI 学习转头（无转头速度设置），无数据时自动回退 Legacy 管线。
      * - Noise3：C40N 路径规划器转头（无转头速度设置），参数面板见下方 Noise3 组。
      */
@@ -292,14 +293,16 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     private val rotationSpeedValue = int("RotationSpeed", 60, 1..180) { isSimpleMode }
     private val rotationSpeed by rotationSpeedValue
 
-    // RayCast（Simple 模式下隐藏但强制启用）
-    private val raycastValue = boolean("RayCast", true) { options.aimMode != "Simple" && options.rotationsActive }
+    // RayCast（Simple 模式下同样开放为可见设置；子项 RayCastIgnored / LivingRayCast 仍隐藏，读值不变）
+    private val raycastValue = boolean("RayCast", true) { options.rotationsActive }
     private val raycast
-        get() = isSimpleMode || raycastValue.isActive()
+        get() = raycastValue.isActive()
     private val raycastIgnored by boolean(
         "RayCastIgnored", false
-    ) { raycastValue.isActive() && options.rotationsActive }
-    private val livingRaycastValue = boolean("LivingRayCast", true) { raycastValue.isActive() && options.rotationsActive }
+    ) { raycastValue.isActive() && options.rotationsActive && options.aimMode != "Simple" }
+    private val livingRaycastValue = boolean("LivingRayCast", true) {
+        raycastValue.isActive() && options.rotationsActive && options.aimMode != "Simple"
+    }
     private val livingRaycast
         get() = isSimpleMode || livingRaycastValue.isActive()
 
@@ -392,17 +395,17 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     private val forceFirstHit by boolean("ForceFirstHit", false) { !respectMissCooldown && !useHitDelay }
 
     // Extra swing
-    private val failSwingValue = boolean("FailSwing", true) { swing && !isSimpleMode && options.rotationsActive }
+    private val failSwingValue = boolean("FailSwing", false) { swing && !isSimpleMode && options.rotationsActive }
     private val failSwing
-        get() = isSimpleMode || failSwingValue.isActive()
+        get() = failSwingValue.isActive()
     private val respectMissCooldown by boolean(
         "RespectMissCooldown", false
     ) { swing && failSwing && !isSimpleMode && options.rotationsActive }
-    private val swingOnlyInAirValue = boolean("SwingOnlyInAir", true) {
+    private val swingOnlyInAirValue = boolean("SwingOnlyInAir", false) {
         swing && failSwing && !isSimpleMode && options.rotationsActive
     }
     private val swingOnlyInAir
-        get() = isSimpleMode || swingOnlyInAirValue.isActive()
+        get() = swingOnlyInAirValue.isActive()
     private val maxRotationDifferenceToSwing by float(
         "MaxRotationDifferenceToSwing", 180f, 0f..180f
     ) { swing && failSwing && !isSimpleMode && options.rotationsActive }

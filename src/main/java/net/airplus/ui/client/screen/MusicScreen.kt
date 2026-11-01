@@ -83,8 +83,6 @@ class MusicScreen : GuiScreen() {
         private const val MUSIC_VOLUME_HIGH = "J"
         private const val CLIENT_REFRESH = "D"
         private const val CLIENT_CLOSE = "p"
-
-        private const val BLUR_STRENGTH = 10f
     }
 
     // ===== 基础数据结构 =====
@@ -402,11 +400,10 @@ class MusicScreen : GuiScreen() {
         drawCenteredText("Cancel", confirmNoBox, TEXT_MUTED, false, 8f)
     }
 
-    /** 兼容包装：模糊当前游戏画面（不支持时静默跳过）。 */
+    /** 兼容包装：模糊当前游戏画面（全局 Blur 设置，不支持时静默跳过）。 */
     private fun HudBlurCompat() {
         try {
-            net.airplus.utils.render.HudBlur.blur(0f, 0f, width.toFloat(), height.toFloat(),
-                BLUR_STRENGTH, "InternalBlur")
+            net.airplus.utils.render.HudBlur.blur(0f, 0f, width.toFloat(), height.toFloat())
         } catch (ignored: Throwable) {
         }
     }

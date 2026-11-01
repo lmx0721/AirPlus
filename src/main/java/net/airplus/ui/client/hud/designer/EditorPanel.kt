@@ -57,7 +57,6 @@ class EditorPanel(private val hudDesigner: GuiHudDesigner, var x: Int, var y: In
         private const val TOOLBAR_RADIUS = 8F
         private const val HEADER_HEIGHT = 18F
         private const val ROW_HEIGHT = 14F
-        private const val BLUR_STRENGTH = 8F
         private const val MAX_CARD_H = 200F
     }
 
@@ -226,7 +225,7 @@ class EditorPanel(private val hudDesigner: GuiHudDesigner, var x: Int, var y: In
         val slide = (1F - toolbarAnim) * -14F
         if (toolbarAnim > 0.01F) {
             // blur 背景（在弹出变换外绘制，避免遮罩错位）
-            HudBlur.blur(x.toFloat(), y.toFloat(), x + toolbarW, y + TOOLBAR_HEIGHT, BLUR_STRENGTH * toolbarAnim, "InternalBlur") {
+            HudBlur.blur(x.toFloat(), y.toFloat(), x + toolbarW, y + TOOLBAR_HEIGHT, strengthScale = toolbarAnim) {
                 drawRoundedRect(x.toFloat(), y.toFloat(), x + toolbarW, y + TOOLBAR_HEIGHT, -1, TOOLBAR_RADIUS)
             }
 
@@ -309,7 +308,7 @@ class EditorPanel(private val hudDesigner: GuiHudDesigner, var x: Int, var y: In
         val pop = easeOutBack(addAnim.coerceIn(0F, 1F))
         if (addAnim > 0.01F) {
             // blur 背景（不参与弹出变换，避免遮罩错位）
-            HudBlur.blur(addX, addY, addX + addW, addY + addH, BLUR_STRENGTH * addAnim, "InternalBlur") {
+            HudBlur.blur(addX, addY, addX + addW, addY + addH, strengthScale = addAnim) {
                 drawRoundedRect(addX, addY, addX + addW, addY + addH, -1, CARD_RADIUS)
             }
 
@@ -408,7 +407,7 @@ class EditorPanel(private val hudDesigner: GuiHudDesigner, var x: Int, var y: In
         if (cardAnim <= 0.01F) return
 
         // blur 背景（不参与弹出变换）
-        HudBlur.blur(cardX, cardY, cardX + cardW, cardY + cardH, BLUR_STRENGTH * cardAnim, "InternalBlur") {
+        HudBlur.blur(cardX, cardY, cardX + cardW, cardY + cardH, strengthScale = cardAnim) {
             drawRoundedRect(cardX, cardY, cardX + cardW, cardY + cardH, -1, CARD_RADIUS)
         }
 
@@ -978,7 +977,7 @@ class EditorPanel(private val hudDesigner: GuiHudDesigner, var x: Int, var y: In
 
         val clicked = Mouse.isButtonDown(0) && !mouseDown
 
-        HudBlur.blur(dlgX, dlgY, dlgX + dlgW, dlgY + dlgH, BLUR_STRENGTH * dlgAnim, "InternalBlur") {
+        HudBlur.blur(dlgX, dlgY, dlgX + dlgW, dlgY + dlgH, strengthScale = dlgAnim) {
             drawRoundedRect(dlgX, dlgY, dlgX + dlgW, dlgY + dlgH, -1, CARD_RADIUS)
         }
 
@@ -1067,7 +1066,7 @@ class EditorPanel(private val hudDesigner: GuiHudDesigner, var x: Int, var y: In
         val clicked = Mouse.isButtonDown(0) && !mouseDown
         val accent = ClientThemesUtils.getColor()
 
-        HudBlur.blur(dlgX, dlgY, dlgX + dlgW, dlgY + dlgH, BLUR_STRENGTH * dlgAnim, "InternalBlur") {
+        HudBlur.blur(dlgX, dlgY, dlgX + dlgW, dlgY + dlgH, strengthScale = dlgAnim) {
             drawRoundedRect(dlgX, dlgY, dlgX + dlgW, dlgY + dlgH, -1, CARD_RADIUS)
         }
 
@@ -1176,7 +1175,7 @@ class EditorPanel(private val hudDesigner: GuiHudDesigner, var x: Int, var y: In
         val pop = easeOutBack(confirmAnim.coerceIn(0F, 1F))
         if (confirmAnim <= 0.01F) return
 
-        HudBlur.blur(confirmX, confirmY, confirmX + confirmW, confirmY + confirmH, BLUR_STRENGTH * confirmAnim, "InternalBlur") {
+        HudBlur.blur(confirmX, confirmY, confirmX + confirmW, confirmY + confirmH, strengthScale = confirmAnim) {
             drawRoundedRect(confirmX, confirmY, confirmX + confirmW, confirmY + confirmH, -1, CARD_RADIUS)
         }
 

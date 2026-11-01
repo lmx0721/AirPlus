@@ -46,8 +46,7 @@ class ScoreboardElement(
     private val roundedRectRadius by float("Rounded-Radius", 3F, 0F..5F)
 
     private val backgroundBlur by boolean("Background-Blur", false)
-    private val backgroundBlurStrength by float("Background-Blur-Strength", 8F, 1F..30F) { backgroundBlur }
-    private val backgroundBlurMode by choices("Background-Blur-Mode", HudBlur.MODES, "InternalBlur") { backgroundBlur }
+    // 模糊类型/强度由 Client 模块的全局 Blur 设置统一控制（HudBlur）
 
     private val rect by boolean("Rect", true)
     private val rectColor = color("RectangleColor", Color(0, 111, 255)) { rect }
@@ -139,7 +138,7 @@ class ScoreboardElement(
                 val absX2 = (scale * (maxX + renderX)).toFloat()
                 val absY2 = (scale * (maxHeight + fontHeight + 2 + renderY)).toFloat()
 
-                HudBlur.blur(absX1, absY1, absX2, absY2, backgroundBlurStrength, backgroundBlurMode) {
+                HudBlur.blur(absX1, absY1, absX2, absY2) {
                     // 遮罩在当前矩阵下按局部坐标绘制，自动跟随 scale 与位置
                     drawRoundedRectInt(minX, -(4 + inc), maxX, maxHeight + fontHeight + 2, -1, roundedRectRadius, bgCorners)
                 }

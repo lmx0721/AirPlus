@@ -19,6 +19,7 @@ import net.airplus.config.TextValue
 import net.airplus.config.Value
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
+import net.airplus.features.module.modules.client.Client
 import net.airplus.features.module.modules.render.ClickGUI
 import net.airplus.file.FileManager.modulesConfig
 import net.airplus.file.FileManager.saveConfig
@@ -171,8 +172,9 @@ class RiseClickGui : GuiScreen() {
         displayedBg = lerpColor(displayedBg, targetBg, 0.01f)
 
         // Blur background - 必须在 GL11 变换之前调用，因为模糊使用屏幕坐标
+        // （类型/强度由 Client 模块的全局 Blur 设置统一控制）
         if (ClickGUI.nlBlur) {
-            HudBlur.blur(x, y, x + w, y + h, ClickGUI.nlBlurStrength, "InternalBlur", 12f)
+            HudBlur.blur(x, y, x + w, y + h, 12f)
         }
 
         GL11.glPushMatrix()
@@ -433,7 +435,7 @@ class RiseClickGui : GuiScreen() {
         // Blur Strength slider (only if blur enabled; range 1..50, normalized progress)
         if (blurEnabled) {
             Fonts.fontRise35.drawString("Blur Strength", sx, sy, muted.rgb)
-            val blurStr = ClickGUI.nlBlurStrength
+            val blurStr = Client.blurStrength
             val blurVal = "%.0f".format(blurStr)
             Fonts.fontRise35.drawString(blurVal, sx + contentW - 40f, sy, accent.rgb)
             sy += 18f
@@ -714,9 +716,9 @@ class RiseClickGui : GuiScreen() {
                 valuesDirty = true
             }
             "blur" -> {
-                // Range 1f..50f
-                val value = 1f + 49f * progress
-                ClickGUI.nlBlurStrengthValue.set(value, false)
+                // Global Blur strength (int 1..50)
+                val value = (1 + 49 * progress).toInt()
+                Client.blurStrengthValue.set(value, false)
                 valuesDirty = true
             }
         }

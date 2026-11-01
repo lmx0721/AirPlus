@@ -45,8 +45,7 @@ class Target : Element("Target"), Listenable {
     private val livingTime by int("LivingTime", 3, 0..20) { !onlyOnKillaura }
 
     private val blur by boolean("Blur", true)
-    private val blurStrength by float("BlurStrength", 5F, 1F..10F) { blur }
-    private val blurModeValue by choices("Blur-Mode", HudBlur.MODES, "InternalBlur") { blur }
+    // 模糊类型/强度由 Client 模块的全局 Blur 设置统一控制（HudBlur）
 
     private val barColorMode by choices("Bar-Color", arrayOf("Health", "Theme"), "Health")
 
@@ -145,7 +144,6 @@ class Target : Element("Target"), Listenable {
     private val opaiShadowCheck by boolean("Opai-ShadowCheck",false) { hudStyle == "Opai" }
     private val opaiShadowStrengh by float("Opai-shadowStrengh",0.5f,0.0f..1.0f) { hudStyle == "Opai" && opaiShadowCheck }
     private val opaiBlurCheck by boolean("Opai-BlurCheck", true) { hudStyle == "Opai" }
-    private val opaiBlurRadius by float("Opai-BlurStrength", 10f, 1f..50f) { hudStyle == "Opai" && opaiBlurCheck }
     private val opaiVanishDelay by int("Opai-VanishDelay", 300, 0..500) { hudStyle == "Opai" }
 
     private val defaultRoundedRectRadius by float("Default-Rounded-Radius", 3F, 0F..5F) { hudStyle == "Default" }
@@ -640,7 +638,7 @@ class Target : Element("Target"), Listenable {
             val absY1 = (scale * (y + renderY)).toFloat()
             val absX2 = (scale * (x + width + renderX)).toFloat()
             val absY2 = (scale * (y + height + renderY)).toFloat()
-            HudBlur.blur(absX1, absY1, absX2, absY2, blurStrength, blurModeValue) {
+            HudBlur.blur(absX1, absY1, absX2, absY2) {
                 drawRoundedRect(0F, 0F, width, height, -1, defaultRoundedRectRadius)
             }
         }
@@ -920,7 +918,7 @@ class Target : Element("Target"), Listenable {
             val absY1 = (scale * (y + renderY)).toFloat()
             val absX2 = (scale * (x + width + renderX)).toFloat()
             val absY2 = (scale * (y + height + renderY)).toFloat()
-            HudBlur.blur(absX1, absY1, absX2, absY2, blurStrength, blurModeValue) {
+            HudBlur.blur(absX1, absY1, absX2, absY2) {
                 drawRoundedRect(0F, 0F, width, height, -1, 3f)
             }
         }
@@ -967,7 +965,7 @@ class Target : Element("Target"), Listenable {
             val absY1 = (scale * (y + renderY)).toFloat()
             val absX2 = (scale * (x + width + 14f + renderX)).toFloat()
             val absY2 = (scale * (y + height + renderY)).toFloat()
-            HudBlur.blur(absX1, absY1, absX2, absY2, blurStrength, blurModeValue) {
+            HudBlur.blur(absX1, absY1, absX2, absY2) {
                 drawRoundedRect(x, y, x + width + 14f, y + height, -1, 3f)
             }
         }
@@ -1060,7 +1058,7 @@ class Target : Element("Target"), Listenable {
                 val absY1 = (scale * (y + renderY)).toFloat()
                 val absX2 = (scale * (x + panelWidth + renderX)).toFloat()
                 val absY2 = (scale * (y + panelHeight + renderY)).toFloat()
-                HudBlur.blur(absX1, absY1, absX2, absY2, opaiBlurRadius, blurModeValue) {
+                HudBlur.blur(absX1, absY1, absX2, absY2) {
                     RenderUtils.drawRoundedRect(
                         x, y, x + panelWidth * slideIn, y + panelHeight * slideIn,
                         Color.WHITE.rgb, currentRadius
@@ -1318,7 +1316,7 @@ class Target : Element("Target"), Listenable {
             val absY1 = (scale * (y + renderY)).toFloat()
             val absX2 = (scale * (x + width + renderX)).toFloat()
             val absY2 = (scale * (y + height + renderY)).toFloat()
-            HudBlur.blur(absX1, absY1, absX2, absY2, blurStrength, blurModeValue) {
+            HudBlur.blur(absX1, absY1, absX2, absY2) {
                 drawRoundedRect(0F, 0F, width, height, -1, 5f)
             }
         }

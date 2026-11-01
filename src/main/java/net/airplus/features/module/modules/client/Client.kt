@@ -9,6 +9,7 @@ import net.airplus.features.module.Category
 import net.airplus.features.module.Module
 import net.airplus.ui.font.AWTFontRenderer
 import net.airplus.ui.font.Fonts
+import java.awt.Color
 
 /**
  * Client 字体设置模块（不可开关）：
@@ -19,6 +20,55 @@ import net.airplus.ui.font.Fonts
  * - 回退字号支持两种方案：Offset（渲染器字号 + 偏移）/ Percent（渲染器字号 × 百分比）
  */
 object Client : Module("Client", Category.CLIENT, canBeEnabled = false) {
+
+    // ===== 全局 Blur 设置 =====
+    // 客户端所有使用模糊的 UI（HUD 元素背景、ClickGUI、聊天栏、主题选择器、音乐界面、菜单等）
+    // 统一读取这里的模糊类型与强度；单帧只对整个屏幕做一次全屏模糊，
+    // 之后由 HudBlur 把预模糊纹理按各组件的遮罩形状裁剪贴回对应位置。
+    private val blurModeValue = choices("BlurMode", arrayOf("None", "Kawase", "Dual", "Better"), "Better")
+
+    // 模糊强度（int 滑条），internal 供个别风格 GUI 直接绑定
+    internal val blurStrengthValue = int("BlurStrength", 10, 1..50)
+
+    // 模糊辉光：独立开关，可叠加在任意 BlurMode 上（BlurMode = None 时无模糊快照，不生效）。
+    // 效果 = 模糊贴回后再叠加一次加法混合的辉光 pass：场景亮部透过模糊晕开成光晕（亮部辉光），
+    // 并在遮罩边缘向外按指数衰减发散（边缘光晕），强度由 BlurGlowStrength 控制。
+    internal val blurGlowValue = boolean("BlurGlow", false)
+
+    // 辉光强度（百分比），仅 BlurGlow 开启时可调
+    internal val blurGlowStrengthValue = int("BlurGlowStrength", 60, 10..200, "%") { blurGlowValue.get() }
+
+    // 辉光染色：alpha 通道 = 染色强度（0 = 场景原色，255 = 完全染成该色；
+    // 亮度仍由场景亮部驱动，纯黑染色 = 关闭辉光染色）。仅 BlurGlow 开启时可调
+    internal val blurGlowColorValue = color("BlurGlowColor", Color(255, 255, 255, 0)) { blurGlowValue.get() }
+
+    // 辉光柔和度：对辉光源做十字 5 点扩散采样，光晕绕模糊轮廓晕开而非紧贴轮廓。
+    // 百分比，基准为高斯 σ 的一半；0 = 关闭扩散。仅 BlurGlow 开启时可调
+    internal val blurGlowSoftValue = int("BlurGlowSoft", 50, 0..200) { blurGlowValue.get() }
+
+    /** 当前全局模糊类型（"None" 表示禁用所有模糊） */
+    val blurMode: String
+        get() = blurModeValue.get()
+
+    /** 当前全局模糊强度 */
+    val blurStrength: Float
+        get() = blurStrengthValue.get().toFloat()
+
+    /** 是否启用模糊辉光叠加 */
+    val blurGlow: Boolean
+        get() = blurGlowValue.get()
+
+    /** 模糊辉光强度（1.0 = 100%） */
+    val blurGlowStrength: Float
+        get() = blurGlowStrengthValue.get().toFloat()
+
+    /** 模糊辉光染色颜色（alpha = 染色强度） */
+    val blurGlowColor: Color
+        get() = blurGlowColorValue.get()
+
+    /** 模糊辉光柔和度（百分比，0 = 关闭扩散采样） */
+    val blurGlowSoft: Float
+        get() = blurGlowSoftValue.get().toFloat()
 
     // 主字体：自动获取注册表全部非图标字体（不含 Minecraft 原版字体与 Semibold 别名族）
     private val mainFontValue = choices("MainFont", Fonts.mainFontCandidates(), "HarmonyOS Sans SC Regular")

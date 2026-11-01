@@ -10,7 +10,7 @@ import net.airplus.file.FileManager.valuesConfig
 import net.airplus.file.configs.models.ClientConfiguration
 import net.airplus.ui.client.mainmenu.MainMenuStyles
 import net.airplus.ui.font.Fonts
-import net.airplus.utils.render.InternalBlurShader
+import net.airplus.utils.render.HudBlur
 import net.airplus.utils.render.RenderUtils
 import net.airplus.utils.ui.AbstractScreen
 import net.minecraft.client.gui.ScaledResolution
@@ -113,8 +113,8 @@ class GuiMainMenuSettings : AbstractScreen() {
         width = sr.scaledWidth
         height = sr.scaledHeight
 
-        // 背景：仅全屏模糊（透明，不叠加黑色蒙层）
-        InternalBlurShader.blurArea(0f, 0f, width.toFloat(), height.toFloat(), 10f)
+        // 背景：仅全屏模糊（透明，不叠加黑色蒙层），全局 Blur 设置统一控制
+        HudBlur.blur(0f, 0f, width.toFloat(), height.toFloat())
 
         // 毛玻璃面板：半透明白 + 细白描边（模糊已由上方全屏 blur 提供）
         RenderUtils.drawRoundedRect(panelX, panelY, panelX + panelW, panelY + panelH, glassFill.rgb, 6f)

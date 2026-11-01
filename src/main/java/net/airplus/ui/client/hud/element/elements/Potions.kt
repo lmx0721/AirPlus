@@ -47,7 +47,7 @@ class Potions(
     private val nameColor by color("Color", Color(33, 170, 47))
     private val fontRenderer by font("Font", Fonts.minecraftFont)
     private val blur by boolean("Blur", false)
-    private val blurStrength by float("Blur-Strength", 8f, 1f..20f) { blur }
+    // 模糊类型/强度由 Client 模块的全局 Blur 设置统一控制（HudBlur）
     private val bgColors = ColorSettingsInteger(this, "BackgroundColor") { style != "Hanabi" }.with(Color(20, 22, 28, 150))
     private val bgRadius by float("Round-Radius", 5F, 0F..12F) { style != "Hanabi" }
 
@@ -253,8 +253,7 @@ class Potions(
             val originY = renderY.toFloat()
             HudBlur.blur(
                 originX * s, (originY + rowsTop) * s,
-                (originX + metrics.width) * s, originY * s,
-                blurStrength, "InternalBlur"
+                (originX + metrics.width) * s, originY * s
             ) {
                 drawRect(0f, rowsTop, metrics.width, 0f, -1)
             }
@@ -581,8 +580,7 @@ class Potions(
                 val rw = row.width
                 HudBlur.blur(
                     (originX + rx) * s, (originY + ry) * s,
-                    (originX + rx + rw) * s, (originY + ry + OPAI_ROW_HEIGHT) * s,
-                    blurStrength, "InternalBlur"
+                    (originX + rx + rw) * s, (originY + ry + OPAI_ROW_HEIGHT) * s
                 ) {
                     drawRoundedRect(rx, ry, rx + rw, ry + OPAI_ROW_HEIGHT, -1, OPAI_RADIUS)
                 }

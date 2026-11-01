@@ -121,7 +121,10 @@ public abstract class MixinEntityRenderer {
                 // 否则后续 enableTexture2D/bindTexture 会作用在错误单元
                 OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
                 GlStateManager.setActiveTexture(OpenGlHelper.defaultTexUnit);
-                // unit-0 绑定两步法：脏缓存强制 vanilla 随后的 bindTexture(方块图集) 真实执行
+                // unit-0 绑定两步法：先真实写一个"必然不同"的脏值把 GlStateManager 的
+                // bindTexture 缓存拉离 0，再真实写回 0——保证缓存=真实=0，
+                // 此时 vanilla 随后的 bindTexture(方块图集)（缓存 0 ≠ 图集 id）必然真实执行
+                GlStateManager.bindTexture(1);
                 GlStateManager.bindTexture(0);
                 // unit-0 TEXTURE_2D 开关两步法：保证实际开启且缓存一致
                 GlStateManager.disableTexture2D();
@@ -135,10 +138,50 @@ public abstract class MixinEntityRenderer {
                 GlStateManager.color(0.0F, 0.0F, 0.0F, 0.0F);
                 GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
                 GlStateManager.depthMask(true);
-                // colorMaterial/lighting 两步法：手部渲染第一步 enableStandardItemLighting
-                // 的对应调用有缓存，先脏化缓存保证真实执行
+                // alpha test 同步：恢复默认阈值（如 ESP 半可见路径残留 alphaFunc(516, 0.0039)
+                // 会让手部 alpha 被"测试阈值残渣"之外的状态错误调制）。Func 为强制真实调用。
+                GlStateManager.enableAlpha();
+                GlStateManager.alphaFunc(GL11.GL_GREATER, 0.1F);
+                // depth test 两步法：保证真实开启且缓存一致（多数 Render3DEvent 处理器
+                // 在 finally 里 disableDepth，若缓存失同步 vanilla 侧 enableDepth 会被跳过）
+                GlStateManager.disableDepth();
+                GlStateManager.enableDepth();
+                // colorMaterial/lighting 两步法（与上面 blend/color 同款）：空手手臂走
+                // enableStandardItemLighting，其中 enableColorMaterial/enableLighting 均有
+                // 缓存——若真实开而缓存为关，这里单步 disable 会被缓存命中跳过，
+                // 手臂被残留 lightmap 二次打光 → 发灰/偏色。先 enable 脏化缓存再 disable
+                // 收敛到"真实=关 缓存=关"，后续 vanilla 的 enable 必然真实执行。
+                GlStateManager.enableColorMaterial();
                 GlStateManager.disableColorMaterial();
+                GlStateManager.enableLighting();
                 GlStateManager.disableLighting();
+                /*
+                 * unit-1（lightmap）强制同步（第五轮补充：光照"被覆盖"的真正出口）。
+                 * 许多 Render3DEvent 处理器（Trail/Particles/Blink 等）调用
+                 * mc.entityRenderer.disableLightmap() 且从不 enableLightmap()：
+                 * 它把 active texture 切到 unit 1、真实关掉 TEXTURE_2D，最后又 raw 切回
+                 * unit 0——但 GlStateManager 的 bindTexture 缓存是按"最后一次缓存写入"
+                 * 记账的， unit-1 期间缓存从未同步，处于失真状态。vanilla renderHand
+                 * → enableLightmap() 随后会：
+                 *   setActiveTexture(lightmap) → enableTexture2D → bindTexture(lightMapTex)
+                 * 全部走缓存守卫：若绑定缓存恰好等于 lightmap 纹理 id 而真实绑定不是
+                 * （失真），真实重绑被静默跳过 → 手部物品在 unit 1 上采样到错误纹理
+                 * （残留的深色 HUD 贴图）→ 物品发黑——即"光照之类被直接覆盖"的机制。
+                 * 两步法（脏值 1 → 0）把 unit-1 的真实与缓存收敛一致后再回 unit 0，
+                 * 保证 vanilla enableLightmap 的每一次缓存守卫调用都真实执行。
+                 */
+                OpenGlHelper.setActiveTexture(OpenGlHelper.lightmapTexUnit);
+                GlStateManager.setActiveTexture(OpenGlHelper.lightmapTexUnit);
+                // TEXTURE_2D 两步法：保证 unit 1 实际开启且缓存一致（enableLightmap 依赖它）
+                GlStateManager.disableTexture2D();
+                GlStateManager.enableTexture2D();
+                // 绑定两步法：把缓存推到"必然异于 lightmap 纹理 id"的 0，vanilla 随后
+                // 的 bindTexture(locationLightMap)（缓存 0 ≠ 图集 id）必然真实执行
+                GlStateManager.bindTexture(1);
+                GlStateManager.bindTexture(0);
+                // 回到 unit 0（raw + 缓存同步），交还控制权给 vanilla
+                OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
+                GlStateManager.setActiveTexture(OpenGlHelper.defaultTexUnit);
                 FreeLook.INSTANCE.useModifiedRotation();
                 return null;
             });

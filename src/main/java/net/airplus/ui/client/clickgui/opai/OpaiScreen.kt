@@ -21,7 +21,7 @@ import net.airplus.ui.client.clickgui.opai.OpaiContentLayout.Kind
 import net.airplus.ui.client.clickgui.opai.OpaiContentLayout.Rect
 import net.airplus.ui.client.clickgui.opai.widget.OpaiTextField
 import net.airplus.utils.render.ColorUtils.withAlpha
-import net.airplus.utils.render.InternalBlurShader
+import net.airplus.utils.render.HudBlur
 import net.minecraft.client.gui.GuiScreen
 import org.lwjgl.input.Keyboard
 import org.lwjgl.input.Mouse
@@ -242,7 +242,9 @@ class OpaiScreen : GuiScreen() {
         canvas.beginFrame(alpha)
         canvas.setTransform(menuScale, width / 2f, transformCenterY)
         if (OpaiGUI.backgroundBlur > 0.01f) {
-            InternalBlurShader.blurArea(0f, 0f, width.toFloat(), height.toFloat(), OpaiGUI.backgroundBlur * alpha)
+            // 全局 Blur 设置统一控制类型/强度；原 BackgroundBlur 仅作为开关门槛，
+            // strengthScale 用 alpha 保留界面开合时的模糊渐变
+            HudBlur.blur(0f, 0f, width.toFloat(), height.toFloat(), strengthScale = alpha)
         }
         canvas.scale(menuScale, width / 2f, transformCenterY) {
             drawColumns(canvas, palette, now)

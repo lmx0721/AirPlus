@@ -50,25 +50,20 @@ object ClickGUI : Module("ClickGUI", Category.CLIENT, Keyboard.KEY_RSHIFT, canBe
     val nlThemeValue = choices("NLTheme", arrayOf("Ocean", "Sunset", "Forest", "Royal", "Crimson", "Mono", "Theme"), "Ocean") { style == "Neverlose" || style == "Rise" }
     val nlBgOpacityValue = float("NLBgOpacity", 0.6f, 0.1f..1.0f) { style == "Neverlose" || style == "Rise" }
     val nlBlurValue = boolean("NLBlur", true) { style == "Neverlose" || style == "Rise" }
-    val nlBlurModeValue = choices("NLBlurMode", arrayOf("Gaussian", "Dual", "Better"), "Better") { (style == "Neverlose" || style == "Rise") && nlBlur }
-    val nlBlurStrengthValue = float("NLBlurStrength", 10f, 1f..50f) { (style == "Neverlose" || style == "Rise") && nlBlur }
+    // 模糊类型/强度由 Client 模块的全局 Blur 设置统一控制（HudBlur）
     val nlAnimationSpeedValue = float("NLAnimationSpeed", 1.0f, 0.1f..4.0f) { style == "Neverlose" || style == "Rise" }
     val nlGlowIntensityValue = float("NLGlowIntensity", 1.0f, 0f..1f) { style == "Neverlose" || style == "Rise" }
 
     val nlTheme by nlThemeValue
     val nlBgOpacity by nlBgOpacityValue
     val nlBlur by nlBlurValue
-    val nlBlurMode by nlBlurModeValue
-    val nlBlurStrength by nlBlurStrengthValue
     val nlAnimationSpeed by nlAnimationSpeedValue
     val nlGlowIntensity by nlGlowIntensityValue
 
-    // Augustus style settings - 背景模糊
+    // Augustus style settings - 背景模糊开关（类型/强度由 Client 全局 Blur 设置控制）
     val augBlurValue = boolean("AugBlur", true) { style == "Augustus" }
-    val augBlurStrengthValue = float("AugBlurStrength", 12f, 1f..50f) { style == "Augustus" && augBlur }
 
     val augBlur by augBlurValue
-    val augBlurStrength by augBlurStrengthValue
 
     // Theme presets: each theme has accent color and background color.
     // "Theme" follows the global theme engine (ThemeManager / ClientThemesUtils).

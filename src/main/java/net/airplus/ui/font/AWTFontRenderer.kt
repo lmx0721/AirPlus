@@ -272,11 +272,12 @@ class AWTFontRenderer @JvmOverloads constructor(
         GlStateManager.tryBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ZERO)
         GlStateManager.enableTexture2D()
 
-        if (loadingScreen) {
-            glBindTexture(GL_TEXTURE_2D, textureID)
-        } else {
-            bindTexture(textureID)
-        }
+        // 两步法绑定字形贴图：全屏模糊/辉光/HUD 特效等上游路径大量使用裸 GL 绑定纹理，
+        // GlStateManager 的守卫缓存随时可能失真（缓存记 A、真实绑 B）。单步守卫调用
+        // 撞值时被静默跳过，字形 quad 就采样错误纹理——整屏模糊画面（文字像被 kawase
+        // 模糊的方块）、单个中文动态字形贴图（后续字符全变小方块）、或被删纹理（黑块）。
+        // 先真实绑 0 推开缓存，再真实绑回字形贴图，保证 真实绑定 == 缓存 == 字形贴图。
+        forceBindTexture(textureID)
 
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
@@ -310,11 +311,7 @@ class AWTFontRenderer @JvmOverloads constructor(
             if (loc == null && charCode > 255) {
                 glEnd()
                 loc = renderDynamicChar(char)
-                if (loadingScreen) {
-                    glBindTexture(GL_TEXTURE_2D, textureID)
-                } else {
-                    bindTexture(textureID)
-                }
+                forceBindTexture(textureID)
                 glBegin(GL_QUADS)
             }
 
@@ -334,11 +331,7 @@ class AWTFontRenderer @JvmOverloads constructor(
                 val fallbackW = mc.fontRendererObj.renderUnicodeChar(char, false).coerceAtLeast(0f)
                 fallbackWidth += fallbackW
 
-                if (loadingScreen) {
-                    glBindTexture(GL_TEXTURE_2D, textureID)
-                } else {
-                    bindTexture(textureID)
-                }
+                forceBindTexture(textureID)
                 glPopMatrix()
                 glBegin(GL_QUADS)
 
@@ -496,11 +489,22 @@ class AWTFontRenderer @JvmOverloads constructor(
         dispose()
     }
 
+    /**
+     * 两步法纹理绑定：先真实绑 0（把守卫缓存推开），再真实绑回目标纹理，
+     * 保证 真实绑定 == 缓存 == 目标。上游渲染路径（全屏模糊/辉光/手部物品等）
+     * 会用裸 GL 或切换单元的方式改绑定，守卫缓存随时失真——单步守卫调用
+     * 撞值时被静默跳过，是「文字采样错误纹理」（模糊色块/黑块/字形碎片）的根源。
+     */
+    private fun forceBindTexture(texId: Int) {
+        GlStateManager.bindTexture(0)
+        bindTexture(texId)
+    }
+
     private fun drawChar(loc: CharLocation, x: Float, y: Float, charCode: Int = -1) {
         val dynamicTexId = if (charCode >= 0) dynamicCharTextures[charCode] else null
         if (dynamicTexId != null) {
             glEnd()
-            bindTexture(dynamicTexId)
+            forceBindTexture(dynamicTexId)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
             glBegin(GL_QUADS)
@@ -544,11 +548,7 @@ class AWTFontRenderer @JvmOverloads constructor(
 
         if (dynamicTexId != null) {
             glEnd()
-            if (loadingScreen) {
-                glBindTexture(GL_TEXTURE_2D, textureID)
-            } else {
-                bindTexture(textureID)
-            }
+            forceBindTexture(textureID)
             glBegin(GL_QUADS)
         }
     }

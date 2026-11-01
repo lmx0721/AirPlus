@@ -256,7 +256,7 @@ object ChatHudRenderer : MinecraftInstance {
                     val absY2 = absOriginY + animBlockY2 * chatScale
 
                     // 遮罩在当前矩阵下按局部坐标绘制，自动跟随 scale 与位置
-                    HudBlur.blur(absX1, absY1, absX2, absY2, hud.chatBlurStrength, hud.chatBlurMode, radius) {
+                    HudBlur.blur(absX1, absY1, absX2, absY2, radius) {
                         drawRoundedRect(blockX1, animBlockY1, animBlockX2, animBlockY2, -1, radius)
                     }
                 }

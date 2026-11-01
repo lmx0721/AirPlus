@@ -30,7 +30,7 @@ import net.airplus.utils.render.RenderUtils
 import net.airplus.utils.render.RenderUtils.drawImage
 import net.airplus.utils.render.RenderUtils.drawRoundedBorderRect
 import net.airplus.utils.render.RenderUtils.drawRoundedRect
-import net.airplus.utils.render.BlurEffects
+import net.airplus.utils.render.HudBlur
 import net.airplus.utils.render.InternalBlurShader
 import net.airplus.utils.render.shader.shaders.GradientFontShader
 import net.minecraft.client.gui.ScaledResolution
@@ -109,7 +109,7 @@ object Island : Module("Island", Category.RENDER) {
     private val opaiExpandAnim by choices("Opai-ExpandAnim", arrayOf("Bounce", "EaseOut", "Linear", "Back"), "Bounce") { styleUsed("opai") }
 
     // iOS样式设置
-    private val iosBlurStrength by float("iOS-BlurStrength", 15F, 0F..50F) { styleUsed("ios") }
+    // 模糊类型/强度由 Client 模块的全局 Blur 设置统一控制（HudBlur）
 
     private val logoIcon by choices("LogoIcon", arrayOf("Default", "A", "Diamond", "Radioactive", "Start", "Start2", "Earth"), "A")
     private val pingIcon by choices("PingIcon", arrayOf("Default", "Ping2", "Ping3", "Ping4", "Ping5"), "Ping3") { styleUsed("legacy") || styleUsed("opai") }
@@ -162,10 +162,6 @@ object Island : Module("Island", Category.RENDER) {
     private val blinkPanelCheck by boolean("Blink-Panel", true)
 
     private val blurCheck by boolean("Blur", true)
-    private val blurMode by choices("BlurMode", arrayOf("Gaussian", "Dual", "Better", "Kawase"), "Better") { blurCheck }
-    private val blurRadius by float("BlurStrength", 10F, 1F..50F) { blurCheck }
-    private val kawaseIterations by int("Kawase-Iterations", 4, 1..10) { blurCheck && blurMode == "Kawase" }
-    private val kawaseOffset by int("Kawase-Offset", 3, 1..10) { blurCheck && blurMode == "Kawase" }
 
     private val notifyDuration by int("NotifyTime(ms)", 1000, 100..10000)
     private val versionNameUp by text("VersionName", "development") { false }
@@ -381,36 +377,13 @@ object Island : Module("Island", Category.RENDER) {
         }
     }
 
-    private fun applyBlur(x: Float, y: Float, w: Float, h: Float) {
-        // 保存将被修改的 GL 状态，结束时精确恢复（而不是无条件覆盖）
-        val prevBlend = glIsEnabled(GL_BLEND)
-        val prevBlendSrc = glGetInteger(GL_BLEND_SRC)
-        val prevBlendDst = glGetInteger(GL_BLEND_DST)
-        val prevAlpha = glIsEnabled(GL_ALPHA_TEST)
-        val prevTexture = glIsEnabled(GL_TEXTURE_2D)
-
-        when (blurMode) {
-            "Gaussian" -> BlurEffects.blurArea(x, y, w, h, blurRadius, BlurEffects.BlurMode.GAUSSIAN)
-            "Dual" -> BlurEffects.blurArea(x, y, w, h, blurRadius, BlurEffects.BlurMode.DUAL)
-            "Better" -> BlurEffects.blurArea(x, y, w, h, blurRadius, BlurEffects.BlurMode.BETTER)
-            "Kawase" -> {
-                // 使用区域版本的 Kawase：scissor 限制模糊范围，
-                // 圆角形状由外层 EmbeddedStencil（erase(true) 后 stencil==1）保证
-                val sr = ScaledResolution(mc)
-                val factor = sr.scaleFactor
-                val px = (x * factor).toInt()
-                val py = mc.displayHeight - ((y + h) * factor).toInt()
-                val pw = (w * factor).toInt()
-                val ph = (h * factor).toInt()
-                net.airplus.utils.render.shader.KawaseBlur.renderBlurScissor(kawaseIterations, kawaseOffset, px, py, pw, ph)
-            }
+    private fun applyBlur(x: Float, y: Float, w: Float, h: Float, radius: Float, corners: RenderUtils.RoundedCorners) {
+        // 全局 Blur 设置 + 全屏单次模糊架构：Blur 关闭时直接跳过。
+        // 遮罩半径/分角必须与外层 EmbeddedStencil 的岛体形状一致，
+        // 否则模糊贴回会以直角溢出岛体的圆角轮廓
+        if (blurCheck) {
+            HudBlur.blur(x, y, x + w, y + h, radius, corners)
         }
-
-        // 精确恢复进入前的 GL 状态，避免 blend func / alpha test 泄漏到后续渲染
-        if (prevBlend) glEnable(GL_BLEND) else glDisable(GL_BLEND)
-        glBlendFunc(prevBlendSrc, prevBlendDst)
-        if (prevAlpha) glEnable(GL_ALPHA_TEST) else glDisable(GL_ALPHA_TEST)
-        if (prevTexture) glEnable(GL_TEXTURE_2D) else glDisable(GL_TEXTURE_2D)
     }
 
     private fun spring(current: Float, target: Float, velocity: Float): Pair<Float, Float> {
@@ -1230,7 +1203,7 @@ object Island : Module("Island", Category.RENDER) {
 
                 EmbeddedStencil.erase(true)
                 if (blurCheck) {
-                    applyBlur(drawX, drawY, drawW, drawH)
+                    applyBlur(drawX, drawY, drawW, drawH, currentRadius, islandCorners)
                 }
 
                 // 样式背景透明度直接取颜色自带的 alpha 通道（Opai-Background / iOS-Background 等颜色设置）
@@ -2671,7 +2644,7 @@ object Island : Module("Island", Category.RENDER) {
                 RenderUtils.drawRoundedRect(bubbleX, bubbleY, bubbleX + AnimGlobalWidth, bubbleY + animBubbleHeight, Color.WHITE.rgb, 8F, RenderUtils.RoundedCorners.BOTTOM_ONLY)
                 EmbeddedStencil.erase(true)
                 GlStateManager.pushMatrix()
-                applyBlur(bubbleX, bubbleY, AnimGlobalWidth, animBubbleHeight)
+                applyBlur(bubbleX, bubbleY, AnimGlobalWidth, animBubbleHeight, 8F, RenderUtils.RoundedCorners.BOTTOM_ONLY)
                 GlStateManager.popMatrix()
             } catch (e: Exception) {
             } finally {
@@ -2842,7 +2815,7 @@ object Island : Module("Island", Category.RENDER) {
                 drawRoundedRect(bubbleX, bubbleY, bubbleX + animBubbleWidth, bubbleY + animBubbleHeight, Color.WHITE.rgb, 8F)
                 EmbeddedStencil.erase(true)
                 GlStateManager.pushMatrix()
-                applyBlur(bubbleX, bubbleY, animBubbleWidth, animBubbleHeight)
+                applyBlur(bubbleX, bubbleY, animBubbleWidth, animBubbleHeight, 8F, RenderUtils.RoundedCorners.ALL)
                 GlStateManager.popMatrix()
             } catch (e: Exception) {
             } finally {

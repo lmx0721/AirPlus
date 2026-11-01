@@ -215,12 +215,12 @@ class NeverloseScreen : GuiScreen() {
         // Unified background color (single draw to avoid color stacking from overlapping draws)
         val bgColorUniform = colorWithAlpha(bgColor, opacity)
 
-        // Background blur (HudBlur InternalBlur：与 HUD 编辑器同一条已验证可用的模糊路径)
+        // Background blur (HudBlur，全局 Blur 设置统一控制类型/强度)
         if (ClickGUI.nlBlur) {
             HudBlur.blur(
                 posX.toFloat(), posY.toFloat(),
                 (posX + guiWidth).toFloat(), (posY + guiHeight).toFloat(),
-                ClickGUI.nlBlurStrength, "InternalBlur", 12f
+                12f
             )
         }
 
@@ -891,13 +891,13 @@ class NeverloseScreen : GuiScreen() {
         GlStateManager.translate(offset, 0f, 0f)
         GlStateManager.color(1f, 1f, 1f, rightPanelAnim)
 
-        // Blur (HudBlur InternalBlur)
+        // Blur (HudBlur，全局 Blur 设置统一控制类型/强度)
         if (ClickGUI.nlBlur) {
             GlStateManager.pushMatrix()
             HudBlur.blur(
                 panelX.toFloat(), panelY.toFloat(),
                 (panelX + rightPanelWidth).toFloat(), (panelY + panelH).toFloat(),
-                ClickGUI.nlBlurStrength, "InternalBlur", 12f
+                12f
             )
             GlStateManager.popMatrix()
         }

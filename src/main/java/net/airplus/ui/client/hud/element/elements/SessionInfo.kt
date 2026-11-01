@@ -283,8 +283,7 @@ class SessionInfo(
                 (scale * renderX).toFloat(),
                 (scale * renderY).toFloat(),
                 (scale * (renderX + width)).toFloat(),
-                (scale * (renderY + OPAI_HEIGHT)).toFloat(),
-                8f, "InternalBlur"
+                (scale * (renderY + OPAI_HEIGHT)).toFloat()
             ) {
                 drawRoundedRect(0f, 0f, width, OPAI_HEIGHT, -1, OPAI_RADIUS)
             }
@@ -400,8 +399,7 @@ class SessionInfo(
                 (scale * renderX).toFloat(),
                 (scale * renderY).toFloat(),
                 (scale * (renderX + WIDTH)).toFloat(),
-                (scale * (renderY + TITLE_HEIGHT + HEIGHT)).toFloat(),
-                8f, "InternalBlur"
+                (scale * (renderY + TITLE_HEIGHT + HEIGHT)).toFloat()
             ) {
                 drawRect(0, 0, WIDTH.toInt(), (TITLE_HEIGHT + HEIGHT).toInt(), -1)
             }

@@ -25,8 +25,7 @@ class Target2 : Element("Target2") {
     private val styleValue = ListValue("Style", arrayOf("Chill"), "Chill")
 
     val blurValue by boolean("Blur", false)
-    val blurStrength by float("Blur-Strength", 1F, 0.01F..40F) { blurValue }
-    val blurModeValue by choices("Blur-Mode", HudBlur.MODES, "InternalBlur") { blurValue }
+    // 模糊类型/强度由 Client 模块的全局 Blur 设置统一控制（HudBlur）
 
     val shadowValue by boolean("Shadow", false)
     val shadowStrength by float("Shadow-Strength", 1F, 0.01F..40F) { shadowValue }
@@ -273,8 +272,7 @@ class Target2 : Element("Target2") {
                 GL11.glScalef(1F / scale, 1F / scale, 1F)
                 HudBlur.blur(
                     absX1, absY1, absX2, absY2,
-                    blurStrength * (1F - animProgress),
-                    blurModeValue
+                    strengthScale = 1F - animProgress
                 ) {
                     // M·p = scale*(render + bc) + scale*k*(p - bc)，与 drawTarget 的动画变换一致
                     GL11.glTranslatef(absX1 + (absX2 - absX1) / 2F, absY1 + (absY2 - absY1) / 2F, 0F)

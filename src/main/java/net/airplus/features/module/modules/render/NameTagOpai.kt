@@ -342,8 +342,7 @@ object NameTagOpai : Module("NameTagOpai", Category.RENDER) {
             if (tag != null) {
                 HudBlur.blur(
                     tag.x + x * scale, tag.y + y * scale,
-                    tag.x + (x + capsule.width) * scale, tag.y + (y + height) * scale,
-                    8f, "InternalBlur"
+                    tag.x + (x + capsule.width) * scale, tag.y + (y + height) * scale
                 ) {
                     drawRoundedRect(x, y, x + capsule.width, y + height, -1, RADIUS)
                 }

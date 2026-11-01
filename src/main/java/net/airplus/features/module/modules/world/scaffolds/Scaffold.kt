@@ -130,6 +130,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
     private val jumpTicksRange by intRange("JumpTicksRange", 0..0, 0..10) { scaffoldMode == "Telly" }
 
+    // KeepHeadDown：Telly 重置角度（回归视角）时 Pitch 锁定垂直低头，Yaw 照常回归；寻找方块的旋转逻辑不变
+    private val tellyKeepHeadDown by boolean("TellyKeepHeadDown", false) { scaffoldMode == "Telly" }
+
     private val allowClutching by boolean("AllowClutching", true) { scaffoldMode !in arrayOf("Telly", "Expand") }
     private val horizontalClutchBlocks by int("HorizontalClutchBlocks", 3, 1..5) {
         allowClutching && scaffoldMode !in arrayOf("Telly", "Expand")
@@ -484,6 +487,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         if (player.ticksExisted == 1) {
             launchY = player.posY.roundToInt()
         }
+
+        // KeepHeadDown：Telly 重置角度阶段锁定低头（本客户端正 Pitch 即向下，90° = 垂直向下，即用户所述 -90° 低头）
+        options.lockedResetPitch = if (tellyKeepHeadDown && scaffoldMode == "Telly") 90f else null
 
         val rotation = RotationUtils.currentRotation
 
@@ -945,6 +951,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         SilentHotbar.resetSlot(this)
 
         options.instant = false
+        options.lockedResetPitch = null
     }
 
     // Entity movement event

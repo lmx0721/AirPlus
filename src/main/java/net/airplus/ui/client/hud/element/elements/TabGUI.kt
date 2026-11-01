@@ -20,6 +20,7 @@ import net.airplus.utils.render.HudBlur
 import net.airplus.utils.render.RenderUtils.deltaTime
 import net.airplus.utils.render.RenderUtils.drawBorderedRect
 import net.airplus.utils.render.RenderUtils.drawRect
+import net.airplus.utils.render.RenderUtils.drawRoundedRect
 import net.airplus.utils.render.RenderUtils.makeScissorBox
 import net.airplus.utils.render.shader.ShaderSupport
 import net.minecraft.client.gui.ScaledResolution
@@ -115,9 +116,18 @@ class TabGUI(x: Double = 16.0, y: Double = 43.0) : Element("TabGUI", x = x, y = 
         }
 
         if (blur && ShaderSupport.isSupported) {
-            HudBlur.blur(0F, 0F, width, height, 10F, "Kawase")
+            // 模糊类型/强度由 Client 模块的全局 Blur 设置统一控制（HudBlur）
+            // 模糊 AABB 必须换算成屏幕绝对坐标（HUD 的 scale/translate 变换），
+            // 遮罩在当前矩阵下按局部坐标绘制，并带上与背景一致的圆角
+            val absX1 = (scale * (0F + renderX)).toFloat()
+            val absY1 = (scale * (0F + renderY)).toFloat()
+            val absX2 = (scale * (width + renderX)).toFloat()
+            val absY2 = (scale * (height + renderY)).toFloat()
+            HudBlur.blur(absX1, absY1, absX2, absY2) {
+                drawRoundedRect(0F, 0F, width, height, -1, CORNER_RADIUS)
+            }
         }
-        drawRect(0F, 0F, width, height, bgColor.rgb)
+        drawRoundedRect(0F, 0F, width, height, bgColor.rgb, CORNER_RADIUS)
     }
 
     private fun drawCategories(width: Float) {
@@ -217,10 +227,21 @@ class TabGUI(x: Double = 16.0, y: Double = 43.0) : Element("TabGUI", x = x, y = 
         glEnable(GL_SCISSOR_TEST)
         makeScissorBox(panelX, panelY, panelX + clipWidth, panelY + visibleHeight)
 
+        if (!isNostalgia && blur && ShaderSupport.isSupported) {
+            // 模块列模糊：同款将 AABB 换算为屏幕绝对坐标，遮罩在当前矩阵按局部坐标绘制
+            val absX1 = (scale * (panelX + renderX)).toFloat()
+            val absY1 = (scale * (panelY + renderY)).toFloat()
+            val absX2 = (scale * (panelX + panelWidth + renderX)).toFloat()
+            val absY2 = (scale * (panelY + visibleHeight + renderY)).toFloat()
+            HudBlur.blur(absX1, absY1, absX2, absY2) {
+                drawRoundedRect(panelX, panelY, panelX + panelWidth, panelY + visibleHeight, -1, CORNER_RADIUS)
+            }
+        }
+
         if (isNostalgia) {
             drawBorderedRect(panelX, panelY, panelX + panelWidth, panelY + visibleHeight, 1F, NOST_BORDER.rgb, NOST_BG.rgb)
         } else {
-            drawRect(panelX, panelY, panelX + panelWidth, panelY + visibleHeight, bgColor.rgb)
+            drawRoundedRect(panelX, panelY, panelX + panelWidth, panelY + visibleHeight, bgColor.rgb, CORNER_RADIUS)
         }
 
         // Selected highlight
@@ -378,5 +399,8 @@ class TabGUI(x: Double = 16.0, y: Double = 43.0) : Element("TabGUI", x = x, y = 
         private val TEXT_GRAY_LIGHT = Color(0x72, 0x73, 0x71)
         private val NOST_BORDER = Color(30, 30, 30)
         private val NOST_BG = Color(0, 0, 0)
+
+        /** Normal 主题背景与模糊遮罩的统一圆角（Nostalgia 保持直角老式风格） */
+        private val CORNER_RADIUS = 6F
     }
 }
