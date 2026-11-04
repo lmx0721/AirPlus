@@ -133,6 +133,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     // KeepHeadDown：Telly 重置角度（回归视角）时 Pitch 锁定垂直低头，Yaw 照常回归；寻找方块的旋转逻辑不变
     private val tellyKeepHeadDown by boolean("TellyKeepHeadDown", false) { scaffoldMode == "Telly" }
 
+    // Telly 起跳门控：服务器视角 Yaw 与玩家瞄准 Yaw 相差不超过该角度即允许起跳（不要求 Pitch 收敛）
+    private val tellyJumpYawDifference by float("TellyJumpYawDifference", 30f, 5f..180f) { scaffoldMode == "Telly" }
+
     private val allowClutching by boolean("AllowClutching", true) { scaffoldMode !in arrayOf("Telly", "Expand") }
     private val horizontalClutchBlocks by int("HorizontalClutchBlocks", 3, 1..5) {
         allowClutching && scaffoldMode !in arrayOf("Telly", "Expand")
@@ -166,7 +169,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
     private val options = RotationSettingsWithRotationModes(this, modeList).apply {
         strictValue.excludeWithState()
-        resetTicksValue.setSupport { it && scaffoldMode != "Telly" }
+        resetTicksValue.setSupport { it }
     }
 
     // ReverseYaw 提前转头：启用模块后立刻开始转头，方向取自移动输入（无输入则按当前视角朝向为正方向）
@@ -473,12 +476,25 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         val player = mc.thePlayer ?: return@handler
 
         // Jumping needs to be done here, so it doesn't get detected by movement-sensitive anti-cheats.
-        if (scaffoldMode == "Telly" && player.onGround && player.isMoving && currRotation == player.rotation && ticksUntilJump >= jumpTicks) {
+        if (scaffoldMode == "Telly" && player.onGround && player.isMoving && ticksUntilJump >= jumpTicks && isTellyRotationResetDone()) {
             player.tryJump()
 
             ticksUntilJump = 0
             jumpTicks = jumpTicksRange.random()
         }
+    }
+
+    /**
+     * Telly 起跳的视角回归判定（yaw-only）：
+     * currentRotation 已释放时恒成立；未释放时只要服务器视角 Yaw 与玩家瞄准 Yaw
+     * 相差不超过 [tellyJumpYawDifference] 即允许起跳，不再要求 Pitch 收敛与 gcd 严格容差 ——
+     * MinRotationDifference / 转头速度停滞会让严格判定永远等不到收敛，起跳迟迟不触发，
+     * 走出边缘直接掉落。回正速度由 ResetTicks（角度重置速度）控制。
+     */
+    private fun isTellyRotationResetDone(): Boolean {
+        val player = mc.thePlayer ?: return false
+        val current = RotationUtils.currentRotation ?: return true
+        return abs(RotationUtils.angleDifference(current.yaw, player.rotationYaw)) <= tellyJumpYawDifference
     }
 
     val onRotationUpdate = handler<RotationUpdateEvent> {
@@ -496,7 +512,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         update()
 
         val ticks = if (options.keepRotation) {
-            if (scaffoldMode == "Telly") 1 else options.resetTicks
+            options.resetTicks
         } else {
             if (isGodBridgeEnabled) options.resetTicks else RotationUtils.resetTicks
         }
@@ -1320,7 +1336,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             options.instant =
                 blockSafe && simPlayer.fallDistance > player.fallDistance + 0.05 && rotationDifference > rotationDifference2 / 2
 
-            setRotation(placeRotation.rotation, if (scaffoldMode == "Telly") 1 else options.resetTicks)
+            setRotation(placeRotation.rotation, options.resetTicks)
         }
 
         this.placeRotation = placeRotation

@@ -12,10 +12,17 @@ import net.airplus.features.module.Category
 import net.airplus.features.module.Module
 import net.minecraft.client.Minecraft
 import net.minecraft.util.Vec3
+import net.minecraftforge.client.event.EntityViewRenderEvent
+import net.minecraftforge.common.MinecraftForge
+import net.minecraftforge.fml.common.eventhandler.SubscribeEvent
+import kotlin.math.abs
+import kotlin.math.exp
 
 /**
- * Removes third-person camera collision (fixed max zoom distance) and optionally
- * smooths the camera movement ("Action" mode).
+ * Removes third-person camera collision (fixed max zoom distance), optionally
+ * smooths the camera movement ("Action" mode) and applies a customizable
+ * camera tilt (roll): "Fixed" leans at a constant angle, "Dynamic" leans into
+ * strafing/turning like a cinematic chase camera.
  */
 object Camera : Module("Camera", Category.RENDER) {
 
@@ -27,7 +34,19 @@ object Camera : Module("Camera", Category.RENDER) {
     private val viewAnimationSpeed by float("ViewAnimationSpeed", 15F, 2F..50F) { viewAnimation }
     private val noSecondPerson by boolean("NoSecondPerson", false)
 
+    // 镜头倾斜（Camera Roll）：Fixed 固定角度侧倾，Dynamic 随横移/转向方向侧倾
+    private val tiltMode by choices("Tilt", arrayOf("Off", "Fixed", "Dynamic"), "Off")
+    private val tiltAngle by float("TiltAngle", 12F, -45F..45F) { tiltMode != "Off" }
+    private val tiltSmoothness by float("TiltSmoothness", 10F, 1F..30F) { tiltMode != "Off" }
+    private val turnLean by boolean("TurnLean", true) { tiltMode == "Dynamic" }
+
     private var cameraPos: Vec3? = null
+
+    // 镜头倾斜状态：当前 roll（度）与平滑后的转向角速度（度/秒）
+    private var currentRoll = 0F
+    private var lastTiltFrameTime = 0L
+    private var lastTiltYaw = 0F
+    private var yawVelocity = 0F
 
     // 切换人称动画：F5（或 autoF5）切换时先收缩相机距离到 0，再切到新人称展开
     private var lastAppliedView = 0
@@ -45,9 +64,15 @@ object Camera : Module("Camera", Category.RENDER) {
     override fun onEnable() {
         resetCameraPos()
         syncViewState()
+        // 镜头倾斜：Forge CameraSetup 在 orientCamera 末尾按 roll→pitch→yaw 旋转，
+        // roll 为最外层旋转，即绕视线轴的真实侧倾
+        MinecraftForge.EVENT_BUS.register(this)
     }
 
     override fun onDisable() {
+        MinecraftForge.EVENT_BUS.unregister(this)
+        currentRoll = 0F
+        yawVelocity = 0F
         resetCameraPos()
         // 中途关闭模块时立即恢复目标人称，避免视角卡在第三人称
         if (transitioning) {
@@ -206,6 +231,51 @@ object Camera : Module("Camera", Category.RENDER) {
 
     fun resetCameraPos() {
         cameraPos = null
+    }
+
+    /**
+     * 镜头倾斜：把目标 roll 写入 Forge CameraSetup 事件。
+     * 符号约定：正 roll = 向右侧倾（原地平线右端上抬）。
+     * - Fixed：恒定 [tiltAngle]（可为负换方向）；
+     * - Dynamic：随横移方向侧倾（moveStrafing 左=+1，故取负），
+     *   开启 TurnLean 时叠加转向角速度（向转向方向压镜头）。
+     */
+    @SubscribeEvent
+    fun onCameraSetup(event: EntityViewRenderEvent.CameraSetup) {
+        val player = mc.thePlayer
+
+        if (player == null || FreeCam.handleEvents()) {
+            currentRoll = 0F
+            return
+        }
+
+        val now = Minecraft.getSystemTime()
+        val dt = ((now - lastTiltFrameTime).coerceIn(1L, 100L) / 1000.0).toFloat()
+        lastTiltFrameTime = now
+
+        // 帧间 yaw 差（处理 ±180° 回绕）→ 平滑角速度，供 Dynamic 的转向侧倾使用
+        var yawDelta = player.rotationYaw - lastTiltYaw
+        while (yawDelta > 180F) yawDelta -= 360F
+        while (yawDelta < -180F) yawDelta += 360F
+        lastTiltYaw = player.rotationYaw
+        val targetYawVelocity = (yawDelta / dt).coerceIn(-720F, 720F)
+        yawVelocity += (targetYawVelocity - yawVelocity) * (1F - exp(-12F * dt))
+
+        val target = when (tiltMode) {
+            "Fixed" -> tiltAngle
+            "Dynamic" -> {
+                var lean = -player.moveStrafing * tiltAngle
+                if (turnLean) {
+                    lean += (yawVelocity / 360F).coerceIn(-1F, 1F) * tiltAngle
+                }
+                lean
+            }
+            else -> 0F
+        }
+
+        currentRoll += (target - currentRoll) * (1F - exp(-tiltSmoothness * dt))
+        if (abs(currentRoll) < 0.01F) currentRoll = 0F
+        event.roll = currentRoll
     }
 
     fun getCameraPos(): Vec3? = cameraPos

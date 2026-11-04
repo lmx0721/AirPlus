@@ -6,6 +6,7 @@
 package net.airplus.injection.forge.mixins.render;
 
 import co.uk.hexeption.utils.OutlineUtils;
+import net.airplus.features.module.modules.fun.Jelly;
 import net.airplus.features.module.modules.render.*;
 import net.airplus.utils.client.ClientUtils;
 import net.airplus.utils.render.RenderUtils;
@@ -55,8 +56,9 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
 
     @Inject(method = "canRenderName(Lnet/minecraft/entity/EntityLivingBase;)Z", at = @At("HEAD"), cancellable = true)
     private <T extends EntityLivingBase> void canRenderName(T entity, CallbackInfoReturnable<Boolean> callbackInfoReturnable) {
-        // NameTags2：开启时取消原版玩家名牌，由模块自绘
-        if (NameTags2.INSTANCE.handleEvents() && entity instanceof net.minecraft.entity.player.EntityPlayer) {
+        // NameTags2 / NameTagOpai：开启时取消原版玩家名牌，由模块自绘
+        if (entity instanceof net.minecraft.entity.player.EntityPlayer &&
+            (NameTags2.INSTANCE.handleEvents() || NameTagOpai.INSTANCE.handleEvents())) {
             callbackInfoReturnable.setReturnValue(false);
             return;
         }
@@ -163,19 +165,6 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
         }
 
         ci.cancel();
-    }
-
-    /**
-     * Execution：处决动画期间冻结被处决者的死亡倒地 —— rotateCorpse 用 deathTime
-     * 驱动 90° 翻倒，在 HEAD 清零即可逐帧拦下死亡动画（此前仅 tick 侧清零，
-     * 渲染时 deathTime 会被实体自身 onUpdate 顶到 1，产生 0~25° 摆动的半倒姿态）。
-     * 处决结束后不再清零，原版死亡动画继续播放。
-     */
-    @Inject(method = "rotateCorpse(Lnet/minecraft/entity/EntityLivingBase;FFF)V", at = @At("HEAD"))
-    private <T extends EntityLivingBase> void injectExecutionFreezeDeath(T entity, float yaw, float offset, float partialTicks, CallbackInfo callbackInfo) {
-        if (Execution.INSTANCE.isPlaying() && Execution.INSTANCE.isCurrentVictim(entity)) {
-            entity.deathTime = 0;
-        }
     }
 
     /**

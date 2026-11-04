@@ -222,15 +222,31 @@ object NoSlow : Module("NoSlow", Category.MOVEMENT, gameDetecting = false) {
         if (event.isCancelled || shouldSwap)
             return@handler
 
-        // Vision mode - cancel item use packets (visual only, no server-side effects)
+        // Vision 模式 —— 纯视觉：格挡/进食/拉弓只在本地渲染，相关使用物品包一律取消，
+        // 服务器全程无感知。覆盖状态放宽为三种兜底（任一满足即取消）：
+        //   1. 客户端正在使用物品（isUsingItem / KillAura 起挡）；
+        //   2. 使用键仍按住（起用瞬间的包可能赶在 isUsingItem 置位前发出）；
+        //   3. 手持对应物品时 KillAura 的 packet 格挡状态（直发的 C08/C07）。
         val visionHeldItem = player.heldItem?.item
-        val isVisionActive = (visionHeldItem is ItemSword && swordMode == "Vision" && usingItemFunc()) ||
-            (visionHeldItem != null && isConsumable(visionHeldItem) && consumeMode == "Vision" && player.isUsingItem) ||
-            (visionHeldItem is ItemBow && bowPacket == "Vision" && player.isUsingItem)
+        val useKeyHeld = mc.gameSettings.keyBindUseItem.isKeyDown
 
-        if (isVisionActive) {
+        val visionSword = visionHeldItem is ItemSword && swordMode == "Vision" && (usingItemFunc() || useKeyHeld)
+        val visionConsume = visionHeldItem != null && isConsumable(visionHeldItem) &&
+            consumeMode == "Vision" && (player.isUsingItem || useKeyHeld)
+        val visionBow = visionHeldItem is ItemBow && bowPacket == "Vision" && (player.isUsingItem || useKeyHeld)
+
+        if (visionSword || visionConsume || visionBow) {
             if ((packet is C08PacketPlayerBlockPlacement && packet.placedBlockDirection == 255) ||
                 (packet is C07PacketPlayerDigging && packet.status == RELEASE_USE_ITEM)) {
+                event.cancelEvent()
+                return@handler
+            }
+
+            // 剑格挡下 KillAura packet 起挡附带的 C02 交互包：服务端根本没有这次使用，
+            // 交互也一并取消，保证视觉模式向服务器零发包
+            if (visionSword && KillAura.blockStatus && packet is C02PacketUseEntity &&
+                (packet.action == C02PacketUseEntity.Action.INTERACT ||
+                        packet.action == C02PacketUseEntity.Action.INTERACT_AT)) {
                 event.cancelEvent()
                 return@handler
             }

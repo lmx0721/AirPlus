@@ -76,7 +76,13 @@ object HudBlur : MinecraftInstance, Listenable {
     private var baseTexture = -1
 
     init {
-        handler<Render2DEvent>(always = true, priority = Byte.MIN_VALUE) {
+        // priority = Byte.MAX_VALUE：EventManager 按 priority 降序执行，本处理器必须
+        // 在帧内【所有】blur 调用之前把 session 递增到位。否则（曾用 MIN_VALUE，帧内
+        // 最后执行）：HUD 元素先用旧 session 复用上一帧快照 → handler 递增 → 自定义
+        // 聊天栏在 Render2DEvent 之后（同帧晚段）调用 blur 时快照已"过期" → 在聊天
+        // 阶段重拍基准快照，把当帧已渲染的全部 HUD 内容 + 聊天背景烙进快照 → 下一帧
+        // 所有 HUD 元素复用被污染的快照 → 模糊区域发黑/出现其他组件画面。
+        handler<Render2DEvent>(always = true, priority = Byte.MAX_VALUE) {
             // 帧会话判定：用 timer 累计值构造严格递增的帧 key（elapsedTicks + elapsedPartialTicks）。
             // 同一渲染帧内可能触发多次 Render2DEvent（GuiIngame / GuiSpectator / Profiler 等
             // 多处注入），此前用「1ms 墙钟去重」判定同帧——但 GUI 渲染耗时远超 1ms，帧内
@@ -100,11 +106,12 @@ object HudBlur : MinecraftInstance, Listenable {
         radius: Float = 0F,
         corners: RoundedCorners = RoundedCorners.ALL,
         strengthScale: Float = 1F,
+        mode: String? = null,
         mask: (() -> Unit)? = null
     ) {
         if (!ShaderSupport.isSupported) return
 
-        val mode = Client.blurMode
+        val mode = mode ?: Client.blurMode
         if (mode == "None") return
         // 不可用模式跳过；约 600 帧（≈10s）后允许重试，避免一次瞬时失败
         // （驱动/上下文未就绪等）把该模式永久打死

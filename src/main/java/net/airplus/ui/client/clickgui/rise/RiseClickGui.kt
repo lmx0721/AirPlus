@@ -951,6 +951,7 @@ class RiseClickGui : GuiScreen() {
         Category.WORLD -> "L"
         Category.MISC -> "J"
         Category.CLIENT -> "H"
+        Category.FUN -> "J"
     }
 
     private companion object {

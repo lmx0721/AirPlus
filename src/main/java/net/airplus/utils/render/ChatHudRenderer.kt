@@ -38,12 +38,15 @@ object ChatHudRenderer : MinecraftInstance {
     private const val EXIT_START_TICKS = 180F         // 退场起点（接管原版 180~200 tick 的淡出段）
     private const val EXIT_TICKS = 6F                 // 退场时长（≈300ms，与入场同速）
 
-    private class ChatLineInfo(val text: String, val alpha: Float, val y: Float)
+    private class ChatLineInfo(val text: String, var alpha: Float, var y: Float)
 
     private val birthTimes = WeakHashMap<ChatLine, Long>()
     private var entranceOffset = 0F
     private var scrollAnim = 0F
     private var lastFrame = 0L
+
+    // 展开动画：0 = 收起（关闭状态下的可见范围），1 = 完全展开（打开时的完整历史窗口）
+    private var expandProgress = 0F
 
     // 背景弹簧状态（NaN 表示尚未初始化，首帧直接吸附到目标值）
     private var animBlockY1 = Float.NaN
@@ -72,6 +75,7 @@ object ChatHudRenderer : MinecraftInstance {
         entranceOffset = 0F
         scrollAnim = 0F
         lastFrame = 0L
+        expandProgress = 0F
         animBlockY1 = Float.NaN
         animBlockY2 = Float.NaN
         animBlockX2 = Float.NaN
@@ -114,6 +118,13 @@ object ChatHudRenderer : MinecraftInstance {
             entranceOffset = 0F
         }
 
+        // --- 展开动画：打开/关闭聊天栏时，历史区域在「关闭时可见范围」与「完整窗口」间平滑过渡 ---
+        val expandTarget = if (chatOpen) 1F else 0F
+        expandProgress += (expandTarget - expandProgress) * factor
+        if (abs(expandProgress - expandTarget) < 0.002F) expandProgress = expandTarget
+        // 收起过程中仍需渲染历史行（超出关闭可见范围的行交由展开边缘逐行隐藏）
+        val revealActive = chatOpen || expandProgress > 0.002F
+
         // --- 字体（复用 HUD 的 FontChat 设置，字体可在 HUD 设置中选择） ---
         val customFont = hud.shouldModifyChatFont()
         val font = if (customFont) hud.chatFont else null
@@ -142,6 +153,7 @@ object ChatHudRenderer : MinecraftInstance {
         val infos = ArrayList<ChatLineInfo>(lineCount)
         var maxTextWidth = 0F
         var blockAlpha = 0F
+        var youngMinY = Float.MAX_VALUE   // 关闭状态下仍可见（age < 200）的最靠上行的 y
 
         for (slot in 0 until lineCount) {
             val index = base + slot
@@ -155,18 +167,23 @@ object ChatHudRenderer : MinecraftInstance {
             var alpha = 1F
             var yOff = 0F   // 每行的额外纵向偏移（入场 / 退场动画）
 
-            if (!chatOpen && hud.chatAnimation && age >= EXIT_START_TICKS) {
+            if (!chatOpen && !revealActive && hud.chatAnimation && age >= EXIT_START_TICKS) {
                 // 退场：与入场同速的上滑 + 淡出（接管原版 180~200 tick 的淡出段）
                 val t = ((age - EXIT_START_TICKS) / EXIT_TICKS).coerceIn(0F, 1F)
                 if (t >= 1F) continue
                 alpha = 1F - easeInCubic(t)
                 yOff -= easeInCubic(t) * lineH
             } else {
-                if (age >= 200 && !chatOpen) continue
-                // 原版的 200 tick 淡出曲线
-                alpha = ((1F - age / 200F) * 10F).coerceIn(0F, 1F)
-                alpha *= alpha
-                if (chatOpen) alpha = 1F
+                if (age >= 200 && !chatOpen) {
+                    if (!revealActive) continue
+                    // 收起动画期间：超龄行保持可见，由展开边缘逐行隐藏
+                    alpha = 1F
+                } else {
+                    // 原版的 200 tick 淡出曲线
+                    alpha = ((1F - age / 200F) * 10F).coerceIn(0F, 1F)
+                    alpha *= alpha
+                    if (chatOpen) alpha = 1F
+                }
             }
             alpha *= opacityBase
 
@@ -186,6 +203,7 @@ object ChatHudRenderer : MinecraftInstance {
 
             val text = chatLine.getChatComponent().getFormattedText()
             val y = -(slot * lineH) + frac * lineH + entranceOffset + yOff
+            if (age < 200) youngMinY = minOf(youngMinY, y)
             infos.add(ChatLineInfo(text, alpha, y))
             maxTextWidth = max(maxTextWidth, stringWidth(text))
             blockAlpha = max(blockAlpha, alpha)
@@ -196,13 +214,41 @@ object ChatHudRenderer : MinecraftInstance {
         val radius = hud.chatRoundedRadius
         val pad = 3F
         val blockX1 = -pad
+        val blockY2 = infos[0].y
+
+        // 展开边缘：在「关闭时可见上缘」与「打开时完整上缘」间插值，随进度推进逐行揭示历史
+        val blockY1 = if (revealActive) {
+            val openTop = infos[infos.size - 1].y - lineH
+            val youngTop = if (youngMinY == Float.MAX_VALUE) blockY2 else youngMinY - lineH
+            youngTop + (openTop - youngTop) * easeOutCubic(expandProgress)
+        } else {
+            infos[infos.size - 1].y - lineH
+        }.coerceAtLeast(blockY2 - hud.chatHeightMax)   // 最大高度：向上最多延伸 chatHeightMax px（超出部分被裁剪）
+
+        // 展开边缘处的行淡入并从上缘滑入定位（配合 scissor 裁剪，避免边缘文字被硬切）
+        if (revealActive) {
+            for (info in infos) {
+                val d = info.y - blockY1
+                if (d <= 0F) {
+                    info.alpha = -1F   // 边缘之上：隐藏（标记后过滤）
+                } else if (d < lineH) {
+                    val t = d / lineH
+                    info.alpha *= t
+                    info.y = blockY1 + d * t
+                }
+            }
+            infos.removeAll { it.alpha < 0F }
+            if (infos.isEmpty()) return
+            maxTextWidth = 0F
+            blockAlpha = 0F
+            for (info in infos) {
+                maxTextWidth = max(maxTextWidth, stringWidth(info.text))
+                blockAlpha = max(blockAlpha, info.alpha)
+            }
+        }
+
         // 自定义宽度不小于最长消息 + 4px（pad + 1）
         val blockX2 = max(maxTextWidth + pad + 1F, if (hud.chatCustomWidth) hud.chatWidth else 0F)
-        val blockY1 = infos[infos.size - 1].y - lineH
-        var blockY2 = infos[0].y
-
-        // 最大高度：背景块向上最多延伸 chatHeightMax px（历史过多时顶部被裁剪）
-        blockY2 = blockY2.coerceAtLeast(blockY1 - hud.chatHeightMax)
 
         // --- 背景弹簧缩放（历史行数 / 内容宽度变化时弹性放大或缩小） ---
         val dt = deltaMs / 1000F
@@ -297,6 +343,8 @@ object ChatHudRenderer : MinecraftInstance {
     private fun easeOutExpo(t: Float): Float = if (t >= 1F) 1F else 1F - 2F.pow(-10F * t)
 
     private fun easeInCubic(t: Float): Float = t * t * t
+
+    private fun easeOutCubic(t: Float): Float = 1F - (1F - t).pow(3F)
 
     /**
      * 半隐式欧拉弹簧积分，按固定子步长积分保证帧率无关。

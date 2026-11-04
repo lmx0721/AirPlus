@@ -10,7 +10,6 @@ import net.airplus.features.module.modules.movement.NoSlow;
 import net.airplus.features.module.modules.render.Animation;
 import net.airplus.features.module.modules.render.Animations;
 import net.airplus.features.module.modules.render.AntiBlind;
-import net.airplus.features.module.modules.render.Execution;
 import net.airplus.features.module.modules.render.NoSwing;
 import net.airplus.features.module.modules.render.SilentHotbarModule;
 import net.airplus.utils.inventory.SilentHotbar;
@@ -23,7 +22,6 @@ import net.minecraft.client.renderer.RenderHelper;
 import net.minecraft.client.renderer.block.model.ItemCameraTransforms;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.player.InventoryPlayer;
-import net.minecraft.init.Items;
 import net.minecraft.item.EnumAction;
 import net.minecraft.item.ItemMap;
 import net.minecraft.item.ItemStack;
@@ -112,25 +110,6 @@ public abstract class MixinItemRenderer {
         rotateWithPlayerRotations(abstractclientplayer, partialTicks);
         enableRescaleNormal();
         pushMatrix();
-
-        // 处决（Execution）：动画期间完全接管手部，渲染手臂 + 钻石剑一起前刺
-        if (Execution.INSTANCE.isPlaying()) {
-            Execution.INSTANCE.applyHandTransform();
-            // 手臂：先补偿 renderPlayerArm 自带的手部基准，再让它跟随当前姿态
-            pushMatrix();
-            Execution.INSTANCE.applyArmTransform();
-            renderPlayerArm(abstractclientplayer, 0.0F, 0.0F);
-            popMatrix();
-            // 剑：额外沿剑身方向前伸（不施加给手臂），避免剑柄陷进手臂
-            pushMatrix();
-            Execution.INSTANCE.applySwordOffset();
-            renderItem(abstractclientplayer, new ItemStack(Items.diamond_sword), ItemCameraTransforms.TransformType.FIRST_PERSON);
-            popMatrix();
-            popMatrix();
-            disableRescaleNormal();
-            RenderHelper.disableStandardItemLighting();
-            return;
-        }
 
         if (animations.handleEvents()) {
             float scale = animations.getHandItemScale();

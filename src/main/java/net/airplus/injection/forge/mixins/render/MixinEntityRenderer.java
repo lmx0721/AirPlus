@@ -213,21 +213,6 @@ public abstract class MixinEntityRenderer {
         }
     }
 
-    /**
-     * Execution: 处决动画期间把第一人称视角平滑对准目标胸口。
-     * 只在 renderWorldPass 的世界+手部渲染范围内替换玩家视角（随后在 RETURN 恢复），
-     * runTick / getMouseOver / 发包与 HUD 始终使用真实视角，纯本地渲染层效果。
-     */
-    @Inject(method = "renderWorldPass", at = @At("HEAD"))
-    private void injectExecutionCameraAim(int pass, float partialTicks, long finishTimeNano, CallbackInfo ci) {
-        Execution.INSTANCE.applyCameraAim(partialTicks);
-    }
-
-    @Inject(method = "renderWorldPass", at = @At("RETURN"))
-    private void injectExecutionCameraRestore(int pass, float partialTicks, long finishTimeNano, CallbackInfo ci) {
-        Execution.INSTANCE.restoreCamera();
-    }
-
     @Inject(method = "orientCamera", at = @At(value = "HEAD"))
     private void injectFreeLook(float p_orientCamera_1_, CallbackInfo ci) {
         FreeLook.INSTANCE.useModifiedRotation();
@@ -342,8 +327,6 @@ public abstract class MixinEntityRenderer {
 
     @Inject(at = @At("TAIL"), method = "updateCameraAndRender")
     private void injectCameraRestorations(float p_updateCameraAndRender_1_, long p_updateCameraAndRender_2_, CallbackInfo ci) {
-        // Execution 先恢复自己保存的视角，避免被 FreeLook 的恢复覆盖
-        Execution.INSTANCE.restoreCamera();
         FreeLook.INSTANCE.restoreOriginalRotation();
         FreeCam.INSTANCE.restoreOriginalPosition();
     }

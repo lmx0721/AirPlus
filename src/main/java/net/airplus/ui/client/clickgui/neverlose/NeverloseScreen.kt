@@ -1915,6 +1915,7 @@ class NeverloseScreen : GuiScreen() {
             Category.WORLD -> WORLD_ICON
             Category.MISC -> MISC_ICON
             Category.CLIENT -> SETTING_ICON
+            Category.FUN -> MISC_ICON
         }
         RenderUtils.drawImage(res, x.toInt(), y.toInt(), 14, 14, color)
     }

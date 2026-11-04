@@ -3,7 +3,7 @@
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
  */
-package net.airplus.features.module.modules.render
+package net.airplus.features.module.modules.`fun`
 
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
@@ -16,11 +16,11 @@ import kotlin.math.abs
  * Pure math only — the GL scale is applied by MixinRendererLivingEntity (rotateCorpse RETURN),
  * inside doRender's pushMatrix/popMatrix so the matrix restores itself.
  */
-object Jelly : Module("Jelly", Category.RENDER, gameDetecting = false) {
+object Jelly : Module("Jelly", Category.FUN, gameDetecting = false) {
 
     private val mode by choices("Mode", arrayOf("Sync", "Wave"), "Sync")
-    val intensity by float("Intensity", 0.35f, 0f..1f)
-    val speed by float("Speed", 1f, 0.1f..3f)
+    val intensity by float("Intensity", 0.85f, 0f..1f)
+    val speed by float("Speed", 1.6f, 0.1f..3f)
 
     /**
      * Vertical scale for the given entity.

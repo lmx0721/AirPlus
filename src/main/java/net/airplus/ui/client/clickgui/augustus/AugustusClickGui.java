@@ -248,7 +248,7 @@ public class AugustusClickGui extends GuiScreen {
         if (event == GuiEvent.DRAW) {
             // 背景模糊 (HudBlur，类型/强度由 Client 模块的全局 Blur 设置统一控制；半透明背景会让模糊透出)
             if (ClickGUI.INSTANCE.getAugBlur()) {
-                HudBlur.INSTANCE.blur(posX, posY, posX + width, posY + height, 12F, RoundedCorners.ALL, 1F, null);
+                HudBlur.INSTANCE.blur(posX, posY, posX + width, posY + height, 12F, RoundedCorners.ALL, 1F, null, null);
             }
             // 原有背景与分隔线
             drawRounded(posX, posY, width, height, 12F, new Color(25, 25, 25, 190).getRGB());

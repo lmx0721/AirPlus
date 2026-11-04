@@ -887,7 +887,10 @@ object RotationUtils : MinecraftInstance, Listenable {
             // 重置视角俯仰锁定（模块注入，如 Telly 低头）：回归目标仅替换 Pitch，Yaw 照常回归真实视角
             val resetTarget = settings.lockedResetPitch?.let { Rotation(playerRotation.yaw, it) } ?: playerRotation
 
-            if (isDifferenceAcceptableForReset(serverRotation, resetTarget, settings)) {
+            // 锁定 Pitch 期间重置永不完成：一旦 resetRotation() 释放 currentRotation，
+            // 视角会立刻跳回真实俯仰角（抬头），锁定就失去意义。因此锁定时持续把视角
+            // 钉在 (真实 Yaw, 锁定 Pitch)，直到模块解除锁定（如禁用时置 null）才自然回归。
+            if (settings.lockedResetPitch == null && isDifferenceAcceptableForReset(serverRotation, resetTarget, settings)) {
                 settings.noise3Context = null
                 resetRotation()
                 return
@@ -897,7 +900,14 @@ object RotationUtils : MinecraftInstance, Listenable {
             // 避免过期瞄准点在此路径把视角重新拉向死目标（审查 B1）
             settings.noise3Context = null
 
-            currentRotation = limitAngleChange(serverRotation, resetTarget, settings).fixedSensitivity()
+            val resetRotation = limitAngleChange(serverRotation, resetTarget, settings).fixedSensitivity()
+            currentRotation = resetRotation
+
+            // 客户端视角模式（非服务器侧旋转）下同样把锁定后的回归旋转应用到玩家，
+            // 否则重置分支只更新 currentRotation，玩家视角会停在放置旋转上不回归
+            if (!settings.applyServerSide) {
+                resetRotation.toPlayer(player)
+            }
             return
         }
 

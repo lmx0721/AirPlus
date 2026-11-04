@@ -11,6 +11,7 @@ import net.airplus.event.handler
 import net.airplus.features.command.CommandManager.registerCommand
 import net.airplus.features.module.modules.client.*
 import net.airplus.features.module.modules.combat.*
+import net.airplus.features.module.modules.`fun`.*
 import net.airplus.features.module.modules.misc.*
 import net.airplus.features.module.modules.movement.*
 import net.airplus.features.module.modules.music.MusicPlayer
@@ -103,7 +104,6 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             Derp,
             ESP,
             Eagle,
-            Execution,
             FakeLag,
             FastBow,
             FastBreak,
@@ -139,7 +139,10 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             ItemESP,
             ItemPhysics,
             Jelly,
+            LocalNPC,
             JumpCircle,
+            Fuck,
+            AutoDick,
             KeepAlive,
             KeepContainer,
             KeepTabList,

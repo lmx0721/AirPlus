@@ -10,7 +10,6 @@ import net.airplus.event.ClickWindowEvent;
 import net.airplus.event.ClientSlotChangeEvent;
 import net.airplus.event.EventManager;
 import net.airplus.features.module.modules.misc.AbortBreaking;
-import net.airplus.features.module.modules.render.Execution;
 import net.airplus.utils.attack.CooldownHelper;
 import net.airplus.utils.inventory.SilentHotbar;
 import net.airplus.utils.inventory.InventoryUtils;
@@ -31,14 +30,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(PlayerControllerMP.class)
 @SideOnly(Side.CLIENT)
 public class MixinPlayerControllerMP {
-
-    @Inject(method = "attackEntity", at = @At("HEAD"), cancellable = true)
-    private void lockAttackOnExecution(EntityPlayer entityPlayer, Entity targetEntity, CallbackInfo callbackInfo) {
-        // 处决动画期间锁定攻击（手动点击、KillAura 等所有经过 PlayerController 的攻击）
-        if (Execution.INSTANCE.isPlaying()) {
-            callbackInfo.cancel();
-        }
-    }
 
     @Inject(method = "attackEntity", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/multiplayer/PlayerControllerMP;syncCurrentPlayItem()V"))
     private void attackEntity(EntityPlayer entityPlayer, Entity targetEntity, CallbackInfo callbackInfo) {
