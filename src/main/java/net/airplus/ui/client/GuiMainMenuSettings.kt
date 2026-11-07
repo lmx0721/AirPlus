@@ -61,12 +61,13 @@ class GuiMainMenuSettings : AbstractScreen() {
         val titleFont = Fonts.fontFluxTitle
         val labelFont = Fonts.fontFluxRoboto
 
-        // 面板尺寸随内容计算
-        val thumbW = 74f
+        // 面板尺寸随内容计算（背景行末尾附一个 "More" 入口块，共 bgCount + 1 块）
+        val thumbW = 64f
         val thumbH = 42f
         val thumbGap = 10f
         val bgCount = MainMenuStyles.BACKGROUND_IMAGE_NAMES.size
-        val bgRowW = bgCount * thumbW + (bgCount - 1) * thumbGap
+        val tileCount = bgCount + 1
+        val bgRowW = tileCount * thumbW + (tileCount - 1) * thumbGap
 
         val styleW = 96f
         val styleH = 20f
@@ -81,10 +82,11 @@ class GuiMainMenuSettings : AbstractScreen() {
         panelX = width / 2f - panelW / 2f
         panelY = height / 2f - panelH / 2f
 
-        // 背景缩略图
+        // 背景缩略图（末尾为 More 入口，哨兵索引 MORE_THUMB_INDEX）
         val thumbY = panelY + 40f + titleFont.height + 12f + labelFont.height + 8f
-        thumbs = (0 until bgCount).map { i ->
-            ThumbButton(panelX + 20f + i * (thumbW + thumbGap), thumbY, thumbW, thumbH, i)
+        thumbs = (0 until tileCount).map { i ->
+            val index = if (i < bgCount) i else MainMenuStyles.MORE_THUMB_INDEX
+            ThumbButton(panelX + 20f + i * (thumbW + thumbGap), thumbY, thumbW, thumbH, index)
         }
 
         // 布局风格按钮
@@ -113,7 +115,10 @@ class GuiMainMenuSettings : AbstractScreen() {
         width = sr.scaledWidth
         height = sr.scaledHeight
 
-        // 背景：仅全屏模糊（透明，不叠加黑色蒙层），全局 Blur 设置统一控制
+        // 背景：实时绘制当前主菜单背景后整屏模糊 —— 背景选择后下一帧立即生效
+        // （advanceFrame 推进 HudBlur 帧会话，避免复用打开设置时的旧快照）
+        HudBlur.advanceFrame()
+        MainMenuStyles.drawMenuBackground(width, height, 0)
         HudBlur.blur(0f, 0f, width.toFloat(), height.toFloat())
 
         // 毛玻璃面板：半透明白 + 细白描边（模糊已由上方全屏 blur 提供）
@@ -145,17 +150,28 @@ class GuiMainMenuSettings : AbstractScreen() {
         // 背景选择区
         labelFont.drawString("Background", panelX + 20f, panelY + 24f + titleFont.height, labelDark.rgb)
         val currentBgIndex = MainMenuStyles.backgroundImageIndex(ClientConfiguration.customMenuBackgroundImageIndex)
+        val currentIsShader = MainMenuStyles.isShaderBackground(currentBgIndex)
         for (t in thumbs) {
             val hovered = mouseX >= t.x && mouseX <= t.x + t.w && mouseY >= t.y && mouseY <= t.y + t.h
-            val selected = t.index == currentBgIndex
-
-            // Flux 动态背景：实时预览（自定义文件 / 内置 blob 着色器）；其余绘制对应图片
-            val resource = MainMenuStyles.backgroundResource(t.index)
-            if (resource != null) {
-                RenderUtils.drawImage(resource, t.x, t.y, t.w.toInt(), t.h.toInt())
+            val selected = if (t.index == MainMenuStyles.MORE_THUMB_INDEX) {
+                currentIsShader
             } else {
-                MainMenuStyles.drawFluxBackgroundPreview(width, height, t.x, t.y, t.w, t.h)
+                t.index == currentBgIndex
             }
+
+            if (t.index == MainMenuStyles.MORE_THUMB_INDEX) {
+                // "More" 入口块：深色底 + 加号，点击打开 shader 背景选择器
+                RenderUtils.drawRect(t.x, t.y, t.x + t.w, t.y + t.h, Color(20, 22, 30).rgb)
+                if (hovered) {
+                    RenderUtils.drawRect(t.x, t.y, t.x + t.w, t.y + t.h, Color(255, 255, 255, 40).rgb)
+                }
+                val plus = "+"
+                btnFont.drawCenteredString(plus, t.x + t.w / 2f, t.y + t.h / 2f - btnFont.height / 2f - 2f, 0xFFFFFF, false)
+            } else {
+                // Flux 动态背景 / 内置 shader 背景 / 图片背景 统一预览
+                MainMenuStyles.drawBackgroundThumb(t.index, width, height, t.x, t.y, t.w, t.h)
+            }
+
             // 边框：选中蓝色高亮，悬停淡白
             val borderColor = when {
                 selected -> Color(30, 110, 210, 240).rgb
@@ -164,9 +180,10 @@ class GuiMainMenuSettings : AbstractScreen() {
             }
             RenderUtils.drawRoundedBorderRect(t.x, t.y, t.x + t.w, t.y + t.h, 1f, borderColor, borderColor, 4f)
 
-            // 名称（Flux 动态背景始终显示名称；图片背景选中或悬停时显示）
-            if (selected || hovered || resource == null) {
-                val name = MainMenuStyles.backgroundDisplayName(t.index)
+            // 名称（More 入口与动态背景始终显示名称；图片背景选中或悬停时显示）
+            val isMore = t.index == MainMenuStyles.MORE_THUMB_INDEX
+            if (selected || hovered || isMore || MainMenuStyles.backgroundResource(t.index) == null) {
+                val name = if (isMore) "More" else MainMenuStyles.backgroundDisplayName(t.index)
                 val nameFont = Fonts.fontFluxRoboto
                 RenderUtils.drawRect(t.x, t.y + t.h - 14f, t.x + t.w, t.y + t.h, Color(0, 0, 0, 140).rgb)
                 nameFont.drawString(name, t.x + 4f, t.y + t.h - 12f + (14f - nameFont.height) / 2f, Color(255, 255, 255).rgb)
@@ -226,11 +243,15 @@ class GuiMainMenuSettings : AbstractScreen() {
             return
         }
 
-        // 背景缩略图：点击立即应用并保存
+        // 背景缩略图：点击立即应用并保存；More 入口打开 shader 背景选择器
         for (t in thumbs) {
             if (mouseX >= t.x && mouseX <= t.x + t.w && mouseY >= t.y && mouseY <= t.y + t.h) {
-                ClientConfiguration.customMenuBackgroundImageIndex = t.index
-                FileManager.saveConfig(valuesConfig)
+                if (t.index == MainMenuStyles.MORE_THUMB_INDEX) {
+                    mc.displayGuiScreen(GuiShaderPicker() as net.minecraft.client.gui.GuiScreen)
+                } else {
+                    ClientConfiguration.customMenuBackgroundImageIndex = t.index
+                    FileManager.saveConfig(valuesConfig)
+                }
                 return
             }
         }

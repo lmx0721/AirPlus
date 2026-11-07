@@ -1,6 +1,7 @@
 package net.airplus.utils.xinxin.mobends.client.renderer.entity.layers;
 
 import net.airplus.utils.xinxin.mobends.client.model.entity.ModelBendsPlayerArmor;
+import net.airplus.utils.xinxin.mobends.client.renderer.entity.RenderBendsPlayer;
 import net.minecraft.client.model.ModelBiped;
 import net.minecraft.client.renderer.entity.RendererLivingEntity;
 import net.minecraft.client.renderer.entity.layers.LayerArmorBase;
@@ -8,8 +9,11 @@ import net.minecraft.entity.EntityLivingBase;
 
 public class LayerBendsPlayerArmor
 extends LayerArmorBase<ModelBiped> {
+    private final RendererLivingEntity<?> renderer;
+
     public LayerBendsPlayerArmor(RendererLivingEntity<?> rendererIn) {
         super(rendererIn);
+        this.renderer = rendererIn;
     }
 
     @Override
@@ -44,6 +48,10 @@ extends LayerArmorBase<ModelBiped> {
                 break;
             }
             case 4: {
+                // 第一人称渲染自己时隐藏头盔头部，避免挡住相机
+                if (this.renderer instanceof RenderBendsPlayer && ((RenderBendsPlayer)this.renderer).hideHead) {
+                    break;
+                }
                 p_177179_1_.bipedHead.showModel = true;
                 p_177179_1_.bipedHeadwear.showModel = true;
             }

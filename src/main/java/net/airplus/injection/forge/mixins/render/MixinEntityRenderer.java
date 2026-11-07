@@ -35,6 +35,7 @@ import org.apache.logging.log4j.LogManager;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL13;
 import org.lwjgl.opengl.GL20;
+import org.lwjgl.util.glu.Project;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -190,7 +191,7 @@ public abstract class MixinEntityRenderer {
 
     @Inject(method = "hurtCameraEffect", at = @At("HEAD"), cancellable = true)
     private void injectHurtCameraEffect(CallbackInfo callbackInfo) {
-        if (NoHurtCam.INSTANCE.handleEvents()) {
+        if (Camera.INSTANCE.handleEvents() && Camera.INSTANCE.getNoHurtCam()) {
             callbackInfo.cancel();
         }
     }
@@ -199,7 +200,20 @@ public abstract class MixinEntityRenderer {
     private int injectCameraClip(int eight) {
         // 8 is the bound of vanilla's 8-direction third-person camera collision raytrace
         // loop; 0 skips it entirely (no camera collision)
-        return CameraClip.INSTANCE.handleEvents() || Camera.INSTANCE.handleEvents() ? 0 : eight;
+        return Camera.INSTANCE.handleEvents() && Camera.INSTANCE.getViewClip() ? 0 : eight;
+    }
+
+    /**
+     * AspectRatio: replace the projection aspect ratio (displayWidth / displayHeight)
+     * with the configured value in every world-perspective projection call
+     * (the equivalent of MoonLight's patched EntityRenderer gluPerspective sites).
+     */
+    @Redirect(method = {"setupCameraTransform", "renderHand", "renderWorldPass", "renderCloudsCheck"},
+            at = @At(value = "INVOKE", target = "Lorg/lwjgl/util/glu/Project;gluPerspective(FFFF)V"),
+            require = 0)
+    private void injectAspectRatio(float fov, float aspect, float zNear, float zFar) {
+        final AspectRatio aspectRatio = AspectRatio.INSTANCE;
+        Project.gluPerspective(fov, aspectRatio.handleEvents() ? aspectRatio.getAspect() : aspect, zNear, zFar);
     }
 
     @Inject(at = @At("HEAD"), method = "updateCameraAndRender")

@@ -1,6 +1,7 @@
 package net.airplus.injection.forge.mixins.gui;
 
 import net.airplus.config.ColorValue;
+import net.airplus.features.module.modules.client.GuiImage;
 import net.airplus.features.module.modules.player.AutoArmor;
 import net.airplus.features.module.modules.player.InventoryCleaner;
 import net.airplus.features.module.modules.world.ChestStealer;
@@ -48,6 +49,15 @@ public abstract class MixinGuiContainer extends MixinGuiScreen {
                 ci.cancel();
             }
         }
+    }
+
+    /**
+     * GuiImage：容器类界面（箱子/背包等 GuiContainer 子类）drawScreen 尾部绘制自定义图片。
+     * GuiImage 内部按白名单过滤（仅 GuiChest / GuiInventory）。
+     */
+    @Inject(method = "drawScreen", at = @At("TAIL"))
+    private void airplus$guiImageDraw(int mouseX, int mouseY, float partialTicks, CallbackInfo ci) {
+        GuiImage.INSTANCE.onGuiRender(mc.currentScreen);
     }
 
     @Inject(method = "drawSlot", at = @At("HEAD"))

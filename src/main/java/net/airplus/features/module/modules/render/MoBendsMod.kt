@@ -34,6 +34,9 @@ import org.lwjgl.util.vector.Vector3f
 
 object MoBendsMod : Module("MoreBends", Category.RENDER) {
 
+    /** 第一人称下渲染自己的 Bends 动画身体（相机在头部内，自动隐藏头/帽子/头盔） */
+    private val visibleInFirstPerson by boolean("Visible In First Person", false)
+
     @JvmField
     val texture_NULL = ResourceLocation("mobends", "textures/white.png")
 
@@ -143,6 +146,14 @@ object MoBendsMod : Module("MoreBends", Category.RENDER) {
     }
 
     /**
+     * 第一人称可见开关（供 MixinRenderGlobal 的 isPlayerSleeping() Redirect 查询）：
+     * 为 true 时 vanilla renderEntities 不再跳过渲染视口实体（自己），
+     * 本体进入 RendererLivingEntity.doRender，随后由 onRenderLivingEvent 换成 Bends 渲染器。
+     */
+    fun renderSelfInFirstPerson(): Boolean =
+        handleEvents() && visibleInFirstPerson && mc.gameSettings.thirdPersonView == 0
+
+    /**
      * ? MixinRendererLivingEntity ? doRender HEAD ???
      * ?? true ???? MoBends ?????,????????
      */
@@ -162,7 +173,15 @@ object MoBendsMod : Module("MoreBends", Category.RENDER) {
         val animatedEntity = AnimatedEntity.getByEntity(entity)
         if (animatedEntity != null && (entity is EntityPlayer || entity is EntityZombie) || entity is EntitySpider) {
             if (entity is AbstractClientPlayer) {
-                AnimatedEntity.getPlayerRenderer(entity).doRender(entity, x, y, z, entityYaw, partialTicks)
+                val bendsRenderer = AnimatedEntity.getPlayerRenderer(entity)
+                // 第一人称渲染自己：隐藏头/帽子，避免模型挡住相机视野（头盔由 LayerBendsPlayerArmor 联动隐藏）
+                val hideHead = entity === mc.thePlayer && renderSelfInFirstPerson()
+                bendsRenderer.hideHead = hideHead
+                try {
+                    bendsRenderer.doRender(entity, x, y, z, entityYaw, partialTicks)
+                } finally {
+                    bendsRenderer.hideHead = false
+                }
             } else if (entity is EntityZombie) {
                 AnimatedEntity.zombieRenderer.doRender(entity, x, y, z, entityYaw, partialTicks)
             } else if (entity is EntitySpider) {

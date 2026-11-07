@@ -222,6 +222,10 @@ object ArmorBreak : Module("ArmorBreak", Category.COMBAT) {
     private val currentTarget: EntityLivingBase?
         get() = KillAura.target
 
+    /** 是否处于破甲工作状态（已启用且有 KillAura 目标），供 InventoryCleaner 等暂停背包操作 */
+    val isWorking: Boolean
+        get() = state && currentTarget != null
+
     private fun collectWeaponSlots(): List<Int> {
         val player = mc.thePlayer ?: return emptyList()
         val slots = ArrayList<Int>()

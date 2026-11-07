@@ -12,8 +12,10 @@ import net.airplus.event.handler
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
 import net.airplus.utils.attack.CPSCounter
-import net.airplus.utils.block.PlaceInfo
+import net.airplus.utils.block.BlockUtils
+import net.airplus.utils.block.canBeClicked
 import net.airplus.utils.block.center
+import net.airplus.utils.block.isReplaceable
 import net.airplus.utils.client.PacketUtils.sendPacket
 import net.airplus.utils.extensions.eyes
 import net.airplus.utils.extensions.onPlayerRightClick
@@ -26,41 +28,54 @@ import net.airplus.utils.rotation.Rotation
 import net.airplus.utils.rotation.RotationSettings
 import net.airplus.utils.rotation.RotationUtils
 import net.airplus.utils.rotation.RotationUtils.getVectorForRotation
+import net.airplus.utils.rotation.RotationUtils.rotationDifference
 import net.airplus.utils.rotation.RotationUtils.setTargetRotation
+import net.airplus.utils.rotation.RotationUtils.toRotation
 import net.minecraft.block.BlockBush
 import net.minecraft.init.Blocks
 import net.minecraft.item.ItemBlock
 import net.minecraft.item.ItemStack
-import net.minecraft.network.play.client.C07PacketPlayerDigging.Action.START_DESTROY_BLOCK
-import net.minecraft.network.play.client.C07PacketPlayerDigging.Action.STOP_DESTROY_BLOCK
 import net.minecraft.network.play.client.C0APacketAnimation
 import net.minecraft.network.play.client.C07PacketPlayerDigging
+import net.minecraft.network.play.client.C07PacketPlayerDigging.Action.START_DESTROY_BLOCK
+import net.minecraft.network.play.client.C07PacketPlayerDigging.Action.STOP_DESTROY_BLOCK
 import net.minecraft.util.BlockPos
 import net.minecraft.util.EnumFacing
 import net.minecraft.util.MathHelper
 import net.minecraft.util.MovingObjectPosition
 import net.minecraft.util.Vec3
+import net.minecraft.util.Vec3i
+import net.minecraft.world.World
 import net.minecraftforge.event.ForgeEventFactory
 import java.awt.Color
 
 /**
- * AutoDick —— 按玩家朝向在正前方一格自动建造：
+ * AutoDick —— 按玩家朝向在正前方一格自动建造一道小拱门：
  *
  *   （空）（方块1）（空）
  *   （空）（方块2）（空）
  *   （方块3）（方块4）（方块5）
  *
- * 底排 3/4/5 → 中层 2 → 顶层 1（建造顺序 3-4-5-2-1），
- * 建成后自动挖掉正前方的方块 4，留出一道可通行的小拱门。
+ * 底排 3/4/5 → 中层 2 → 顶层 1，建成后自动挖掉正前方的方块 4，
+ * 留出一道可通行的小拱门。
  *
- * - 形状对齐到方块网格：以「玩家脚下方块 + 面对的水平朝向」为锚点，
- *   站在两个方块中间（脚跨方块边界）时形状不会跑偏/漏格；
- * - 放置射线判定用 Scaffold 同款参数，确保瞄准支撑面时能确切命中支撑块，
- *   找到 PlaceRotation 后先转头再放置。
+ * 放置逻辑（本次重写的核心，Scaffold 同款思路）：
+ * 1. 目标选取：所有未完成的方块里取「离玩家最近」的一个（悬空的会因找不到
+ *    支撑面自然被跳过，不会抢先放置）；
+ * 2. 支撑搜索：枚举目标六个方向的邻块，只接受 [canBeClicked] 的可点击实心方块
+ *    （支持台阶 / 部分方块作为支撑）；
+ * 3. 瞄准点搜索：在支撑面（朝向目标的那一面）上做 3×3 网格采样，每个采样点要求
+ *    - 在触及距离内；
+ *    - 眼睛到该点视线无遮挡（不被第三方方块挡住）；
+ *    - 以该点计算的旋转（经 sensitivity 修正）做射线检测，确切命中支撑块
+ *      及其对应侧面（保证不隔墙放置、点到的就是能放上去的面）；
+ * 4. 择优：在所有可行解中取「与当前视角旋转差」最小的一个 —— 转头量最小，
+ *    动作最自然，也降低被反作弊盯上的概率。
  */
 object AutoDick : Module("AutoDick", Category.FUN, gameDetecting = false) {
 
     private val placeDelayTicks by int("PlaceDelay", 4, 1..20)
+    private val buildDistance by int("BuildDistance", 1, 1..6)
     private val swing by boolean("Swing", true)
     private val switchMode by choices("SwitchMode", arrayOf("Off", "Spoof"), "Spoof")
     private val mark by boolean("Mark", true)
@@ -69,6 +84,9 @@ object AutoDick : Module("AutoDick", Category.FUN, gameDetecting = false) {
 
     // 建造顺序：3、4、5、2、1；完成后挖掉索引 1（方块 4）
     private val digIndex = 1
+
+    /** 支撑面瞄准点采样网格（沿面两个切向轴的偏移，0.5 = 面中心） */
+    private val faceSamples = doubleArrayOf(0.25, 0.5, 0.75)
 
     private var placeCooldown = 0
     private var currentDamage = 0F
@@ -109,10 +127,11 @@ object AutoDick : Module("AutoDick", Category.FUN, gameDetecting = false) {
         // 上个周期刚挖完且形状未变 → 这一轮已完成，原地待机不再循环建/挖
         if (doneShape != null && order == doneShape) return@handler
 
-        // 全部建成 → 挖掉方块 4
-        val nextMissing = order.firstOrNull { pos -> isFree(pos) }
+        // 建造目标里取离玩家最近的空位（无支撑的自然找不到放置点，不会抢先放置）
+        val nextMissing = order.filter { isFree(it) }.minByOrNull { BlockUtils.getCenterDistance(it) }
 
         if (nextMissing == null) {
+            // 全部建成 → 挖掉方块 4
             dig(player, world, order[digIndex], order)
             return@handler
         }
@@ -126,19 +145,15 @@ object AutoDick : Module("AutoDick", Category.FUN, gameDetecting = false) {
             return@handler
         }
 
-        val placeRotation = pickPlaceRotation(player, world, nextMissing) ?: return@handler
+        val placeRotation = findPlaceRotation(player, world, nextMissing) ?: return@handler
 
-        if (options.rotationsActive)
+        if (options.rotationsActive) {
             setTargetRotation(placeRotation.rotation, options, if (options.keepRotation) options.resetTicks else 1)
+        }
 
-        if (place(player, isEnabledBlockStack(player, nextMissing), placeRotation))
+        if (place(player, blockStack(player), placeRotation)) {
             placeCooldown = placeDelayTicks
-    }
-
-    private fun isFree(pos: BlockPos): Boolean {
-        val world = mc.theWorld ?: return false
-        val block = world.getBlockState(pos).block
-        return block == Blocks.air || block.isReplaceable(world, pos)
+        }
     }
 
     // ------------------------------------------------------------------
@@ -148,6 +163,7 @@ object AutoDick : Module("AutoDick", Category.FUN, gameDetecting = false) {
      * 锚点 = 玩家所在方块 + 玩家面对的水平 EnumFacing（0°=南、90°=西）。
      * 与连续坐标不同，这样算出的三块底排永远是相邻的三个不同方块，
      * 站在两个方块中间（脚正好跨边界）也不会出现漏格。
+     * BuildDistance：距离玩家 1~6 格处建造（受实际放置距离上限约束）。
      */
     private fun buildOrder(player: net.minecraft.entity.player.EntityPlayer): List<BlockPos> {
         val base = BlockPos(
@@ -156,7 +172,7 @@ object AutoDick : Module("AutoDick", Category.FUN, gameDetecting = false) {
             MathHelper.floor_double(player.posZ)
         )
         val facing = EnumFacing.getHorizontal(MathHelper.floor_double(player.rotationYaw / 90.0 + 0.5) and 3)
-        val front = base.offset(facing)
+        val front = base.offset(facing, buildDistance)
         val right = facing.rotateY()
 
         return listOf(
@@ -168,49 +184,103 @@ object AutoDick : Module("AutoDick", Category.FUN, gameDetecting = false) {
         )
     }
 
+    private fun isFree(pos: BlockPos): Boolean {
+        val world = mc.theWorld ?: return false
+        val block = world.getBlockState(pos).block
+        return block == Blocks.air || block.isReplaceable(world, pos)
+    }
+
     // ------------------------------------------------------------------
-    // 放置
+    // 放置点 / 瞄准点搜索
     // ------------------------------------------------------------------
     /**
-     * 为目标块找一个支撑邻面（六方向中存在可点击的实心邻块），
-     * 返回 PlaceRotation（瞄准该面中心），找不到返回 null。
+     * 为目标方块寻找最佳 [PlaceRotation]：
+     * 六方向支撑邻块 × 支撑面 3×3 采样点，全部可行解里取旋转差最小的。
+     * 找不到任何可见可点击的支撑面时返回 null（本 tick 不放置）。
      */
-    private fun pickPlaceRotation(
+    private fun findPlaceRotation(
         player: net.minecraft.entity.player.EntityPlayer,
-        world: net.minecraft.world.World,
+        world: World,
         target: BlockPos
     ): PlaceRotation? {
         val reach = mc.playerController?.blockReachDistance ?: return null
+        val eyes = player.eyes
+        val currRotation = RotationUtils.currentRotation ?: Rotation(player.rotationYaw, player.rotationPitch)
 
-        for (dir in EnumFacing.values()) {
-            val neighbor = target.offset(dir)
-            if (!world.isBlockNormalCube(neighbor, false)) continue
+        var best: PlaceRotation? = null
+        var bestDiff = Float.MAX_VALUE
 
-            // 目标面中心：邻块中心 + 指向目标方向的一半块长
-            val toTarget = Vec3(
-                (target.x - neighbor.x).toDouble(),
-                (target.y - neighbor.y).toDouble(),
-                (target.z - neighbor.z).toDouble()
-            ).normalize()
-            val targetVec = neighbor.center.addVector(toTarget.xCoord * 0.5, toTarget.yCoord * 0.5, toTarget.zCoord * 0.5)
+        for (side in EnumFacing.values()) {
+            val neighbor = target.offset(side)
+            // 只把可点击的实心方块当支撑（台阶/部分方块也算，隔墙/容器/悬空全排除）
+            if (!neighbor.canBeClicked()) continue
 
-            val rotation = RotationUtils.toRotation(targetVec, false, player)
-            // 同 Scaffold：越过面中心继续打 4.5 格（射线穿进支撑块内部），
-            // 才能确切取到 blockPos == neighbor 的命中点（面中心恰好在边界平面上）
-            val raytrace = performBlockRaytrace(rotation, reach) ?: continue
+            // 支撑面 = 邻块朝向目标的那一面，外法线指向目标
+            val normal = side.opposite.directionVec
 
-            // 视线必须落在同一个邻块上（保证不隔墙放置）
-            if (raytrace.typeOfHit != MovingObjectPosition.MovingObjectType.BLOCK || raytrace.blockPos != neighbor) continue
+            for (vec in faceSamplePoints(neighbor, normal)) {
+                // 触及距离
+                if (eyes.distanceTo(vec) > reach) continue
 
-            return PlaceRotation(
-                PlaceInfo(raytrace.blockPos, raytrace.sideHit, raytrace.hitVec),
-                Rotation(rotation.yaw, rotation.pitch)
-            )
+                // 视线遮挡：从眼睛打到面内一点（沿法线回缩 0.01 避免端点落在
+                // 邻块边界上被误判命中），中途撞到任何方块都视为被挡
+                val losEnd = vec.addVector(
+                    normal.x * 0.01, normal.y * 0.01, normal.z * 0.01
+                )
+                if (world.rayTraceBlocks(eyes, losEnd, false, true, false) != null) continue
+
+                // 用 sensitivity 修正后的旋转做最终命中验证
+                val rotation = toRotation(vec, false, player).fixedSensitivity()
+                val raytrace = performBlockRaytrace(rotation, reach) ?: continue
+
+                // 必须确切命中支撑块与对应侧面（不隔墙放置、不点到别的面）
+                if (raytrace.typeOfHit != MovingObjectPosition.MovingObjectType.BLOCK ||
+                    raytrace.blockPos != neighbor || raytrace.sideHit != side.opposite
+                ) continue
+
+                // 择优：转头量最小
+                val diff = rotationDifference(rotation, currRotation)
+                if (diff < bestDiff) {
+                    bestDiff = diff
+                    best = PlaceRotation(
+                        net.airplus.utils.block.PlaceInfo(raytrace.blockPos, raytrace.sideHit, raytrace.hitVec),
+                        rotation
+                    )
+                }
+            }
         }
-        return null
+
+        return best
     }
 
-    private fun isEnabledBlockStack(player: net.minecraft.entity.player.EntityPlayer, target: BlockPos): ItemStack? {
+    /**
+     * 支撑面采样点：面中心（法线方向推 0.5）沿两个切向轴做 3×3 网格采样。
+     * 多点采样解决「面中心被挡 / 角度刁钻」时单点判定失败的问题，
+     * 同时给出多个候选旋转供择优。
+     */
+    private fun faceSamplePoints(neighbor: BlockPos, normal: Vec3i): List<Vec3> {
+        val (tangentU, tangentV) = when {
+            normal.x != 0 -> Vec3i(0, 1, 0) to Vec3i(0, 0, 1)
+            normal.y != 0 -> Vec3i(1, 0, 0) to Vec3i(0, 0, 1)
+            else -> Vec3i(1, 0, 0) to Vec3i(0, 1, 0)
+        }
+
+        val points = ArrayList<Vec3>(faceSamples.size * faceSamples.size)
+        for (u in faceSamples) {
+            for (v in faceSamples) {
+                points.add(
+                    Vec3(
+                        neighbor.x + 0.5 + normal.x * 0.5 + tangentU.x * (u - 0.5) + tangentV.x * (v - 0.5),
+                        neighbor.y + 0.5 + normal.y * 0.5 + tangentU.y * (u - 0.5) + tangentV.y * (v - 0.5),
+                        neighbor.z + 0.5 + normal.z * 0.5 + tangentU.z * (u - 0.5) + tangentV.z * (v - 0.5)
+                    )
+                )
+            }
+        }
+        return points
+    }
+
+    private fun blockStack(player: net.minecraft.entity.player.EntityPlayer): ItemStack? {
         var stack = player.inventorySlot(SilentHotbar.currentSlot + 36).stack
 
         if (stack == null || stack.item !is ItemBlock || (stack.item as ItemBlock).block is BlockBush
@@ -262,7 +332,7 @@ object AutoDick : Module("AutoDick", Category.FUN, gameDetecting = false) {
     // ------------------------------------------------------------------
     private fun dig(
         player: net.minecraft.entity.player.EntityPlayer,
-        world: net.minecraft.world.World,
+        world: World,
         pos: BlockPos,
         order: List<BlockPos>
     ) {
@@ -285,7 +355,7 @@ object AutoDick : Module("AutoDick", Category.FUN, gameDetecting = false) {
 
         // 转向要挖的方块
         if (options.rotationsActive) {
-            val rotation = RotationUtils.toRotation(pos.center, false, player)
+            val rotation = toRotation(pos.center, false, player)
             setTargetRotation(rotation, options, if (options.keepRotation) options.resetTicks else 1)
         }
 

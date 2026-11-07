@@ -20,6 +20,7 @@ import net.airplus.utils.io.MiscUtils
 import net.airplus.utils.io.MiscUtils.showErrorPopup
 import net.airplus.utils.render.RenderUtils
 import net.airplus.utils.render.shader.FluxBlobShader
+import net.airplus.utils.render.shader.MenuShaderBackground
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.ScaledResolution
 import net.minecraft.util.ResourceLocation
@@ -83,22 +84,42 @@ object MainMenuStyles {
 
     private const val FLUX_BACKGROUND_INDEX = 0
 
+    /**
+     * 内置 Shadertoy 风格 shader 背景（assets/minecraft/airplus/shader/menu 目录）。
+     * 背景索引从 [BACKGROUND_IMAGE_NAMES].size 开始依次对应这些 shader（More 选择器里的列表）。
+     */
+    val MENU_SHADERS: List<String> = MenuShaderBackground.SHADER_NAMES
+
+    /** 背景 More 选择器入口在设置缩略图行中的哨兵索引（非真实背景索引）。 */
+    const val MORE_THUMB_INDEX = -1
+
     // 共享的 Flux 动态气泡背景着色器（懒加载，首次渲染时才有 GL 上下文）
     private val fluxShader: FluxBlobShader by lazy { FluxBlobShader() }
 
     @JvmStatic
     fun backgroundImageIndex(raw: Int): Int {
-        val size = BACKGROUND_IMAGE_NAMES.size
+        val size = BACKGROUND_IMAGE_NAMES.size + MENU_SHADERS.size
         return ((raw % size) + size) % size
     }
+
+    /** 该背景索引是否对应一个内置 shader 背景（在 Flux 与图片之后）。 */
+    @JvmStatic
+    fun isShaderBackground(index: Int): Boolean = index >= BACKGROUND_IMAGE_NAMES.size
+
+    /** 背景 shader 索引区间起始值（存入配置的 customMenuBackgroundImageIndex）。 */
+    @JvmStatic
+    fun shaderBackgroundConfigIndex(shaderPosition: Int): Int =
+        backgroundImageIndex(BACKGROUND_IMAGE_NAMES.size + shaderPosition)
 
     @JvmStatic
     fun drawMenuBackground(width: Int, height: Int, overlayColor: Int) {
         val idx = backgroundImageIndex(ClientConfiguration.customMenuBackgroundImageIndex)
-        if (idx == FLUX_BACKGROUND_INDEX) {
-            drawFluxBackground(width, height)
-        } else {
-            RenderUtils.drawImage(BACKGROUND_IMAGES[idx - 1], 0, 0, width, height)
+        when {
+            idx == FLUX_BACKGROUND_INDEX -> drawFluxBackground(width, height)
+            isShaderBackground(idx) ->
+                MenuShaderBackground.drawBackground(MENU_SHADERS[idx - BACKGROUND_IMAGE_NAMES.size], width, height)
+            else ->
+                RenderUtils.drawImage(BACKGROUND_IMAGES[idx - 1], 0, 0, width, height)
         }
         if (overlayColor != 0) {
             RenderUtils.drawRect(0f, 0f, width.toFloat(), height.toFloat(), overlayColor)
@@ -145,16 +166,35 @@ object MainMenuStyles {
         GL11.glDisable(GL11.GL_SCISSOR_TEST)
     }
 
-    /** 指定背景对应的图片资源；Flux 动态背景返回 null。 */
+    /** 指定背景对应的图片资源；Flux 动态背景与 shader 背景返回 null。 */
     @JvmStatic
     fun backgroundResource(raw: Int): ResourceLocation? {
         val idx = backgroundImageIndex(raw)
-        return if (idx == FLUX_BACKGROUND_INDEX) null else BACKGROUND_IMAGES[idx - 1]
+        return if (idx == FLUX_BACKGROUND_INDEX || isShaderBackground(idx)) null else BACKGROUND_IMAGES[idx - 1]
     }
 
     @JvmStatic
-    fun backgroundDisplayName(raw: Int): String =
-        BACKGROUND_IMAGE_NAMES[backgroundImageIndex(raw)]
+    fun backgroundDisplayName(raw: Int): String {
+        val idx = backgroundImageIndex(raw)
+        return if (isShaderBackground(idx)) {
+            MenuShaderBackground.displayName(MENU_SHADERS[idx - BACKGROUND_IMAGE_NAMES.size])
+        } else {
+            BACKGROUND_IMAGE_NAMES[idx]
+        }
+    }
+
+    /**
+     * 在缩略图区域内预览指定背景（Flux 动态 / 图片），用于 Menu Settings 缩略图行。
+     */
+    @JvmStatic
+    fun drawBackgroundThumb(raw: Int, width: Int, height: Int, x: Float, y: Float, w: Float, h: Float) {
+        val idx = backgroundImageIndex(raw)
+        if (idx == FLUX_BACKGROUND_INDEX) {
+            drawFluxBackgroundPreview(width, height, x, y, w, h)
+        } else {
+            RenderUtils.drawImage(BACKGROUND_IMAGES[idx - 1], x, y, w.toInt(), h.toInt())
+        }
+    }
 
     /**
      * 从本地选择自定义背景文件（.png 图片 或 .frag 片段着色器），复制到客户端目录并应用，

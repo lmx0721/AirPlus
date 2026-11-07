@@ -20,6 +20,7 @@ import net.airplus.features.module.Category;
 import net.airplus.features.module.Module;
 import net.airplus.features.module.modules.render.ClickGUI;
 import net.airplus.ui.font.Fonts;
+import net.airplus.utils.client.ClientUtils;
 import net.airplus.utils.render.HudBlur;
 import net.airplus.utils.render.RenderUtils;
 import net.airplus.utils.render.RenderUtils.RoundedCorners;
@@ -86,6 +87,7 @@ public class AugustusClickGui extends GuiScreen {
     private boolean dragging;
     private boolean resizing;
     private boolean waitingForKey;
+    private boolean augBlurSkipLogged;
 
     // 模块列表悬浮提示：悬浮同一模块 1 秒后在其旁显示模块解释
     private Module hoverModule;
@@ -248,7 +250,10 @@ public class AugustusClickGui extends GuiScreen {
         if (event == GuiEvent.DRAW) {
             // 背景模糊 (HudBlur，类型/强度由 Client 模块的全局 Blur 设置统一控制；半透明背景会让模糊透出)
             if (ClickGUI.INSTANCE.getAugBlur()) {
-                HudBlur.INSTANCE.blur(posX, posY, posX + width, posY + height, 12F, RoundedCorners.ALL, 1F, null, null);
+                HudBlur.INSTANCE.blur(posX, posY, posX + width, posY + height, 12F, RoundedCorners.ALL, 1F, null, true, null);
+            } else if (!augBlurSkipLogged) {
+                augBlurSkipLogged = true;
+                ClientUtils.INSTANCE.getLOGGER().warn("[AugustusClickGui] AugBlur 开关为关，模糊被跳过（如需模糊请在 ClickGUI 模块设置中开启 AugBlur）");
             }
             // 原有背景与分隔线
             drawRounded(posX, posY, width, height, 12F, new Color(25, 25, 25, 190).getRGB());

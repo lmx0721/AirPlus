@@ -35,8 +35,10 @@ import net.airplus.ui.client.hud.element.Side
 import net.airplus.ui.font.AWTFontRenderer.Companion.assumeNonVolatile
 import net.airplus.ui.font.Fonts
 import net.airplus.ui.font.GameFontRenderer
+import net.airplus.utils.client.ClientThemesUtils
 import net.airplus.utils.render.HudBlur
 import net.airplus.utils.render.HudSlices
+import net.airplus.utils.render.RenderUtils.drawRoundedBorder
 import net.airplus.utils.render.RenderUtils.drawRoundedRect
 import net.airplus.utils.render.RenderUtils.drawRect
 import net.minecraft.client.entity.AbstractClientPlayer
@@ -59,7 +61,7 @@ class SessionInfo(
     x: Double = 5.0, y: Double = 25.0, scale: Float = 1F, side: Side = Side.default()
 ) : Element("SessionInfo", x, y, scale, side), Listenable {
 
-    private val style by choices("Style", arrayOf("Hanabi", "Opai"), "Hanabi")
+    private val style by choices("Style", arrayOf("Hanabi", "Opai", "Rise"), "Hanabi")
     private val blur by boolean("Blur", true)
 
     // 可自定义字体（标题与各行文字），图标字形字体保持不变（仅 Hanabi 样式使用）
@@ -236,7 +238,61 @@ class SessionInfo(
 
     override fun drawElement(): Border {
         if (style == "Opai") return drawOpai()
+        if (style == "Rise") return drawRise()
         return drawHanabiWindow()
+    }
+
+    /**
+     * Rise 样式：Ported from MoonLight SessionInfoWidget（"Rise" 分支）。
+     * 140x55 圆角(11)面板：黑色半透明填充 + 主题色细描边（原 drawRoundOutline 11 / 0.1f），
+     * 主题色 "Session Stats" 标题居中，其下为会话时长，底部为 kills / wins 两列统计。
+     */
+    private fun drawRise(): Border {
+        val themeColor = ClientThemesUtils.getColor()
+
+        if (blur) {
+            HudBlur.blur(
+                (scale * renderX).toFloat(),
+                (scale * renderY).toFloat(),
+                (scale * (renderX + RISE_WIDTH)).toFloat(),
+                (scale * (renderY + RISE_HEIGHT)).toFloat()
+            ) {
+                drawRoundedRect(0f, 0f, RISE_WIDTH, RISE_HEIGHT, -1, RISE_RADIUS)
+            }
+        }
+
+        assumeNonVolatile {
+            val designer = mc.currentScreen is GuiHudDesigner
+            val titleFont = Fonts.fontRise35
+            val dataFont = Fonts.fontUsans20
+
+            // 面板填充 + 主题色描边
+            drawRoundedRect(0f, 0f, RISE_WIDTH, RISE_HEIGHT, Color(0, 0, 0, 100).rgb, RISE_RADIUS)
+            drawRoundedBorder(0f, 0f, RISE_WIDTH, RISE_HEIGHT, 1f, themeColor.rgb, RISE_RADIUS)
+
+            val timeText = if (designer) "5m 32s" else playTime()
+            val killsText = "kills: ${if (designer) 12 else kills}"
+            val winsText = "wins: ${if (designer) 3 else win}"
+
+            titleFont.drawString(
+                "Session Stats", RISE_WIDTH / 2f - titleFont.getStringWidth("Session Stats") / 2f,
+                RISE_PADDING, themeColor.rgb
+            )
+            val timeY = RISE_PADDING + titleFont.height + 3f
+            dataFont.drawString(
+                timeText, RISE_WIDTH / 2f - dataFont.getStringWidth(timeText) / 2f, timeY,
+                Color(255, 255, 255, 200).rgb
+            )
+            val statsY = timeY + dataFont.height + 4f
+            dataFont.drawString(
+                killsText, 35f - dataFont.getStringWidth(killsText) / 2f, statsY, Color(255, 255, 255, 200).rgb
+            )
+            dataFont.drawString(
+                winsText, 105f - dataFont.getStringWidth(winsText) / 2f, statsY, Color(255, 255, 255, 200).rgb
+            )
+        }
+
+        return Border(0f, 0f, RISE_WIDTH, RISE_HEIGHT)
     }
 
     /**
@@ -477,6 +533,11 @@ class SessionInfo(
         private const val OPAI_KILL_WINDOW = 10_000L   // 攻击记录视为击杀依据的有效窗口
         private const val OPAI_WIN_COOLDOWN = 15_000L  // 胜利标题去重冷却（同 Samsara）
         private const val OPAI_DEATH_DEDUP = 5_000L    // 同一受害者重复死亡包去重窗口
+        // Rise 样式（MoonLight SessionInfoWidget）：固定 140x55、圆角 11、顶部内边距 8
+        private const val RISE_WIDTH = 140f
+        private const val RISE_HEIGHT = 55f
+        private const val RISE_RADIUS = 11f
+        private const val RISE_PADDING = 8f
         private val OPAI_GRAY = Color(170, 170, 170).rgb
         private val OPAI_ICON = Color(235, 235, 235).rgb
 

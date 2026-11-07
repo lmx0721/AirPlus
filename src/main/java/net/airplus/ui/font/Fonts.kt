@@ -157,14 +157,33 @@ object Fonts : MinecraftInstance {
     val fontSFApple50: GameFontRenderer by lazy {
         register(FontInfo(name = "SF Apple", size = 50), getFontOrDefault("SFApple.ttf", 50).asGameFontRenderer())
     }
-    val fontRise35: GameFontRenderer by lazy {
+    // Rise ClickGUI 渲染字体：跟随主字体（Client 模块 MainFont/FontSize/FontWeight），
+    // 主字体切换时由 bakeCoreFonts() 一并重建。"Rise SF UI Pro" 字体族仍单独注册
+    // （见下方 fontRiseSf*），供 FontValue 循环与主字体候选列表保留该选项。
+    private var _fontRise35: GameFontRenderer? = null
+    private var _fontRise40: GameFontRenderer? = null
+    private var _fontRise50: GameFontRenderer? = null
+    val fontRise35: GameFontRenderer
+        get() = _fontRise35 ?: mainFontRenderer(35).also { _fontRise35 = it }
+    val fontRise40: GameFontRenderer
+        get() = _fontRise40 ?: mainFontRenderer(40).also { _fontRise40 = it }
+    val fontRise50: GameFontRenderer
+        get() = _fontRise50 ?: mainFontRenderer(50).also { _fontRise50 = it }
+
+    // "Rise SF UI Pro" 字体族（SF-UI-Pro.ttf）：注册进字体表供选择，不再被 Rise GUI 直接使用
+    private val fontRiseSf35: GameFontRenderer by lazy {
         register(FontInfo(name = "Rise SF UI Pro", size = 35), getFontOrDefault("SF-UI-Pro.ttf", 35).asGameFontRenderer())
     }
-    val fontRise40: GameFontRenderer by lazy {
+    private val fontRiseSf40: GameFontRenderer by lazy {
         register(FontInfo(name = "Rise SF UI Pro", size = 40), getFontOrDefault("SF-UI-Pro.ttf", 40).asGameFontRenderer())
     }
-    val fontRise50: GameFontRenderer by lazy {
+    private val fontRiseSf50: GameFontRenderer by lazy {
         register(FontInfo(name = "Rise SF UI Pro", size = 50), getFontOrDefault("SF-UI-Pro.ttf", 50).asGameFontRenderer())
+    }
+
+    /** 确保 "Rise SF UI Pro" 字体族已注册（主字体候选列表需要其 FontInfo 键） */
+    fun registerRiseSfFamily() {
+        fontRiseSf35; fontRiseSf40; fontRiseSf50
     }
 
     val fontUsans15: GameFontRenderer by lazy {
@@ -186,6 +205,17 @@ object Fonts : MinecraftInstance {
         register(FontInfo(name = "Usans", size = 50), getFontOrDefault("usans.otf", 50).asGameFontRenderer())
     }
 
+    // ===== MoonLight 移植专用字体（1:1）=====
+    // MoonLight 字体管线 glScaled(0.5)（字形按 AWT 栅格尺寸的一半绘制，getHeight() = maxCharBounds / 2），
+    // AirPlus AWTFontRenderer 为 glScaled(0.25)，同视觉尺寸需要 2 倍 AWT 字号
+    // （宽度在 2 倍字号下也逐像素一致：栅格宽 × 0.25 == MoonLight 栅格宽 × 0.5）。
+    // 不注册进 FONT_PROVIDERS（不可被 FontValue 字体循环选中），按需烘焙并缓存。
+    private val moonlightFonts = HashMap<Int, GameFontRenderer>()
+    fun fontMoonlight(moonSize: Int): GameFontRenderer =
+        moonlightFonts.getOrPut(moonSize) {
+            getFontOrDefault("usans.otf", moonSize * 2).asGameFontRenderer()
+        }
+
     // ExtraBold / Bold180 属于次级内部 GUI 字体，同样走懒加载委托，
     // 但不注册进 FONT_PROVIDERS（不可被 FontValue 字体循环选中）
     private fun extraBold35(): GameFontRenderer = mainFontRenderer(35)
@@ -193,6 +223,7 @@ object Fonts : MinecraftInstance {
 
     // session.ttf（SessIcon）：图标字体。不进注册表，按需懒加载。
     val fontSessIcon14: GameFontRenderer by lazy { sessIcon(14) }
+    val fontSessIcon17: GameFontRenderer by lazy { sessIcon(17) }
     val fontSessIcon20: GameFontRenderer by lazy { sessIcon(20) }
     val fontSessIcon24: GameFontRenderer by lazy { sessIcon(24) }
     val fontSessIcon48: GameFontRenderer by lazy { sessIcon(48) }
@@ -524,14 +555,17 @@ object Fonts : MinecraftInstance {
      * 主字体候选列表：自动取自字体注册表全部非图标字体族名
      * （排除 Minecraft 原版字体与 Semibold 别名族，Semibold 跟随主字体无需单选）。
      */
-    fun mainFontCandidates(): Array<String> =
-        FONT_PROVIDERS.keys.map { it.name }
+    fun mainFontCandidates(): Array<String> {
+        // 确保 "Rise SF UI Pro" 字体族已注册，保留其作为主字体候选
+        registerRiseSfFamily()
+        return FONT_PROVIDERS.keys.map { it.name }
             .distinct()
             .filter {
                 !it.equals("Minecraft Font", true) &&
                         !it.equals("HarmonyOS Sans SC Medium", true)
             }
             .toTypedArray()
+    }
 
     /** 解析字体族名对应的 TTF 文件（内置映射优先，其次用户自定义字体）。 */
     private fun resolveFamilyFile(family: String): String? {
@@ -585,6 +619,10 @@ object Fonts : MinecraftInstance {
         _fontBold180 = null
         _fontExtraBold35 = null
         _fontExtraBold40 = null
+        // Rise GUI 字体跟随主字体，一并重建
+        _fontRise35 = null
+        _fontRise40 = null
+        _fontRise50 = null
     }
 
     /** 全局字号/粗细变化后重建核心文本字体（在渲染线程调用，见 AWTFontRenderer.onRender2D）。 */

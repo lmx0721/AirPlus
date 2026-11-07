@@ -8,7 +8,8 @@ package net.airplus.injection.forge.mixins.entity;
 import net.airplus.cape.CapeAPI;
 import net.airplus.cape.CapeInfo;
 import net.airplus.features.module.modules.misc.NameProtect;
-import net.airplus.features.module.modules.render.NoFOV;
+import net.airplus.features.module.modules.render.Camera;
+import net.airplus.features.module.modules.render.CustomSkin;
 import net.minecraft.client.entity.AbstractClientPlayer;
 import net.minecraft.client.resources.DefaultPlayerSkin;
 import net.minecraft.init.Items;
@@ -54,10 +55,10 @@ public abstract class MixinAbstractClientPlayer extends MixinEntityPlayer {
 
     @Inject(method = "getFovModifier", at = @At("HEAD"), cancellable = true)
     private void getFovModifier(CallbackInfoReturnable<Float> callbackInfoReturnable) {
-        final NoFOV fovModule = NoFOV.INSTANCE;
+        final Camera camera = Camera.INSTANCE;
 
-        if (fovModule.handleEvents()) {
-            float newFOV = fovModule.getFov();
+        if (camera.handleEvents() && camera.getNoFOV()) {
+            float newFOV = camera.getFov();
 
             if (!isUsingItem()) {
                 callbackInfoReturnable.setReturnValue(newFOV);
@@ -79,6 +80,13 @@ public abstract class MixinAbstractClientPlayer extends MixinEntityPlayer {
 
     @Inject(method = "getLocationSkin()Lnet/minecraft/util/ResourceLocation;", at = @At("HEAD"), cancellable = true)
     private void getSkin(CallbackInfoReturnable<ResourceLocation> callbackInfoReturnable) {
+        // CustomSkin：自定义皮肤模块优先接管（本地皮肤 / 正版玩家名皮肤）
+        ResourceLocation customSkin = CustomSkin.INSTANCE.getSkinForPlayer(getUniqueID());
+        if (customSkin != null) {
+            callbackInfoReturnable.setReturnValue(customSkin);
+            return;
+        }
+
         final NameProtect nameProtect = NameProtect.INSTANCE;
 
         if (nameProtect.handleEvents() && nameProtect.getSkinProtect()) {

@@ -4,6 +4,7 @@ import net.airplus.event.Listenable
 import net.airplus.event.Render2DEvent
 import net.airplus.event.handler
 import net.airplus.features.module.modules.client.Client
+import net.airplus.features.module.modules.render.HUD
 import net.airplus.utils.client.ClientUtils
 import net.airplus.utils.client.MinecraftInstance
 import net.airplus.utils.render.RenderUtils.RoundedCorners
@@ -15,7 +16,6 @@ import net.minecraft.client.gui.ScaledResolution
 import org.lwjgl.BufferUtils
 import org.lwjgl.opengl.GL11
 import org.lwjgl.opengl.GL13
-import org.lwjgl.opengl.GL14
 import org.lwjgl.opengl.GL11.*
 
 /**
@@ -95,7 +95,47 @@ object HudBlur : MinecraftInstance, Listenable {
                 session++
                 lastFrameKey = frameKey
             }
+            // 基准快照预拍：自定义聊天栏的 blur 不在 Render2DEvent 派发内，而是同帧晚段的
+            // drawChat 阶段。若某帧首个 blur 调用来自聊天阶段，基准快照会在聊天阶段从
+            // 「已含本帧 HUD 内容（事件派发后绘制的准星/物品栏/血量等）」的 framebuffer
+            // 拍出 → 快照被污染，聊天区域乃至后续组件的模糊里出现别的 HUD 画面；
+            // 若聊天改用上一帧快照又会因会话/模式校验失败被跳过 → 自己的模糊消失。
+            // 在会话开始处按需预拍（此刻 framebuffer 尚未混入任何 HUD 内容），聊天阶段
+            // 与全部 HUD 组件一样只复用干净快照。
+            maybeCaptureBaseSnapshotEarly()
         }
+
+        // priority = Byte.MIN_VALUE：同一次 Render2DEvent 派发的最后执行 —— 此时本轮
+        // 派发内所有组件的辉光形状都已累积进 HudGlowShader 的辉光源 FBO，统一做一次
+        // Rise 式 Bloom 合成（两 pass 高斯 + 贴回，只画形状外圈光晕）。同帧可能多次
+        // 派发 Render2DEvent，每次派发末尾都会 flush 已累积形状并复位，晚段派发
+        // （自定义聊天栏等）的辉光同样能在当帧合成；无累积时 flush 直接短路。
+        handler<Render2DEvent>(always = true, priority = Byte.MIN_VALUE) {
+            // 不以 Client.blurGlow 为前置条件：flush 自带 dirty 短路，无累积时零开销；
+            // 关闭 Glow 时若仍有未合成形状（如刚在设置里关掉开关），本轮也会被
+            // 合成并清空，避免残留形状在下次开启时闪现。
+            // gain：强度 > 100% 的亮度增益（FBO alpha 封顶为 1，超出部分由 rgb 乘子补足）
+            HudGlowShader.flush(
+                Client.blurGlowColor,
+                Client.blurGlowRadius,
+                Client.blurGlowCompression,
+                (Client.blurGlowStrength / 100F).coerceAtLeast(1F)
+            )
+        }
+    }
+
+    /**
+     * 菜单等无 Render2DEvent 派发的场景（主菜单设置界面 / Shader 选择器）：手动推进
+     * 帧会话，让本次 blur 不复用旧快照，而是从当前 framebuffer（已含实时绘制的
+     * 主菜单背景）重拍 —— 背景选择后下一帧立即生效。与 Render2DEvent 处理器同样
+     * 用 timer frameKey 去重，同一渲染帧重复调用只推进一次。
+     */
+    fun advanceFrame() {
+        val timer = mc.timer
+        val frameKey = timer.elapsedTicks + timer.elapsedPartialTicks.toDouble()
+        if (frameKey == lastFrameKey) return
+        session++
+        lastFrameKey = frameKey
     }
 
     fun blur(
@@ -107,11 +147,75 @@ object HudBlur : MinecraftInstance, Listenable {
         corners: RoundedCorners = RoundedCorners.ALL,
         strengthScale: Float = 1F,
         mode: String? = null,
+        glow: Boolean = true,
         mask: (() -> Unit)? = null
     ) {
-        if (!ShaderSupport.isSupported) return
+        if (!ShaderSupport.isSupported) {
+            if (!entryDiagLogged) {
+                entryDiagLogged = true
+                ClientUtils.LOGGER.warn("[HudBlur] 诊断: ShaderSupport 不支持，blur/辉光全部跳过")
+            }
+            return
+        }
+
+        // 辉光门控一次性诊断：确认 blur 调用点存在、Client.blurGlow 真实取值
+        if (!entryDiagLogged) {
+            entryDiagLogged = true
+            ClientUtils.LOGGER.warn(
+                "[HudBlur] 诊断: blur 首次调用（mode={}, glow开关={}, 强度={}, ShaderSupport={}）",
+                Client.blurMode, Client.blurGlow, Client.blurGlowStrength, true
+            )
+        }
 
         val mode = mode ?: Client.blurMode
+
+        val left = minOf(x1, x2)
+        val right = maxOf(x1, x2)
+        val top = minOf(y1, y2)
+        val bottom = maxOf(y1, y2)
+        val width = right - left
+        val height = bottom - top
+
+        if (width <= 0F || height <= 0F) return
+
+        // mask 绘制异常时也要恢复 colorMask/depthMask（erase 内部会还原），
+        // push/pop 保护当前矩阵：自定义遮罩可能修改矩阵（如 Target2 的动画变换），
+        // 若不恢复会导致后续渲染（如 drawTarget）落在错误的变换上
+        // 默认遮罩永远按屏幕绝对坐标绘制（同 paste 的自身正交矩阵）：
+        // 不依赖调用方矩阵正好是单位阵，避免调用方处于平移/缩放矩阵时
+        // 遮罩形状被变换到错误位置 → 遮罩与 AABB 错位 → 局部不模糊
+        val drawMask: () -> Unit = {
+            glPushMatrix()
+            try {
+                mask?.invoke() ?: run {
+                    glLoadIdentity()
+                    drawDefaultMask(left, top, right, bottom, radius, corners)
+                }
+            } finally {
+                glPopMatrix()
+            }
+        }
+
+        // ===== Glow 形状累积（Rise 式 Bloom）=====
+        // 旧实现是对整屏快照做 Bloom 后按组件 AABB（外扩 2σ）加法贴回——贴回区域被
+        // scissor 硬切成方形边界，看起来像「组件外圈套了个只亮一半的矩形」。新实现参考
+        // Rise 的 BloomShader：光晕完全由组件遮罩形状驱动。这里只把遮罩形状以白色
+        // （alpha = 强度）画进共享辉光源 FBO（同帧所有组件累积，零逐组件管线开销），
+        // Render2DEvent 派发末尾由 HudGlowShader.flush 统一做一次两 pass 高斯并贴回
+        // （形状内部 discard，光晕只画在组件外圈）。强度随 strengthScale 同步淡出。
+        // glow = false（如 Island 的 Glow 开关）→ 该组件不参与本帧辉光累积。
+        //
+        // 辉光是独立特性：BlurMode = None / 模式处于不可用重试期 / 强度退避 /
+        // 模糊管线失败等「模糊本体跳过」的场合，辉光仍须生效 —— 因此累积放在
+        // 模糊专有的早退之前，仅依赖区域合法与 ShaderSupport。
+        if (Client.blurGlow && glow) {
+            val glowIntensity = (Client.blurGlowStrength / 100F) * strengthScale
+            if (glowIntensity > 0.01F) {
+                HudGlowShader.accumulate(session, glowIntensity, drawMask)
+            }
+        }
+
+        // 模糊本体：BlurMode = None 时无模糊快照（辉光已按上面逻辑独立累积）
         if (mode == "None") return
         // 不可用模式跳过；约 600 帧（≈10s）后允许重试，避免一次瞬时失败
         // （驱动/上下文未就绪等）把该模式永久打死
@@ -126,15 +230,6 @@ object HudBlur : MinecraftInstance, Listenable {
             logSkipDiag("强度过低退避")
             return
         }
-
-        val left = minOf(x1, x2)
-        val right = maxOf(x1, x2)
-        val top = minOf(y1, y2)
-        val bottom = maxOf(y1, y2)
-        val width = right - left
-        val height = bottom - top
-
-        if (width <= 0F || height <= 0F) return
 
         // 全屏模糊（基准快照每帧只算一次；带 strengthScale 时以基准快照为源再模糊派生，
         // 源内容与标准强度完全一致，不会拍到前序组件已绘制/已贴入的内容）
@@ -170,24 +265,6 @@ object HudBlur : MinecraftInstance, Listenable {
             logScissorLeakOnce()
         }
 
-        // mask 绘制异常时也要恢复 colorMask/depthMask（erase 内部会还原），
-        // push/pop 保护当前矩阵：自定义遮罩可能修改矩阵（如 Target2 的动画变换），
-        // 若不恢复会导致后续渲染（如 drawTarget）落在错误的变换上
-        // 默认遮罩永远按屏幕绝对坐标绘制（同 paste 的自身正交矩阵）：
-        // 不依赖调用方矩阵正好是单位阵，避免调用方处于平移/缩放矩阵时
-        // 遮罩形状被变换到错误位置 → 遮罩与 AABB 错位 → 局部不模糊
-        val drawMask: () -> Unit = {
-            glPushMatrix()
-            try {
-                mask?.invoke() ?: run {
-                    glLoadIdentity()
-                    drawDefaultMask(left, top, right, bottom, radius, corners)
-                }
-            } finally {
-                glPopMatrix()
-            }
-        }
-
         // 遮罩绘制与贴回阶段关闭深度测试：主 framebuffer 的深度缓冲在 2D 阶段之前
         // 已被 3D 世界几何写入（近处墙体/半透明方块的深度值小于 GUI 平面深度），而
         // EmbeddedStencil 遮罩的 GL_KEEP/KEEP/REPLACE 依赖深度测试通过 —— 深度不通过的
@@ -207,43 +284,6 @@ object HudBlur : MinecraftInstance, Listenable {
                 }
             }
             drawClippedResult(left, top, right, bottom)
-
-            // Glow 叠加 pass（Client.blurGlow 开启时）：以本帧预模糊快照为源做一次
-            // 加法混合绘制——遮罩内亮部辉光、遮罩外 SDF 高斯衰减的边缘光晕。
-            // 复用预模糊纹理，无额外模糊 pass；强度随 strengthScale 同步淡出。
-            // reuseOuterMask（Island 等外层 stencil 作用域）下同样绘制：光晕本质是
-            // 画出形状之外的边缘光，被外层 GL_EQUAL 裁掉就没有意义，因此临时关闭
-            // stencil 测试画完再精确还原外层作用域（func/ref/mask/op 全量保存恢复）。
-            // Island 的岛体形状就是其 AABB 的圆角矩形，SDF 光晕与之对齐，不会溢形。
-            if (Client.blurGlow) {
-                val glowIntensity = (Client.blurGlowStrength / 100F) * strengthScale
-                if (glowIntensity > 0.01F) {
-                    if (reuseOuterMask) {
-                        // 保存外层作用域的完整 stencil 状态（贴回正运行在 GL_EQUAL 之下）
-                        val stFunc = glGetInteger(GL11.GL_STENCIL_FUNC)
-                        val stRef = glGetInteger(GL11.GL_STENCIL_REF)
-                        val stValueMask = glGetInteger(GL11.GL_STENCIL_VALUE_MASK)
-                        val stWriteMask = glGetInteger(GL11.GL_STENCIL_WRITEMASK)
-                        val stFail = glGetInteger(GL11.GL_STENCIL_FAIL)
-                        val stZFail = glGetInteger(GL11.GL_STENCIL_PASS_DEPTH_FAIL)
-                        val stZPass = glGetInteger(GL11.GL_STENCIL_PASS_DEPTH_PASS)
-                        GL11.glDisable(GL11.GL_STENCIL_TEST)
-                        try {
-                            drawGlowHalo(left, top, right, bottom, radius, resultTexture, glowIntensity)
-                        } finally {
-                            // 精确还原外层作用域：先 op/func/writemask 再重新启用测试
-                            glStencilOp(stFail, stZFail, stZPass)
-                            glStencilFunc(stFunc, stRef, stValueMask)
-                            glStencilMask(stWriteMask)
-                            GL11.glEnable(GL11.GL_STENCIL_TEST)
-                        }
-                    } else {
-                        // glow 不参与 stencil（贴回已结束），直接关闭测试画扩展区域
-                        GL11.glDisable(GL11.GL_STENCIL_TEST)
-                        drawGlowHalo(left, top, right, bottom, radius, resultTexture, glowIntensity)
-                    }
-                }
-            }
         } finally {
             restoreColorMask()
             // 异常路径同样还原 stencil 状态，避免残留 GL_EQUAL 导致后续渲染错乱
@@ -265,6 +305,7 @@ object HudBlur : MinecraftInstance, Listenable {
     fun cleanup() {
         // Dual 独立管线已并入 InternalBlurShader（rounds=2），这里统一转发释放
         InternalBlurShader.cleanup()
+        RiseBlurShader.cleanup()
         HudGlowShader.cleanup()
     }
 
@@ -387,6 +428,14 @@ object HudBlur : MinecraftInstance, Listenable {
 
             "Better" -> InternalBlurShader.blurFullScreen(strength, sourceTexture = source)
 
+            // Rise = Rise GaussianBlurShader 忠实移植：预计算高斯核（sigma = radius/2）
+            // + compression 拉伸采样方向。半径按 strengthScale 缩放（Target2 淡出等
+            // 动画场景），compression 不随动画缩放（Rise 语义：compression 是风格参数）
+            "Rise" -> {
+                val scale = if (Client.blurStrength > 0.01F) strength / Client.blurStrength else 1F
+                RiseBlurShader.blurFullScreen(Client.blurRadius * scale, Client.blurCompression, source)
+            }
+
             else -> return unavailable(mode)
         }
 
@@ -426,6 +475,9 @@ object HudBlur : MinecraftInstance, Listenable {
     /** scissor 泄漏诊断：入口发现 scissor 开启时记录一次调用链（避免刷屏只报首次） */
     private var scissorLeakLogged = false
 
+    /** blur 入口一次性诊断开关 */
+    private var entryDiagLogged = false
+
     private fun logScissorLeakOnce() {
         if (scissorLeakLogged) return
         scissorLeakLogged = true
@@ -442,10 +494,26 @@ object HudBlur : MinecraftInstance, Listenable {
     }
 
     /**
-     * 保证本帧「全局标准强度 + 当前模式」的基准快照存在（从主 framebuffer 干净内容拍出）。
-     * 基准快照与派生快照分开缓存：strengthScale 动画期间（强度逐帧变化）每帧都要
-     * 重新派生，但基准快照始终复用 —— 既省性能，也保证派生源不混入前序画面。
+     * 会话开始处按需预拍基准快照：仅当自定义聊天栏本帧会触发 blur（HUD 启用 +
+     * Chat-Custom/Background/Background-Blur 均开启 + 有可见聊天行）且当前基准快照
+     * 不存在时才拍。此刻 Render2DEvent 刚派发、framebuffer 只含 3D 世界内容，
+     * 拍出的快照与「由首个 HUD 组件拍出」完全一致 —— 保证聊天阶段必然复用干净快照。
      */
+    private fun maybeCaptureBaseSnapshotEarly() {
+        val mode = Client.blurMode
+        if (mode == "None") return
+        val markedSession = unavailableModes[mode]
+        if (markedSession != null && session - markedSession < 600L) return
+
+        val hud = HUD
+        if (!hud.handleEvents() || !hud.chatCustom || !hud.chatBackground || !hud.chatBackgroundBlur) return
+        // 上一帧聊天是否有可见内容（drawnChatLines 由 MixinGuiNewChat 传入，无法在
+        // HudBlur 里直接访问；聊天栏渲染滞后一帧时预拍仅是浪费一次快照，不影响正确性）
+        if (!ChatHudRenderer.chatHadLines) return
+
+        ensureBaseSnapshot(mode)
+    }
+
     private fun ensureBaseSnapshot(mode: String) {
         if (isSnapshotValid(mode, Client.blurStrength, useBase = true)) return
 
@@ -627,163 +695,6 @@ object HudBlur : MinecraftInstance, Listenable {
                 GlStateManager.disableBlend()
             }
             // blend 因数同样两步法（try 里裸 glBlendFunc 改过真实因数，缓存可能不同步）
-            GlStateManager.tryBlendFuncSeparate(GL_ZERO, GL_ONE, GL_ZERO, GL_ONE)
-            GlStateManager.tryBlendFuncSeparate(
-                prevBlendSrc, prevBlendDst, prevBlendSrcAlpha, prevBlendDstAlpha
-            )
-            if (prevAlpha) {
-                GlStateManager.disableAlpha()
-                GlStateManager.enableAlpha()
-            } else {
-                GlStateManager.enableAlpha()
-                GlStateManager.disableAlpha()
-            }
-
-            glScissor(scissorBox[0], scissorBox[1], scissorBox[2], scissorBox[3])
-            if (prevScissorEnabled) glEnable(GL_SCISSOR_TEST) else glDisable(GL_SCISSOR_TEST)
-
-            glMatrixMode(GL11.GL_PROJECTION)
-            glLoadMatrix(projMatrix)
-            glMatrixMode(GL11.GL_MODELVIEW)
-            glLoadMatrix(modelMatrix)
-            glMatrixMode(prevMatrixMode)
-        }
-    }
-
-    // ===== Glow 叠加 =====
-
-    /**
-     * 辉光叠加 pass：把预模糊纹理按 [intensity] 调制后以加法混合画在扩展 AABB 上。
-     * 遮罩圆角矩形（SDF）内部为亮部辉光（暗部按亮度权重压低），向外按高斯衰减为
-     * 边缘光晕（C1 连续，无硬边圈）。复用预模糊快照，无额外模糊 pass、无新 FBO；
-     * 每个组件只多一个 shader 四边形（填充范围 = 模糊区域 + 3σ 衰减距离）。
-     * 状态保存/恢复与 [drawClippedResult] 同款纪律（两步法推开缓存守卫）。
-     */
-    private fun drawGlowHalo(
-        x1: Float,
-        y1: Float,
-        x2: Float,
-        y2: Float,
-        radius: Float,
-        texture: Int,
-        intensity: Float
-    ) {
-        if (texture <= 0) return
-        val sr = ScaledResolution(mc)
-        val factor = sr.scaleFactor
-
-        // 遮罩矩形几何（GL 窗口像素坐标，原点左下）
-        val centerXPx = (x1 + x2) * 0.5F * factor
-        val centerYPx = mc.displayHeight - (y1 + y2) * 0.5F * factor
-        val halfXPx = (x2 - x1) * 0.5F * factor
-        val halfYPx = (y2 - y1) * 0.5F * factor
-        val radiusPx = (radius * factor).coerceAtLeast(1F)
-        // 高斯 σ：比旧指数衰减的 falloff 稍大（×1.4），补偿高斯尾巴衰减更快导致的
-        // 光晕视觉尺寸收窄；falloffPx 现在直接作为 HudGlowShader 的高斯 σ 使用
-        val falloffPx = (11F + 22F * intensity.coerceIn(0.1F, 2F)) * factor
-        // exp(-4.5) ≈ 1%，超过 3σ 的高斯光晕肉眼不可见，作为扩展范围截断
-        val expandGui = falloffPx * 3F / factor
-        val gx1 = x1 - expandGui
-        val gx2 = x2 + expandGui
-        val gy1 = y1 - expandGui
-        val gy2 = y2 + expandGui
-
-        val grx = (gx1 * factor).toInt()
-        val gry = (mc.displayHeight - gy2 * factor).toInt()
-        val grw = ((gx2 - gx1) * factor).toInt()
-        val grh = ((gy2 - gy1) * factor).toInt()
-        if (grw <= 0 || grh <= 0) return
-
-        // 保存 scissor + 矩阵 + blend/alpha/颜色/纹理绑定
-        val prevScissorEnabled = glIsEnabled(GL_SCISSOR_TEST)
-        scissorBox.clear()
-        glGetInteger(GL_SCISSOR_BOX, scissorBox)
-
-        val prevMatrixMode = glGetInteger(GL11.GL_MATRIX_MODE)
-        projMatrix.clear()
-        glGetFloat(GL11.GL_PROJECTION_MATRIX, projMatrix)
-        modelMatrix.clear()
-        glGetFloat(GL11.GL_MODELVIEW_MATRIX, modelMatrix)
-        glMatrixMode(GL11.GL_PROJECTION)
-        glLoadIdentity()
-        glOrtho(0.0, sr.scaledWidth_double, sr.scaledHeight_double, 0.0, 1000.0, 3000.0)
-        glTranslated(0.0, 0.0, -2000.0)
-        glMatrixMode(GL11.GL_MODELVIEW)
-        glLoadIdentity()
-
-        val prevBlend = glIsEnabled(GL_BLEND)
-        val prevAlpha = glIsEnabled(GL_ALPHA_TEST)
-        // GL_BLEND_SRC/GL_BLEND_DST 与 0x80CA/0x80CB（SRC/DST_ALPHA）含义同 drawClippedResult
-        val prevBlendSrc = glGetInteger(GL_BLEND_SRC)
-        val prevBlendDst = glGetInteger(GL_BLEND_DST)
-        val prevBlendSrcAlpha = glGetInteger(0x80CA)
-        val prevBlendDstAlpha = glGetInteger(0x80CB)
-        val prevActiveTexture = glGetInteger(GL13.GL_ACTIVE_TEXTURE)
-        GL13.glActiveTexture(GL13.GL_TEXTURE0)
-        val prevTextureBinding = glGetInteger(0x8069)
-
-        try {
-            glEnable(GL_SCISSOR_TEST)
-            glScissor(grx, gry, grw, grh)
-
-            // 加法混合：RGB 相加，alpha 通道保持原样（GL_ZERO, GL_ONE）
-            glEnable(GL_BLEND)
-            GL14.glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ZERO, GL_ONE)
-            glDisable(GL_ALPHA_TEST)
-            glColor4f(1f, 1f, 1f, 1f)
-
-            glBindTexture(GL_TEXTURE_2D, texture)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP)
-
-            if (HudGlowShader.use(
-                    intensity, centerXPx, centerYPx, halfXPx, halfYPx, radiusPx, falloffPx,
-                    texelScreenX = 1F / resultWidth.coerceAtLeast(1),
-                    texelScreenY = 1F / resultHeight.coerceAtLeast(1),
-                    spreadPx = Client.blurGlowSoft / 100F * falloffPx * 0.5F,
-                    tintR = Client.blurGlowColor.red / 255F,
-                    tintG = Client.blurGlowColor.green / 255F,
-                    tintB = Client.blurGlowColor.blue / 255F,
-                    tintMix = Client.blurGlowColor.alpha / 255F
-                )
-            ) {
-                // 纹理逐像素对齐主 framebuffer（同 drawClippedResult 的映射公式）
-                val tw = resultWidth.toFloat()
-                val th = resultHeight.toFloat()
-                val uL = grx / tw
-                val uR = (grx + grw) / tw
-                val vTop = 1f - gy1 * factor / th
-                val vBottom = 1f - gy2 * factor / th
-
-                glBegin(GL_QUADS)
-                glTexCoord2f(uL, vTop); glVertex2f(gx1, gy1)
-                glTexCoord2f(uL, vBottom); glVertex2f(gx1, gy2)
-                glTexCoord2f(uR, vBottom); glVertex2f(gx2, gy2)
-                glTexCoord2f(uR, vTop); glVertex2f(gx2, gy1)
-                glEnd()
-            }
-            HudGlowShader.unbind()
-        } finally {
-            HudGlowShader.unbind()
-
-            // 纹理绑定两步法（同 drawClippedResult：先绑 0 推开缓存守卫再真实绑回）
-            GL13.glActiveTexture(GL13.GL_TEXTURE0)
-            GlStateManager.bindTexture(0)
-            GlStateManager.bindTexture(prevTextureBinding)
-            GL13.glActiveTexture(prevActiveTexture)
-
-            // 当前颜色两步法
-            GlStateManager.color(0f, 0f, 0f, 0f)
-            GlStateManager.color(1f, 1f, 1f, 1f)
-
-            // blend 开关与因数两步法还原
-            if (prevBlend) {
-                GlStateManager.disableBlend()
-                GlStateManager.enableBlend()
-            } else {
-                GlStateManager.enableBlend()
-                GlStateManager.disableBlend()
-            }
             GlStateManager.tryBlendFuncSeparate(GL_ZERO, GL_ONE, GL_ZERO, GL_ONE)
             GlStateManager.tryBlendFuncSeparate(
                 prevBlendSrc, prevBlendDst, prevBlendSrcAlpha, prevBlendDstAlpha

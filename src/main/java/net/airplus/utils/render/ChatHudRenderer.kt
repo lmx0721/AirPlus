@@ -56,6 +56,17 @@ object ChatHudRenderer : MinecraftInstance {
     private var velY2 = 0F
     private var velX2 = 0F
 
+    /** 最近一帧聊天是否有可见内容（每帧 renderChat 入口复位），供 HudBlur 预拍基准快照判断 */
+    @JvmField
+    internal var chatHadLines = false
+
+    // ===== Rise 风格状态（Chat-Mode = Rise，逻辑移植自 Rise Chat）=====
+    private var riseVisibleLines = 0
+    private var riseLastLineCount = -1
+    private var riseHeight = Float.NaN
+    private var riseScrollOffset = 0F
+    private var riseDisappearTimer = 0L
+
     /**
      * setChatLine 新增了 [addedCount] 条可见行（新行位于 drawnChatLines 头部）。
      * 逐行错位入场：同批次内越靠下的行越先出现，向上依次延迟。
@@ -82,6 +93,11 @@ object ChatHudRenderer : MinecraftInstance {
         velY1 = 0F
         velY2 = 0F
         velX2 = 0F
+        riseVisibleLines = 0
+        riseLastLineCount = -1
+        riseHeight = Float.NaN
+        riseScrollOffset = 0F
+        riseDisappearTimer = 0L
     }
 
     fun renderChat(
@@ -92,8 +108,16 @@ object ChatHudRenderer : MinecraftInstance {
         lineCount: Int,
         chatOpen: Boolean
     ) {
+        chatHadLines = false
         if (mc.gameSettings.chatVisibility == EnumChatVisibility.HIDDEN) return
         if (drawnChatLines.isEmpty() || lineCount <= 0) return
+        chatHadLines = true
+
+        // Rise 风格：独立渲染路径（Rise Chat 移植）
+        if (HUD.chatMode == "Rise") {
+            renderChatRise(drawnChatLines, scrollPos, lineCount, chatOpen)
+            return
+        }
 
         val hud = HUD
         val now = System.currentTimeMillis()
@@ -331,6 +355,178 @@ object ChatHudRenderer : MinecraftInstance {
                 val a = (info.alpha * 255F).toInt().coerceIn(0, 255)
                 if (a <= 3) continue
                 drawText(info.text, 0F, info.y - lineH + (lineH - fontHeight) / 2F + 1F, 0xFFFFFF or (a shl 24))
+            }
+            GlStateManager.disableAlpha()
+            GlStateManager.disableBlend()
+            if (clipText) GL11.glDisable(GL11.GL_SCISSOR_TEST)
+        } finally {
+            GlStateManager.popMatrix()
+        }
+    }
+
+    /**
+     * Rise 风格聊天栏（Chat-Mode = Rise，移植自 Rise Chat#renderChat）：
+     * 固定宽度圆角面板，打开/关闭时高度 EASE_OUT_EXPO 缓动；关闭状态按「消失速度」
+     * 逐条隐去旧消息（面板高度随 visibleLines 收缩）；新消息推动内容上滑；
+     * 打开状态完整显示历史并支持平滑滚动。输入框仍由原版处理，
+     * 坐标空间与 air 模式一致（原点 translate + chatScale）。
+     */
+    private fun renderChatRise(
+        drawnChatLines: List<ChatLine>,
+        scrollPos: Int,
+        lineCount: Int,
+        chatOpen: Boolean
+    ) {
+        val hud = HUD
+        val now = System.currentTimeMillis()
+        val deltaMs = if (lastFrame == 0L) 16L else (now - lastFrame).coerceIn(0L, 100L)
+        lastFrame = now
+        val factor = ((deltaMs / 1000F) * 14F * hud.chatAnimationSpeed.coerceIn(0.1F, 3F)).coerceIn(0F, 1F)
+
+        // --- 字体（与 air 模式一致，复用 HUD 的 FontChat 设置） ---
+        val customFont = hud.shouldModifyChatFont()
+        val font = if (customFont) hud.chatFont else null
+        val vanillaFont = mc.fontRendererObj
+        val fontHeight = when (font) {
+            is GameFontRenderer -> font.height
+            else -> vanillaFont.FONT_HEIGHT
+        }
+        val lineH = max(LINE_HEIGHT, fontHeight.toFloat())
+        val stringWidth = { s: String ->
+            (font?.getStringWidth(s) ?: vanillaFont.getStringWidth(s)).toFloat()
+        }
+        val drawText = { s: String, x: Float, y: Float, c: Int ->
+            if (font != null) font.drawStringWithShadow(s, x, y, c)
+            else vanillaFont.drawStringWithShadow(s, x, y, c)
+        }
+
+        val totalLines = drawnChatLines.size
+        if (totalLines == 0) return
+
+        // --- Rise 可见行数（关闭状态按消失速度逐条隐去） ---
+        val closedMaxLines = (hud.chatHeightMax / lineH).toInt().coerceAtLeast(1)
+        if (riseLastLineCount == -1) {
+            riseLastLineCount = totalLines
+            riseVisibleLines = closedMaxLines
+        } else if (totalLines > riseLastLineCount) {
+            // 新消息到达：内容整体下移等待上滑入场、可见行数扩大（Rise scrollAnimation + visibleLines）
+            riseScrollOffset += (totalLines - riseLastLineCount) * lineH
+            riseVisibleLines += totalLines - riseLastLineCount
+        }
+        riseLastLineCount = totalLines
+
+        if (!chatOpen) {
+            // Rise messageTimer：每隔「消失速度」毫秒隐去一行最旧消息（面板随之收缩）
+            if (riseDisappearTimer == 0L) riseDisappearTimer = now
+            while (riseVisibleLines > 0 && now - riseDisappearTimer >= hud.chatRiseDisappearance) {
+                riseDisappearTimer += hud.chatRiseDisappearance.toLong()
+                riseVisibleLines--
+            }
+            riseVisibleLines = riseVisibleLines.coerceIn(0, closedMaxLines)
+        } else {
+            riseDisappearTimer = 0L
+        }
+
+        // --- 平滑滚动（打开状态滚历史） ---
+        val maxScroll = (totalLines - lineCount).coerceAtLeast(0)
+        if (hud.chatSmoothScroll) {
+            scrollAnim += (scrollPos - scrollAnim) * factor
+            if (abs(scrollAnim - scrollPos) < 0.01F) scrollAnim = scrollPos.toFloat()
+        } else {
+            scrollAnim = scrollPos.toFloat()
+        }
+        val anim = scrollAnim.coerceIn(0F, maxScroll.toFloat())
+        val base = floor(anim).toInt().coerceAtMost((totalLines - 1).coerceAtLeast(0))
+        val frac = anim - base
+
+        // 新消息上滑偏移衰减（Rise scrollAnimation → 0）
+        riseScrollOffset -= riseScrollOffset * factor
+        if (riseScrollOffset < 0.1F) riseScrollOffset = 0F
+
+        // --- 高度缓动（Rise heightAnimation，EASE_OUT_EXPO） ---
+        val contentH = lineH * totalLines + 7F
+        val targetH = if (chatOpen) {
+            minOf(hud.chatRiseOpenHeight, contentH)
+        } else {
+            minOf(hud.chatHeightMax, contentH, lineH * riseVisibleLines + 7F)
+        }
+        if (riseHeight.isNaN()) riseHeight = targetH
+        riseHeight += (targetH - riseHeight) * factor
+        if (abs(riseHeight - targetH) < 0.05F) riseHeight = targetH
+
+        // --- 面板几何（本地坐标，与 air 模式同一原点；宽度对齐 Rise 的固定宽面板） ---
+        val pad = 3F
+        val radius = hud.chatRoundedRadius
+        val blockX1 = -pad
+        val blockY2 = 3F
+        val blockY1 = blockY2 - riseHeight
+
+        val visibleCount = (((frac * lineH - blockY1) / lineH).toInt() + 2).coerceIn(0, totalLines - base)
+        var maxTextWidth = 0F
+        for (i in 0 until visibleCount) {
+            maxTextWidth = max(maxTextWidth, stringWidth(drawnChatLines[base + i].getChatComponent().getFormattedText()))
+        }
+        val blockX2 = max(maxTextWidth + pad + 1F, if (hud.chatCustomWidth) hud.chatWidth else 0F)
+
+        GlStateManager.pushMatrix()
+        try {
+            val originX = 2F + hud.chatPosX
+            val originY = 20F + hud.chatPosY
+            GlStateManager.translate(originX, originY, 0F)
+            val chatScale = mc.gameSettings.chatScale
+            GlStateManager.scale(chatScale, chatScale, 1F)
+            val opacityBase = mc.gameSettings.chatOpacity * 0.9F + 0.1F
+
+            if (hud.chatBackground) {
+                val bgColor = hud.chatBackgroundColors.color()
+                val bgAlpha = ((bgColor.alpha / 255F) * opacityBase).coerceIn(0F, 1F)
+                val bgARGB = ((bgAlpha * 255F).toInt() shl 24) or
+                        (bgColor.red shl 16) or (bgColor.green shl 8) or bgColor.blue
+
+                if (hud.chatBackgroundBlur && bgAlpha > 0.02F) {
+                    val sr = ScaledResolution(mc)
+                    val sf = sr.scaleFactor
+                    val absOriginY = sr.scaledHeight - 28F + hud.chatPosY
+                    HudBlur.blur(
+                        originX + blockX1 * chatScale,
+                        absOriginY + blockY1 * chatScale,
+                        originX + blockX2 * chatScale,
+                        absOriginY + blockY2 * chatScale,
+                        radius
+                    ) {
+                        drawRoundedRect(blockX1, blockY1, blockX2, blockY2, -1, radius)
+                    }
+                }
+
+                drawRoundedRect(blockX1, blockY1, blockX2, blockY2, bgARGB, radius)
+            }
+
+            // 文本（裁剪到面板内；打开状态全亮，关闭状态随原版聊天透明度设置）
+            val clipText = hud.chatBackground
+            if (clipText) {
+                val sr = ScaledResolution(mc)
+                val sf = sr.scaleFactor
+                val absOriginY = sr.scaledHeight - 28F + hud.chatPosY
+                GL11.glScissor(
+                    ((originX + blockX1 * chatScale) * sf).toInt(),
+                    (mc.displayHeight - (absOriginY + blockY2 * chatScale) * sf).toInt(),
+                    (((blockX2 - blockX1) * chatScale) * sf).toInt().coerceAtLeast(0),
+                    (((blockY2 - blockY1) * chatScale) * sf).toInt().coerceAtLeast(0)
+                )
+                GL11.glEnable(GL11.GL_SCISSOR_TEST)
+            }
+            GlStateManager.enableBlend()
+            val alphaInt = if (chatOpen) 255 else (opacityBase * 255F).toInt().coerceIn(0, 255)
+            for (i in 0 until visibleCount) {
+                val idx = base + i
+                if (idx >= totalLines) break
+                val y = -i * lineH + frac * lineH + riseScrollOffset
+                if (y - lineH > blockY2 || y < blockY1) continue
+                drawText(
+                    drawnChatLines[idx].getChatComponent().getFormattedText(),
+                    0F, y - lineH + (lineH - fontHeight) / 2F + 1F,
+                    0xFFFFFF or (alphaInt shl 24)
+                )
             }
             GlStateManager.disableAlpha()
             GlStateManager.disableBlend()

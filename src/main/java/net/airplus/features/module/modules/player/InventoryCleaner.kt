@@ -9,6 +9,8 @@ import kotlinx.coroutines.delay
 import net.airplus.config.ListValue
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
+import net.airplus.features.module.modules.combat.ArmorBreak
+import net.airplus.features.module.modules.combat.ArmorBreaker2
 import net.airplus.utils.block.BlockUtils.isFullBlock
 import net.airplus.utils.client.chat
 import net.airplus.utils.extensions.shuffled
@@ -66,6 +68,10 @@ object InventoryCleaner : Module("InventoryCleaner", Category.PLAYER) {
     private val saveSwords by boolean("SaveSwords", false).subjective()
     private val savedSwordCount by int("SavedSwordCount", 1, 1..5) { saveSwords }.subjective()
 
+    private val noPotion by boolean("NoPotion", false).subjective()
+
+    private val saveTNT by boolean("SaveTNT", false).subjective()
+
     private val invOpen by +InventoryManager.invOpenValue
     private val simulateInventory by +InventoryManager.simulateInventoryValue
 
@@ -107,6 +113,10 @@ object InventoryCleaner : Module("InventoryCleaner", Category.PLAYER) {
 
     private suspend fun shouldOperate(): Boolean {
         while (true) {
+            // ArmorBreak / ArmorBreaker2 破甲换武器期间会操作背包槽位，与其点击冲突 → 暂停清理
+            if (ArmorBreak.isWorking || ArmorBreaker2.isWorking)
+                return false
+
             if (!handleEvents())
                 return false
 
@@ -483,7 +493,7 @@ object InventoryCleaner : Module("InventoryCleaner", Category.PLAYER) {
 
             is ItemBoat, is ItemMinecart -> !ignoreVehicles
 
-            is ItemPotion -> isUsefulPotion(stack)
+            is ItemPotion -> !noPotion && isUsefulPotion(stack)
 
             is ItemBucket -> isUsefulBucket(stack, stacks, entityStacksMap)
 
@@ -610,14 +620,15 @@ object InventoryCleaner : Module("InventoryCleaner", Category.PLAYER) {
     }
 
     /**
-     * 保存更多剑的逻辑：与保存盔甲一致。
+     * 保存不同伤害的剑的逻辑。
      *
      * 收集所有剑（背包 + 地上掉落物），按以下优先级排序：
      *   1. attackDamage（含锋利附魔加成）从高到低
      *   2. enchantmentSum（附魔等级总和）从高到低
      *   3. totalDurability（含耐久附魔的估算耐久）从高到低
      *
-     * 保留前 [savedSwordCount] 把，其余视为垃圾丢弃。
+     * 每种不同的伤害值只保留排序后最好的一把，最多保留 [savedSwordCount] 把
+     * （即保留的剑之间伤害值互不相同），其余视为垃圾丢弃。
      */
     private fun isUsefulSwordWithSave(
         stack: ItemStack, stacks: List<ItemStack?>,
@@ -649,11 +660,24 @@ object InventoryCleaner : Module("InventoryCleaner", Category.PLAYER) {
 
         val maxKeep = savedSwordCount
 
-        for (i in sortedSwords.indices) {
-            if (i >= maxKeep) break
-            if (sortedSwords[i].second == stack) {
+        // 每种伤害值只保留排序最好的一把，最多保留 maxKeep 把不同伤害的剑
+        var kept = 0
+        var lastDamage = -1.0
+
+        for ((_, s) in sortedSwords) {
+            if (kept >= maxKeep) break
+
+            val damage = s.attackDamage
+
+            // 同一伤害值只保留排在前面的那一把
+            if (damage == lastDamage)
+                continue
+
+            lastDamage = damage
+            kept++
+
+            if (s == stack)
                 return true
-            }
         }
 
         return false
@@ -794,6 +818,10 @@ object InventoryCleaner : Module("InventoryCleaner", Category.PLAYER) {
         stack: ItemStack?, stacks: List<ItemStack?>, entityStacksMap: Map<ItemStack, EntityItem>?,
         ignoreLimits: Boolean, strictlyBest: Boolean,
     ): Boolean {
+        // SaveTNT: keep TNT and exclude it from MaxBlockStacks counting
+        if (saveTNT && isTNTStack(stack))
+            return true
+
         if (!isSuitableBlock(stack)) return false
 
         // Skip checks if there is no stack limit set and when you are not strictly searching for best option
@@ -818,7 +846,10 @@ object InventoryCleaner : Module("InventoryCleaner", Category.PLAYER) {
         }
 
         val betterCount = stacksToIterate.withIndex().count { (otherIndex, otherStack) ->
-            if (otherStack == stack || !isSuitableBlock(otherStack))
+            if (otherStack == stack || !isSuitableBlock(otherStack)
+                // SaveTNT: TNT doesn't count towards the block stack limit
+                || (saveTNT && isTNTStack(otherStack))
+            )
                 return@count false
 
             // Items dropped on ground should have index -1
@@ -1044,6 +1075,9 @@ object InventoryCleaner : Module("InventoryCleaner", Category.PLAYER) {
 
         return false
     }
+
+    private fun isTNTStack(stack: ItemStack?) =
+        stack?.item == Item.getItemFromBlock(Blocks.tnt)
 
     /**
      * Calculates resulting durability after repairing equipment.

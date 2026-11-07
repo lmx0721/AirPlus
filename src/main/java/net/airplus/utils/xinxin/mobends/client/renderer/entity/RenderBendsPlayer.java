@@ -20,6 +20,9 @@ public class RenderBendsPlayer
 extends RenderPlayer {
     private final boolean smallArms;
 
+    /** 第一人称渲染自己时隐藏头/帽子，避免挡住相机（由 MoBendsMod 在 doRender 前设置） */
+    public boolean hideHead;
+
     public RenderBendsPlayer(RenderManager renderManager) {
         super(renderManager, false);
         this.smallArms = false;
@@ -78,6 +81,10 @@ extends RenderPlayer {
                         modelplayer.aimedBow = true;
                     }
                 }
+            }
+            if (this.hideHead) {
+                modelplayer.bipedHead.showModel = false;
+                modelplayer.bipedHeadwear.showModel = false;
             }
         }
     }

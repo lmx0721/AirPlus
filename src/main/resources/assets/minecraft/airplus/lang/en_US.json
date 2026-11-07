@@ -87,6 +87,10 @@
 
         "module.criticals.description": "Automatically deals critical hits.",
 
+        "module.customSkin.description": "Custom player skins: load a local skin file (skins folder) or a premium player's skin by name, for yourself or all players.",
+
+        "module.modelChanger.description": "Changes the rendered player model (Pig / Piglet / Small / Normal) and pose (Sit / Lie), for yourself or all players.",
+
         "module.fastBow.description": "Turns your bow into a machine gun.",
 
         "module.hitBox.description": "Makes hitboxes of targets bigger.",
@@ -281,9 +285,8 @@
         
         "module.nameProtect.description": "Changes player names clientside.",
         
-        "module.nameTags.description": "Changes the scale of the nametags so you can always read them.",
+        "module.nameTags.description": "Unified nametags: pick a style with Mode (Legacy / Xinxin / Opai / Moon), each with its own settings.",
 
-        "module.nameTagOpai.description": "Capsule-style name tags ported from Samsara: players, items and floating text with health, armor difference, distance and equipment.",
         
         "module.noBob.description": "Disables the view bobbing effect.",
         

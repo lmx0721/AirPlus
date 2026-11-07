@@ -5,6 +5,7 @@
  */
 package net.airplus.injection.forge.mixins.gui;
 
+import net.airplus.features.module.modules.client.GuiImage;
 import net.airplus.utils.client.ServerUtils;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiIngameMenu;
@@ -33,5 +34,13 @@ public abstract class MixinGuiIngameMenu extends MixinGuiScreen {
             mc.theWorld.sendQuittingDisconnectingPacket();
             ServerUtils.INSTANCE.connectToLastServer();
         }
+    }
+
+    /**
+     * GuiImage：ESC 界面 drawScreen 尾部绘制自定义图片（画在 GUI 之上，层级确定）。
+     */
+    @Inject(method = "drawScreen", at = @At("TAIL"))
+    private void airplus$guiImageDraw(int mouseX, int mouseY, float partialTicks, CallbackInfo callbackInfo) {
+        GuiImage.INSTANCE.onGuiRender(mc.currentScreen);
     }
 }

@@ -11,28 +11,46 @@ import net.airplus.event.WorldEvent
 import net.airplus.event.handler
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
+import net.minecraft.client.multiplayer.WorldClient
+import net.minecraft.enchantment.EnchantmentHelper
 import net.minecraft.entity.EntityLiving
 import net.minecraft.entity.EntityLivingBase
 import net.minecraft.entity.SharedMonsterAttributes
+import net.minecraft.entity.ai.attributes.AttributeModifier
 import net.minecraft.entity.monster.*
 import net.minecraft.entity.passive.*
+import net.minecraft.entity.player.EntityPlayer
 import net.minecraft.network.play.client.C02PacketUseEntity
+import net.minecraft.potion.Potion
 import net.minecraft.util.BlockPos
 import net.minecraft.util.DamageSource
+import net.minecraft.util.EnumParticleTypes
 import net.minecraft.util.MathHelper
+import net.minecraft.village.VillageCollection
 
 /**
  * LocalNPC —— 在脚下定时生成「随机游戏生物」，纯客户端本地实体。
  *
  * - 只在本地 WorldClient 中 addEntityToWorld，不向服务器报告任何生成；
- * - 「本地实体缺少 AI / 物力」修复：vanilla 的 updateEntityActionState（AI 任务、
- *   寻路、移动辅助）与 moveEntityWithHeading（碰撞/重力）都在 isServerWorld()
- *   判定里只在服务端世界执行，attackEntityFrom 也会因 `worldObj.isRemote`
- *   直接 return false —— 所以往 WorldClient 里塞出来的实体会悬空不动、打不死。
- *   这里每 tick 手动跑一遍服务端分支（Has-AI 开 AI 任务，物理恒开）；
- * - 「本地伤害」修复：攻击假实体时在取消 C02PacketUseEntity 的同时，
- *   用 vanilla 等价流程（damageEntity + 击退 + hurt 状态包）在本地结算伤害，
- *   血量归零走 vanilla 死亡流程（倒地 + 尸模动画，20 tick 后 setDead）；
+ * - 「AI / 物理 / 朝向」修复：客户端世界不执行 updateEntityActionState（AI 任务、
+ *   寻路、moveHelper/lookHelper）也不执行 moveEntityWithHeading 的服务端分支
+ *   （moveFlying + 碰撞 + 重力），必须手动模拟。但模拟必须在实体自身 tick 内
+ *   进行 —— MixinEntityLivingBase 在 EntityLivingBase#onLivingUpdate 的 HEAD
+ *   注入 onFakeTick：此时 prevPos 已由 Entity#onEntityUpdate 捕获，moveEntity
+ *   之后 travel 的 limbSwing 与 bodyHelper 的 renderYawOffset 都能拿到正确的
+ *   位移增量（腿部动画 + 身体朝向随移动更新）。若改在 UpdateEvent（玩家 tick）
+ *   里移动，prevPos 会被实体自己的 onEntityUpdate 覆盖成移动后的位置，
+ *   delta 恒为 0 → 实体僵硬滑行、身体朝向冻结、腿部动画静止；
+ * - 「本地伤害」修复：攻击假实体时取消 C02PacketUseEntity 并按 vanilla 等价
+ *   流程本地结算（手持武器属性修饰符 + 附魔 + 跳劈暴击 → damageEntity + 击退
+ *   + hurt 状态）。手持武器的 attackDamage 修饰符由 EntityLivingBase#onUpdate
+ *   的装备变更段在服务端世界应用，客户端世界不会应用，必须手动复算；
+ *   血量归零走 vanilla 死亡流程（倒地动画 20 tick 后消失）；
+ * - 「苦力怕爆炸」：Has-AI 开启时 vanilla swell 任务自然驱动 fuse（闪白 + 嘶声），
+ *   fuse 计满后 vanilla explode() 在客户端世界是 no-op，由这里补本地爆炸
+ *   （音效 + 大爆炸粒子，isSmoking=false → 不破坏方块不伤实体）并移除苦力怕；
+ *   Has-AI 关闭时由玩家 3 格内靠近手动驱动 fuse；
+ * - despawnEntity 随机 setDead 的漏洞：生成时 enablePersistence 关掉；
  * - 关闭模块或切世界后，所有生成的生物一并消失。
  */
 object LocalNPC : Module("LocalNPC", Category.FUN, gameDetecting = false) {
@@ -68,6 +86,28 @@ object LocalNPC : Module("LocalNPC", Category.FUN, gameDetecting = false) {
         "Bat" to { w: net.minecraft.world.World -> EntityBat(w) }
     )
 
+    /**
+     * MixinEntityLivingBase → EntityLivingBase#onLivingUpdate HEAD，每个假实体
+     * 每个自身 tick 调一次（执行序与 vanilla 服务端 AI + 移动一致）。
+     */
+    fun onFakeTick(entity: EntityLivingBase) {
+        if (!handleEvents() || fakes.isEmpty() || !fakeIds.contains(entity.entityId)) return
+        val world = mc.theWorld ?: return
+        if (entity.isDead || entity.health <= 0F) return
+
+        // vanilla 服务端 AI 分支（任务/寻路/moveHelper 转向/lookHelper/jumpHelper）
+        if (hasAI) {
+            ensureVillageCollection(world)
+            entity.updateEntityActionState()
+        }
+
+        // 苦力怕 fuse 计满 → 本地爆炸并移除（本 tick 不再跑物理）
+        if (entity is EntityCreeper && tickCreeperFuse(entity, world)) return
+
+        // vanilla 服务端物理分支（moveFlying + moveEntity + 重力/摩擦）
+        tickProxyPhysics(entity, world)
+    }
+
     val onUpdate = handler<UpdateEvent> {
         val player = mc.thePlayer ?: return@handler
         val world = mc.theWorld ?: return@handler
@@ -88,41 +128,46 @@ object LocalNPC : Module("LocalNPC", Category.FUN, gameDetecting = false) {
             nextSpawn = now + delay * 1000L
             spawn(player, world)
         }
-
-        // vanilla 只在服务端世界给活物跑 AI（updateEntityActionState 含
-        // 任务/寻路/moveHelper/lookHelper），客户端世界一律跳过 —— 手动补上
-        if (hasAI) {
-            for (entity in fakes) {
-                if (entity.isDead || entity.health <= 0F) continue
-                (entity as EntityLivingBase).updateEntityActionState()
-            }
-        }
-
-        // 同理：重力/摩擦/位移（moveEntityWithHeading 的服务端分支）也只在服务端跑，
-        // 不手动模拟的话实体永远悬空不动
-        for (entity in fakes) {
-            if (entity.isDead || entity.health <= 0F) continue
-            tickProxyPhysics(entity, world)
-        }
     }
 
-    private fun spawn(player: net.minecraft.entity.player.EntityPlayer, world: net.minecraft.client.multiplayer.WorldClient) {
+    private fun spawn(player: EntityPlayer, world: WorldClient) {
         val type = if (mobType == "Random") factories.keys.random() else mobType
         val factory = factories[type] ?: return
 
         val entity = factory(world)
 
-        // 生成在脚下（轻微随机偏移避开身体重叠）
-        val offsetX = (Math.random() - 0.5) * 1.2
-        val offsetZ = (Math.random() - 0.5) * 1.2
+        // 环形偏移（1.2~2.5 格）避开玩家碰撞体，向上找「两格空气」的落点，
+        // 避免生成在方块里被 pushOutOfBlocks 反复推出造成抖动
+        val angle = Math.random() * Math.PI * 2.0
+        val dist = 1.2 + Math.random() * 1.3
+        val spawnX = player.posX + Math.cos(angle) * dist
+        val spawnZ = player.posZ + Math.sin(angle) * dist
+        val baseY = MathHelper.floor_double(player.posY)
+        var spawnY = player.posY
+        for (dy in 0..3) {
+            val y = baseY + dy
+            val floorX = MathHelper.floor_double(spawnX)
+            val floorZ = MathHelper.floor_double(spawnZ)
+            if (world.isAirBlock(BlockPos(floorX, y, floorZ)) &&
+                world.isAirBlock(BlockPos(floorX, y + 1, floorZ))
+            ) {
+                spawnY = y.toDouble()
+                break
+            }
+        }
+
         entity.setLocationAndAngles(
-            player.posX + offsetX,
-            player.posY,
-            player.posZ + offsetZ,
+            spawnX,
+            spawnY,
+            spawnZ,
             player.rotationYaw + (Math.random() - 0.5).toFloat() * 90F,
             0F
         )
         entity.prevRenderYawOffset = entity.renderYawOffset
+
+        // despawnEntity（updateEntityActionState 内）会按存活时长随机 setDead
+        // 假实体（idleTime > 600 后每 tick 1/800 概率），假实体不该消失
+        entity.enablePersistence()
 
         // 无 AI：清空全部任务，生物只会被物理影响（仍受重力/击退影响）
         if (!hasAI) {
@@ -135,6 +180,83 @@ object LocalNPC : Module("LocalNPC", Category.FUN, gameDetecting = false) {
 
         fakes += entity
         fakeIds += id
+    }
+
+    /**
+     * 客户端 WorldClient 从不初始化 villageCollectionObj：vanilla 客户端世界从不
+     * 执行实体 AI 路径（EntityLivingBase#onLivingUpdate 只在 isServerWorld()
+     * （!isRemote 且 AI 未禁用）时才调 updateEntityActionState），而村民的
+     * updateAITasks 会直接解引用 worldObj.getVillageCollection() → Has-AI 假村民
+     * 必 NPE 崩游戏。这里懒初始化一个空 VillageCollection：村庄查询永远返回
+     * 「附近没有村庄」，村民 AI 退化为 wander，其余生物不受影响。
+     */
+    private fun ensureVillageCollection(world: WorldClient) {
+        if (world.villageCollectionObj == null) {
+            world.villageCollectionObj = VillageCollection(world)
+        }
+    }
+
+    /**
+     * 苦力怕 fuse：Has-AI 开启时 vanilla updateAITasks 已驱动
+     * timeSinceIgnited（闪白插值 + 嘶声都是 vanilla 行为），fuse 计满后
+     * vanilla explode() 在客户端世界直接 return，这里补上本地爆炸。
+     * Has-AI 关闭时由玩家 3 格内靠近手动驱动 fuse。
+     *
+     * @return true 表示已引爆并移除，本 tick 跳过物理
+     */
+    private fun tickCreeperFuse(creeper: EntityCreeper, world: WorldClient): Boolean {
+        val player = mc.thePlayer
+        if (!hasAI && player != null) {
+            val near = player.getDistanceToEntity(creeper) < 3F
+            if (near && creeper.timeSinceIgnited == 0) {
+                creeper.playSound("random.fuse", 1.0F, 0.5F)
+            }
+            creeper.lastActiveTime = creeper.timeSinceIgnited
+            creeper.timeSinceIgnited = if (near) creeper.timeSinceIgnited + 1
+            else (creeper.timeSinceIgnited - 1).coerceAtLeast(0)
+        }
+
+        if (creeper.timeSinceIgnited >= creeper.fuseTime) {
+            explodeCreeper(creeper, world)
+            return true
+        }
+        return false
+    }
+
+    /**
+     * 本地爆炸：createExplosion(isSmoking=false) 只出音效与击退判定，
+     * 不破坏方块；客户端世界 attackEntityFrom 直接 false，不伤任何实体。
+     * 粒子复刻 S2APacketExplosion 客户端处理（hugeexplosion + largeexplode
+     * + 烟雾）。
+     */
+    private fun explodeCreeper(creeper: EntityCreeper, world: WorldClient) {
+        val x = creeper.posX
+        val y = creeper.posY
+        val z = creeper.posZ
+        val strength = 3F * (if (creeper.getPowered()) 2F else 1F)
+
+        world.createExplosion(creeper, x, y, z, strength, false)
+
+        world.spawnParticle(EnumParticleTypes.EXPLOSION_HUGE, x, y, z, 1.0, 0.0, 0.0)
+        for (i in 0 until 16) {
+            val dx = Math.random() * 2.0 - 1.0
+            val dy = Math.random() * 2.0 - 1.0
+            val dz = Math.random() * 2.0 - 1.0
+            world.spawnParticle(EnumParticleTypes.EXPLOSION_LARGE, x + dx * 0.5, y + dy * 0.5, z + dz * 0.5, dx, dy, dz)
+        }
+        for (i in 0 until 8) {
+            world.spawnParticle(
+                EnumParticleTypes.EXPLOSION_NORMAL,
+                x + Math.random() * 1.6 - 0.8,
+                y + Math.random() * 1.6 - 0.8,
+                z + Math.random() * 1.6 - 0.8,
+                0.0, 0.0, 0.0
+            )
+        }
+
+        fakeIds.remove(creeper.entityId)
+        world.removeEntityFromWorld(creeper.entityId)
+        fakes.remove(creeper)
     }
 
     /**
@@ -182,10 +304,47 @@ object LocalNPC : Module("LocalNPC", Category.FUN, gameDetecting = false) {
     }
 
     /**
+     * vanilla 服务器侧攻击伤害等价计算：attackDamage 属性（基础 1.0 +
+     * 手持物品修饰符）→ 跳劈暴击 ×1.5 → 附魔加成。
+     */
+    private fun attackDamageOf(player: EntityPlayer, target: EntityLivingBase): Float {
+        var damage = 1.0F
+        val key = SharedMonsterAttributes.attackDamage.getAttributeUnlocalizedName()
+        val held = player.heldItem
+
+        if (held != null) {
+            for (entry in held.getAttributeModifiers().entries()) {
+                if (entry.key == key) {
+                    val modifier: AttributeModifier = entry.value
+                    damage = when (modifier.getOperation()) {
+                        // op1 相对属性基值（attackDamage 基值 1.0），与当前累计值等价
+                        0 -> damage + modifier.getAmount().toFloat()
+                        1 -> damage + modifier.getAmount().toFloat()
+                        else -> damage * (1.0F + modifier.getAmount().toFloat())
+                    }
+                }
+            }
+        }
+
+        // vanilla 跳劈暴击条件（只放大基础伤害，附魔随后相加）
+        if (player.fallDistance > 0F && !player.onGround && !player.isOnLadder() && !player.isInWater() &&
+            !player.isPotionActive(Potion.blindness) && player.ridingEntity == null && !player.isSprinting()
+        ) {
+            damage *= 1.5F
+        }
+
+        if (held != null) {
+            damage += EnchantmentHelper.getModifierForCreature(held, target.getCreatureAttribute())
+        }
+
+        return damage
+    }
+
+    /**
      * 本地攻击结算（复刻 attackTargetEntityWithCurrentItem → EntityLivingBase
      * #attackEntityFrom 的等价流程，绕过客户端世界 isRemote 直接 false 的门）。
      */
-    private fun applyLocalDamage(player: net.minecraft.entity.player.EntityPlayer, target: EntityLivingBase, amount: Float) {
+    private fun applyLocalDamage(player: EntityPlayer, target: EntityLivingBase, amount: Float) {
         if (target.isDead || target.health <= 0F || amount <= 0F) return
 
         val source = DamageSource.causePlayerDamage(player)
@@ -240,8 +399,7 @@ object LocalNPC : Module("LocalNPC", Category.FUN, gameDetecting = false) {
         // 本地伤害（vanilla attackTargetEntityWithCurrentItem 在客户端世界
         // 会被 attackEntityFrom 的 isRemote 门直接拦下，这里手动结算）
         if (packet.action == C02PacketUseEntity.Action.ATTACK) {
-            val amount = player.getEntityAttribute(SharedMonsterAttributes.attackDamage).getAttributeValue().toFloat()
-            applyLocalDamage(player, target as EntityLivingBase, amount)
+            applyLocalDamage(player, target as EntityLivingBase, attackDamageOf(player, target))
         }
 
         event.cancelEvent()

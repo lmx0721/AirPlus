@@ -56,9 +56,8 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
 
     @Inject(method = "canRenderName(Lnet/minecraft/entity/EntityLivingBase;)Z", at = @At("HEAD"), cancellable = true)
     private <T extends EntityLivingBase> void canRenderName(T entity, CallbackInfoReturnable<Boolean> callbackInfoReturnable) {
-        // NameTags2 / NameTagOpai：开启时取消原版玩家名牌，由模块自绘
-        if (entity instanceof net.minecraft.entity.player.EntityPlayer &&
-            (NameTags2.INSTANCE.handleEvents() || NameTagOpai.INSTANCE.handleEvents())) {
+        // NameTags 非 Legacy 样式（Xinxin/Opai/Moon）：开启时取消原版玩家名牌，由模块自绘
+        if (entity instanceof net.minecraft.entity.player.EntityPlayer && NameTags.INSTANCE.getCancelVanillaName()) {
             callbackInfoReturnable.setReturnValue(false);
             return;
         }
@@ -73,6 +72,18 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
      */
     @Inject(method = "renderModel", at = @At("HEAD"), cancellable = true)
     private <T extends EntityLivingBase> void renderModel(T p_renderModel_1_, float p_renderModel_2_, float p_renderModel_3_, float p_renderModel_4_, float p_renderModel_5_, float p_renderModel_6_, float p_renderModel_7_, CallbackInfo ci) {
+        // ModelChanger（moon ModelModifierModule 移植）：按标志覆写 isChild / isRiding。
+        // vanilla doRender 在本注入前已按实体真实状态赋值；这里在渲染前强制覆写，
+        // finally 恢复原值，避免污染后续实体渲染。
+        final boolean airplus$prevChild = mainModel.isChild;
+        final boolean airplus$prevRiding = mainModel.isRiding;
+        if (ModelChanger.INSTANCE.flag(p_renderModel_1_, ModelChanger.Flag.BABY)) {
+            mainModel.isChild = true;
+        }
+        if (ModelChanger.INSTANCE.flag(p_renderModel_1_, ModelChanger.Flag.RIDING)) {
+            mainModel.isRiding = true;
+        }
+        try {
         boolean visible = !p_renderModel_1_.isInvisible();
         final TrueSight trueSight = TrueSight.INSTANCE;
         boolean semiVisible = !visible && (!p_renderModel_1_.isInvisibleToPlayer(mc.thePlayer) || (trueSight.handleEvents() && trueSight.getEntities()));
@@ -162,6 +173,10 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
                 popMatrix();
                 depthMask(true);
             }
+        }
+        } finally {
+            mainModel.isChild = airplus$prevChild;
+            mainModel.isRiding = airplus$prevRiding;
         }
 
         ci.cancel();

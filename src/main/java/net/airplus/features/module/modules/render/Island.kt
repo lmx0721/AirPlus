@@ -81,16 +81,16 @@ import kotlin.math.roundToInt
 object Island : Module("Island", Category.RENDER) {
     private val ClientName by text("ClientName", "Air")
     // 全局默认风格（沿用旧版 "Style" 设置名以保持配置兼容；未单独设置风格的界面回退到此）
-    val style by choices("Style", arrayOf("ios", "legacy", "prism", "opai"), "legacy")
+    val style by choices("Style", arrayOf("ios", "legacy", "prism", "opai", "moonlight"), "legacy")
 
     // ===== 每个界面的独立风格覆盖（"Default" = 跟随全局默认风格 style）=====
-    private val watermarkIslandStyle by choices("Watermark-Style", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
+    private val watermarkIslandStyle by choices("Watermark-Style", arrayOf("Default", "ios", "legacy", "prism", "opai", "moonlight"), "Default")
     private val musicIslandStyle by choices("Music-Style", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
-    private val notifyIslandStyle by choices("Notify-Style", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
+    private val notifyIslandStyle by choices("Notify-Style", arrayOf("Default", "ios", "legacy", "prism", "opai", "moonlight"), "Default")
     private val chestIslandStyle by choices("Chest-Style", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
     private val tabListIslandStyle by choices("TabList-Style", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
     private val pearlIslandStyle by choices("Pearl-Style", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
-    private val scaffoldIslandStyle by choices("Scaffold-IslandStyle", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
+    private val scaffoldIslandStyle by choices("Scaffold-IslandStyle", arrayOf("Default", "ios", "legacy", "prism", "opai", "moonlight"), "Default")
     private val gappleIslandStyle by choices("Gapple-Style", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
     private val blinkIslandStyle by choices("Blink-Style", arrayOf("Default", "ios", "legacy", "prism", "opai"), "Default")
     // 挖掘进度目前仅 legacy 有渲染实现，故只提供 Default / legacy
@@ -157,11 +157,16 @@ object Island : Module("Island", Category.RENDER) {
     private val opaiTabListRows by int("Opai-TabList-Rows", 10, 5..20) { opaiTabList && styleUsed("opai") }
     private val opaiChest by boolean("Opai-Chest", true) { styleUsed("opai") }
 
+    // ===== Moonlight 风格（Ported from MoonLight IslandRenderer）=====
+    private val moonlightBackground by color("Moonlight-Background", Color(0, 0, 0, 150)) { styleUsed("moonlight") }
+    private val moonlightAccent by color("Moonlight-Accent", Color(255, 255, 255)) { styleUsed("moonlight") }
+
 
     // Blink 面板：Blink 启用时显示当前 blink 时间，Pulse 启用时显示进度条
     private val blinkPanelCheck by boolean("Blink-Panel", true)
 
     private val blurCheck by boolean("Blur", true)
+    private val glowCheck by boolean("Glow", true)
 
     private val notifyDuration by int("NotifyTime(ms)", 1000, 100..10000)
     private val versionNameUp by text("VersionName", "development") { false }
@@ -382,7 +387,8 @@ object Island : Module("Island", Category.RENDER) {
         // 遮罩半径/分角必须与外层 EmbeddedStencil 的岛体形状一致，
         // 否则模糊贴回会以直角溢出岛体的圆角轮廓
         if (blurCheck) {
-            HudBlur.blur(x, y, x + w, y + h, radius, corners)
+            // glow = glowCheck：Island 的 Glow 开关（总开关仍是 Client 模块的 Glow）
+            HudBlur.blur(x, y, x + w, y + h, radius, corners, glow = glowCheck)
         }
     }
 
@@ -841,6 +847,7 @@ object Island : Module("Island", Category.RENDER) {
                 "ios" -> "IOS_SCAFFOLD"
                 "prism" -> "NEW_SCAFFOLD"
                 "opai" -> "OPAI_SCAFFOLD"
+                "moonlight" -> "MOON_SCAFFOLD"
                 else -> "SCAFFOLD"
             }
             gappleOn -> when (gappleSt) {
@@ -864,6 +871,7 @@ object Island : Module("Island", Category.RENDER) {
                 "ios" -> "IOS_TOGGLE"
                 "prism" -> "NEW_NOTIFY"
                 "opai" -> "OPAI_NOTIFY"
+                "moonlight" -> "MOON_NOTIFY"
                 else -> "NOTIFY_STACK"
             }
             // 挖掘进度仅 legacy 有渲染实现
@@ -872,6 +880,7 @@ object Island : Module("Island", Category.RENDER) {
                 "ios" -> "IOS_WATERMARK"
                 "prism" -> "NEW_WATERMARK"
                 "opai" -> "OPAI_WATERMARK"
+                "moonlight" -> "MOON_WATERMARK"
                 else -> "NORMAL_OPAI"
             }
         }
@@ -1053,6 +1062,25 @@ object Island : Module("Island", Category.RENDER) {
                     targetHeight = OPAI_ROW_HEIGHT * notifications.size.coerceAtMost(OPAI_MAX_NOTICES)
                     targetY = OPAI_IDLE_TOP
                 }
+                "MOON_SCAFFOLD" -> {
+                    val count = hotbarBlockCount()
+                    targetWidth = moonlightPanelWidth("Block Counter", moonlightStackDesc(count))
+                    targetHeight = moonlightPanelHeight()
+                }
+                "MOON_NOTIFY" -> {
+                    val n = notifications.lastOrNull()
+                    if (n != null) {
+                        targetWidth = moonlightPanelWidth(n.title, n.message)
+                        targetHeight = moonlightPanelHeight()
+                    } else {
+                        targetWidth = moonlightPanelWidth("AirPlus", "")
+                        targetHeight = moonlightPanelHeight()
+                    }
+                }
+                "MOON_WATERMARK" -> {
+                    targetWidth = Fonts.fontSemibold35.getStringWidth(moonlightWatermarkTitle()) + 10f
+                    targetHeight = Fonts.fontSemibold35.FONT_HEIGHT + 10f
+                }
                 "BREAK_PROGRESS" -> {
                     targetWidth = 190F
                     targetHeight = 58F
@@ -1143,11 +1171,13 @@ object Island : Module("Island", Category.RENDER) {
 
             val isIosMode = renderMode.startsWith("IOS_")
             val isNewMode = renderMode.startsWith("NEW_")
+            val isMoonMode = renderMode.startsWith("MOON_")
             val currentRadius = when {
                 // Opai：待机收缩为胶囊（半径跟随动画高度），展开面板用固定圆角（Samsara RADIUS 逻辑）
                 isOpaiMode -> if (renderMode == "OPAI_WATERMARK") AnimGlobalHeight / 2f else opaiRadius.coerceAtMost(AnimGlobalHeight / 2f)
                 isIosMode -> if (renderMode == "IOS_CHEST") iosRadius else if (AnimGlobalHeight > 100f) iosRadius.coerceAtMost(AnimGlobalHeight / 2f) else iosRadius.coerceAtMost(AnimGlobalHeight / 2f)
                 isNewMode -> newRadius.coerceAtMost(AnimGlobalHeight / 2f)
+                isMoonMode -> 7f.coerceAtMost(AnimGlobalHeight / 2f)
                 AnimGlobalHeight > 30F -> if (renderMode == "CHEST" || renderMode == "TABLIST") ChestRounded else legacyRadius.coerceAtMost(AnimGlobalHeight / 2f)
                 else -> legacyRadius.coerceAtMost(AnimGlobalHeight / 2f)
             }
@@ -1211,6 +1241,7 @@ object Island : Module("Island", Category.RENDER) {
                     isOpaiMode -> opaiBackground
                     isIosMode -> iosBackgroundColor
                     isNewMode -> newBackgroundColor(renderMode)
+                    isMoonMode -> moonlightBackground
                     else -> legacyBackground
                 }
                 RenderUtils.drawRoundedRect(
@@ -1224,7 +1255,7 @@ object Island : Module("Island", Category.RENDER) {
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
                 // Samsara 岛体只有阴影 + 玻璃背景，无描边；白色描边仅 legacy / ios 使用
-                if (!isIosMode && !isNewMode && !isOpaiMode) {
+                if (!isIosMode && !isNewMode && !isOpaiMode && !isMoonMode) {
                     glDisable(GL_TEXTURE_2D)
                     glEnable(GL_LINE_SMOOTH)
                     glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
@@ -1283,6 +1314,7 @@ object Island : Module("Island", Category.RENDER) {
                     isOpaiMode -> opaiBackground
                     isIosMode -> iosBackgroundColor
                     isNewMode -> newBackgroundColor(renderMode)
+                    isMoonMode -> moonlightBackground
                     else -> legacyBackground
                 }).rgb, currentRadius, islandCorners) // 异常回退保持原色
                 glEnable(GL_BLEND)
@@ -1368,7 +1400,49 @@ object Island : Module("Island", Category.RENDER) {
             "OPAI_BLINK" -> renderOpaiBlinkPanel(drawX, drawY, drawW, drawH)
             "OPAI_TABLIST" -> renderOpaiTabList(drawX, drawY, drawW, drawH, playerList)
             "OPAI_CHEST" -> renderOpaiChest(drawX, drawY, drawW, drawH, chestSlots)
+            "MOON_SCAFFOLD" -> {
+                val count = hotbarBlockCount()
+                renderMoonlightPanel(drawX, drawY, drawW, drawH, "Block Counter", moonlightStackDesc(count), count.coerceAtMost(64) / 64f)
+            }
+            "MOON_NOTIFY" -> {
+                val n = notifications.lastOrNull()
+                if (n != null) {
+                    val progress = if (n.duration > 0)
+                        ((n.createTime + n.duration - System.currentTimeMillis()).toFloat() / n.duration).coerceIn(0f, 1f)
+                    else 1f
+                    renderMoonlightPanel(drawX, drawY, drawW, drawH, n.title, n.message, progress)
+                } else {
+                    renderMoonlightWatermark(drawX, drawY, drawW, drawH)
+                }
+            }
+            "MOON_WATERMARK" -> renderMoonlightWatermark(drawX, drawY, drawW, drawH)
         }
+    }
+
+    // ===== Moonlight 风格渲染（Ported from MoonLight IslandRenderer）=====
+    // 面板布局：顶部进度条（宽 w-12、高 5、圆角 2.5）+ 标题 + 描述
+    private fun moonlightPanelWidth(title: String, desc: String): Float =
+        maxOf(Fonts.fontRegular30.getStringWidth(desc).toFloat(), Fonts.fontSemibold35.getStringWidth(title).toFloat() + 10f) + 10f
+
+    private fun moonlightPanelHeight(): Float =
+        6f + Fonts.fontSemibold35.FONT_HEIGHT + 2f + Fonts.fontRegular30.FONT_HEIGHT + 5f
+
+    private fun moonlightWatermarkTitle(): String =
+        "$ClientName | ${mc.thePlayer?.name ?: "Player"} | ${Minecraft.getDebugFPS()} FPS"
+
+    private fun moonlightStackDesc(count: Int): String =
+        "Stack Size: " + (if (count > 64) "\u00a7a" else if (count > 32) "\u00a7e" else "\u00a7c") + count
+
+    private fun renderMoonlightPanel(x: Float, y: Float, w: Float, h: Float, title: String, desc: String, progress: Float) {
+        val accent = moonlightAccent.rgb
+        RenderUtils.drawRoundedRect(x + 6f, y, x + 6f + (w - 12f), y + 5f, Color(255, 255, 255, 80).rgb, 2.5f)
+        RenderUtils.drawRoundedRect(x + 6f, y, x + 6f + (w - 12f) * progress.coerceIn(0f, 1f), y + 5f, Color(255, 255, 255, 255).rgb, 2.5f)
+        Fonts.fontSemibold35.drawString(title, x + 5f, y + 6f, accent)
+        Fonts.fontRegular30.drawString(desc, x + 5f, y + 6f + Fonts.fontSemibold35.FONT_HEIGHT + 2f, accent)
+    }
+
+    private fun renderMoonlightWatermark(x: Float, y: Float, w: Float, h: Float) {
+        Fonts.fontSemibold35.drawString(moonlightWatermarkTitle(), x + 5f, y + 5f, moonlightAccent.rgb)
     }
 
     private fun renderGappleProgressContent(x: Float, y: Float, w: Float, h: Float) {

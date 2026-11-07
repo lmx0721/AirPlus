@@ -58,6 +58,9 @@ object HUD : Module("HUD", Category.RENDER, gameDetecting = false, defaultState 
 
     // 聊天栏自定义
     val chatCustom by boolean("Chat-Custom", true)
+    // 聊天栏风格：air = AirPlus 弹簧入场/退场动画风格；Rise = Rise 风格（固定宽度圆角面板、
+    // 打开/关闭高度缓动、消息按消失速度逐条隐去）
+    val chatMode by choices("Chat-Mode", arrayOf("air", "Rise"), "air") { chatCustom }
     val chatAnimation by boolean("Chat-Animation", true) { chatCustom }
     val chatAnimationSpeed by float("Chat-Animation-Speed", 1F, 0.1F..3F) { chatCustom && chatAnimation }
     val chatSmoothScroll by boolean("Chat-Smooth-Scroll", true) { chatCustom }
@@ -73,6 +76,11 @@ object HUD : Module("HUD", Category.RENDER, gameDetecting = false, defaultState 
     val chatHeightMax by float("Chat-Height-Max", 110F, 9F..400F) { chatCustom }
     // 背景模糊的类型/强度由 Client 模块的全局 Blur 设置统一控制（HudBlur）
     val chatBackgroundBlur by boolean("Chat-Background-Blur", true) { chatCustom && chatBackground }
+    // Rise 聊天栏：打开聊天时的完整窗口高度（Rise "Open Height"）与关闭状态下
+    // 每条消息的存活间隔（Rise "Message disappearance speed"，到时逐条隐去一行）
+    val chatRiseOpenHeight by float("Chat-Rise-Open-Height", 130F, 0F..500F) { chatCustom && chatMode == "Rise" }
+    val chatRiseDisappearance by int("Chat-Rise-Disappearance-Speed", 5000, 0..5000, "ms")
+    { chatCustom && chatMode == "Rise" }
 
     val onRender2D = handler<Render2DEvent> {
         if (mc.currentScreen is GuiHudDesigner)

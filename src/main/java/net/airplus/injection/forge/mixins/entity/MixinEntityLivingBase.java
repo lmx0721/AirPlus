@@ -10,6 +10,7 @@ import net.airplus.event.EventManager;
 import net.airplus.event.EventState;
 import net.airplus.event.JumpEvent;
 import net.airplus.features.module.modules.combat.AutoClicker;
+import net.airplus.features.module.modules.fun.LocalNPC;
 import net.airplus.features.module.modules.movement.LiquidWalk;
 import net.airplus.features.module.modules.movement.NoJumpDelay;
 import net.airplus.features.module.modules.movement.Sprint;
@@ -122,6 +123,17 @@ public abstract class MixinEntityLivingBase extends MixinEntity {
     @Inject(method = "onLivingUpdate", at = @At("HEAD"))
     private void headLiving(CallbackInfo callbackInfo) {
         if (NoJumpDelay.INSTANCE.handleEvents() || Scaffold.INSTANCE.handleEvents() && Tower.INSTANCE.getTowerModeValues().equals("Pulldown")) jumpTicks = 0;
+    }
+
+    /**
+     * LocalNPC：假实体（客户端本地生成）的 AI + 物理必须在实体自身 tick 内执行。
+     * 此处位于 prevPos 捕获（Entity#onEntityUpdate）之后、travel 的 limbSwing
+     * 与 bodyHelper 的 renderYawOffset 计算之前 —— moveEntity 产生的位移增量
+     * 才能被正确的动画/朝向逻辑消费（腿部动画 + 身体朝向随移动更新）。
+     */
+    @Inject(method = "onLivingUpdate", at = @At("HEAD"))
+    private void localNPCTick(CallbackInfo callbackInfo) {
+        LocalNPC.INSTANCE.onFakeTick((EntityLivingBase) (Object) this);
     }
 
     @Inject(method = "onLivingUpdate", at = @At(value = "FIELD", target = "Lnet/minecraft/entity/EntityLivingBase;isJumping:Z", ordinal = 1))

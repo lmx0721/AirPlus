@@ -41,6 +41,10 @@ object ArmorBreaker2 : Module("ArmorBreaker2", Category.COMBAT) {
     var lastSpoofedSlot = -1
     var lastSpoofTime = 0L
 
+    /** 是否处于破甲工作状态（已启用、有 KillAura 目标且未在 Scaffold 模式），供 InventoryCleaner 等暂停背包操作 */
+    val isWorking: Boolean
+        get() = state && KillAura.target != null && !Scaffold.state
+
     private fun getDamage(stack: ItemStack): Double {
         if (stack.item is ItemAxe) return 13.25
 

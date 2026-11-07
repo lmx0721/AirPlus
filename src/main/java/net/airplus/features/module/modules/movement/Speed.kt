@@ -8,7 +8,6 @@ package net.airplus.features.module.modules.movement
 import net.airplus.event.*
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
-import net.airplus.features.module.modules.combat.KillAura
 import net.airplus.features.module.modules.movement.speedmodes.aac.AACHop3313
 import net.airplus.features.module.modules.movement.speedmodes.aac.AACHop350
 import net.airplus.features.module.modules.movement.speedmodes.aac.AACHop4
@@ -33,7 +32,6 @@ import net.airplus.features.module.modules.movement.speedmodes.vulcan.VulcanGrou
 import net.airplus.features.module.modules.movement.speedmodes.vulcan.VulcanHop
 import net.airplus.features.module.modules.movement.speedmodes.vulcan.VulcanLowHop
 import net.airplus.utils.extensions.isMoving
-import net.airplus.utils.rotation.RotationUtils
 
 object Speed : Module("Speed", Category.MOVEMENT) {
 
@@ -95,7 +93,8 @@ object Speed : Module("Speed", Category.MOVEMENT) {
         SlowHop,
         Legit,
         OldGrim,
-        CustomSpeed
+        CustomSpeed,
+        Grim2
     )
 
     /**
@@ -181,12 +180,12 @@ object Speed : Module("Speed", Category.MOVEMENT) {
     val damageLowHop by boolean("DamageLowHop", false) { mode.get() == "BlocksMCHop" }
     val safeY by boolean("SafeY", true) { mode.get() == "BlocksMCHop" }
 
-    // OldGrim Speed（触碰实体加速，Ported from SilenceFix）
-    val oldGrimSpeed by float("OldGrim-Speed", 5f, 1f..8f) { mode.get() == "OldGrim" }
-    val oldGrimTargetStrafe by boolean("OldGrim-TargetStrafe", true) { mode.get() == "OldGrim" }
-    val oldGrimOnlyJump by boolean("OldGrim-OnlyJump", true) { oldGrimTargetStrafe && mode.get() == "OldGrim" }
-    val oldGrimHurtTimeCheck by boolean("OldGrim-HurtTimeCheck", false) { mode.get() == "OldGrim" }
-    val oldGrimBehindTarget by boolean("OldGrim-BehindTarget", false) { mode.get() == "OldGrim" }
+    // OldGrim Speed（触碰实体加速，Ported from MoonLight EntityCollide）
+    val oldGrimExpand by boolean("OldGrim-Expand", false) { mode.get() == "OldGrim" }
+
+    // Grim2 Speed（Ported from Rise Grim2Speed）
+    val grim2HighPingMode by boolean("Grim2-HighPingMode", false) { mode.get() == "Grim2" }
+    val grim2Speed by float("Grim2-Speed", 1f, 0f..1f) { mode.get() == "Grim2" }
 
     val onUpdate = handler<UpdateEvent> {
         val thePlayer = mc.thePlayer ?: return@handler
@@ -203,11 +202,13 @@ object Speed : Module("Speed", Category.MOVEMENT) {
     val onMotion = handler<MotionEvent> { event ->
         val thePlayer = mc.thePlayer ?: return@handler
 
-        // OldGrim-TargetStrafe：按住空格时 KillAura 的移动修复表现为 strict（绕过旋转输入重建）
-        RotationUtils.forceStrict = mode.get() == "OldGrim" && oldGrimTargetStrafe &&
-            KillAura.target != null && mc.gameSettings.keyBindJump.isKeyDown
+        // POST：紧随 C03/C04/C05/C06 位置包发送之后，供 Grim2 等模式补发包
+        if (event.eventState == EventState.POST) {
+            modeModule.onMotionPost()
+            return@handler
+        }
 
-        if (thePlayer.isSneaking || event.eventState != EventState.PRE)
+        if (thePlayer.isSneaking)
             return@handler
 
         if (thePlayer.isMoving && !sprintManually)
@@ -251,6 +252,13 @@ object Speed : Module("Speed", Category.MOVEMENT) {
         modeModule.onPacket(event)
     }
 
+    val onMovementInput = handler<MovementInputEvent> { event ->
+        if (mc.thePlayer?.isSneaking == true)
+            return@handler
+
+        modeModule.onMovementInput(event)
+    }
+
     override fun onEnable() {
         if (mc.thePlayer == null)
             return
@@ -261,8 +269,6 @@ object Speed : Module("Speed", Category.MOVEMENT) {
     }
 
     override fun onDisable() {
-        RotationUtils.forceStrict = false
-
         if (mc.thePlayer == null)
             return
 
@@ -279,6 +285,6 @@ object Speed : Module("Speed", Category.MOVEMENT) {
         get() = speedModes.find { it.modeName == mode.get() }!!
 
     private val sprintManually
-        // Maybe there are more but for now there's the Legit mode.get().
-        get() = modeModule in arrayOf(Legit)
+        // 这些模式的疾跑交给 Sprint 模块/原版逻辑处理，Speed 不再强制任意方向疾跑
+        get() = modeModule in arrayOf(Legit, OldGrim)
 }

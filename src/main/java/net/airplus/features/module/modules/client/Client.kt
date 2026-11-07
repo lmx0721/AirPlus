@@ -25,26 +25,36 @@ object Client : Module("Client", Category.CLIENT, canBeEnabled = false) {
     // 客户端所有使用模糊的 UI（HUD 元素背景、ClickGUI、聊天栏、主题选择器、音乐界面、菜单等）
     // 统一读取这里的模糊类型与强度；单帧只对整个屏幕做一次全屏模糊，
     // 之后由 HudBlur 把预模糊纹理按各组件的遮罩形状裁剪贴回对应位置。
-    private val blurModeValue = choices("BlurMode", arrayOf("None", "Kawase", "Dual", "Better"), "Better")
+    private val blurModeValue = choices("BlurMode", arrayOf("None", "Kawase", "Dual", "Better", "Rise"), "Better")
 
     // 模糊强度（int 滑条），internal 供个别风格 GUI 直接绑定
     internal val blurStrengthValue = int("BlurStrength", 10, 1..50)
 
+    // Rise 模糊专用：高斯核半径（Rise Interface.blurRadius）与采样间距压缩系数
+    // （Rise Interface.blurCompression）。核权重按 sigma = radius / 2 预计算，
+    // compression 直接拉伸水平/垂直 pass 的采样方向（总触达 = radius * compression px）。
+    // 仅 BlurMode = Rise 时可调
+    internal val blurRadiusValue = int("BlurRadius", 12, 1..30) { blurModeValue.get() == "Rise" }
+    internal val blurCompressionValue = float("BlurCompression", 3.0f, 1f..10f) { blurModeValue.get() == "Rise" }
+
     // 模糊辉光：独立开关，可叠加在任意 BlurMode 上（BlurMode = None 时无模糊快照，不生效）。
-    // 效果 = 模糊贴回后再叠加一次加法混合的辉光 pass：场景亮部透过模糊晕开成光晕（亮部辉光），
-    // 并在遮罩边缘向外按指数衰减发散（边缘光晕），强度由 BlurGlowStrength 控制。
-    internal val blurGlowValue = boolean("BlurGlow", false)
+    // 效果 = Rise 式形状 Bloom：blur 时把各组件的遮罩形状（alpha = 强度）累积进共享
+    // 辉光源 FBO，帧末统一做水平 + 垂直两 pass 高斯并贴回主 framebuffer——光晕只画在
+    // 组件形状外圈（形状内部 discard），跟随组件实际轮廓柔和晕开，无方形硬边。
+    internal val blurGlowValue = boolean("Glow", false)
 
     // 辉光强度（百分比），仅 BlurGlow 开启时可调
-    internal val blurGlowStrengthValue = int("BlurGlowStrength", 60, 10..200, "%") { blurGlowValue.get() }
+    internal val blurGlowStrengthValue = int("GlowStrength", 60, 10..1000, "%") { blurGlowValue.get() }
 
-    // 辉光染色：alpha 通道 = 染色强度（0 = 场景原色，255 = 完全染成该色；
-    // 亮度仍由场景亮部驱动，纯黑染色 = 关闭辉光染色）。仅 BlurGlow 开启时可调
-    internal val blurGlowColorValue = color("BlurGlowColor", Color(255, 255, 255, 0)) { blurGlowValue.get() }
+    // 辉光颜色：光晕的染色颜色（以 RGB 为准，alpha 通道不参与）。
+    // 仅 BlurGlow 开启时可调
+    internal val blurGlowColorValue = color("GlowColor", Color(255, 255, 255, 0)) { blurGlowValue.get() }
 
-    // 辉光柔和度：对辉光源做十字 5 点扩散采样，光晕绕模糊轮廓晕开而非紧贴轮廓。
-    // 百分比，基准为高斯 σ 的一半；0 = 关闭扩散。仅 BlurGlow 开启时可调
-    internal val blurGlowSoftValue = int("BlurGlowSoft", 50, 0..200) { blurGlowValue.get() }
+    // Rise Bloom 专用：高斯核半径（Rise Interface.bloomRadius）与采样间距压缩系数
+    // （Rise Interface.bloomCompression）。核权重按 sigma = radius / 2 预计算。
+    // 仅 Glow 开启时可调
+    internal val blurGlowRadiusValue = int("GlowRadius", 14, 1..30) { blurGlowValue.get() }
+    internal val blurGlowCompressionValue = float("GlowCompression", 2.0f, 1f..10f) { blurGlowValue.get() }
 
     /** 当前全局模糊类型（"None" 表示禁用所有模糊） */
     val blurMode: String
@@ -54,6 +64,14 @@ object Client : Module("Client", Category.CLIENT, canBeEnabled = false) {
     val blurStrength: Float
         get() = blurStrengthValue.get().toFloat()
 
+    /** Rise 模糊高斯核半径（1..30，仅 BlurMode = Rise 时使用） */
+    val blurRadius: Float
+        get() = blurRadiusValue.get().toFloat()
+
+    /** Rise 模糊采样间距压缩系数（仅 BlurMode = Rise 时使用） */
+    val blurCompression: Float
+        get() = blurCompressionValue.get()
+
     /** 是否启用模糊辉光叠加 */
     val blurGlow: Boolean
         get() = blurGlowValue.get()
@@ -62,13 +80,17 @@ object Client : Module("Client", Category.CLIENT, canBeEnabled = false) {
     val blurGlowStrength: Float
         get() = blurGlowStrengthValue.get().toFloat()
 
-    /** 模糊辉光染色颜色（alpha = 染色强度） */
+    /** 模糊辉光颜色（光晕染色，以 RGB 为准） */
     val blurGlowColor: Color
         get() = blurGlowColorValue.get()
 
-    /** 模糊辉光柔和度（百分比，0 = 关闭扩散采样） */
-    val blurGlowSoft: Float
-        get() = blurGlowSoftValue.get().toFloat()
+    /** Rise Bloom 高斯核半径（1..30） */
+    val blurGlowRadius: Float
+        get() = blurGlowRadiusValue.get().toFloat()
+
+    /** Rise Bloom 采样间距压缩系数 */
+    val blurGlowCompression: Float
+        get() = blurGlowCompressionValue.get()
 
     // 主字体：自动获取注册表全部非图标字体（不含 Minecraft 原版字体与 Semibold 别名族）
     private val mainFontValue = choices("MainFont", Fonts.mainFontCandidates(), "HarmonyOS Sans SC Regular")

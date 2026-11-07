@@ -6,15 +6,19 @@
 // skid SetsunaClient
 package net.airplus.features.module.modules.render
 
+import net.airplus.event.MotionEvent
+import net.airplus.event.Render2DEvent
 import net.airplus.event.WorldEvent
 import net.airplus.event.handler
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
 import net.minecraft.client.Minecraft
+import net.minecraft.client.gui.ScaledResolution
 import net.minecraft.util.Vec3
 import net.minecraftforge.client.event.EntityViewRenderEvent
 import net.minecraftforge.common.MinecraftForge
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent
+import org.lwjgl.opengl.GL11
 import kotlin.math.abs
 import kotlin.math.exp
 
@@ -41,6 +45,83 @@ object Camera : Module("Camera", Category.RENDER) {
     private val turnLean by boolean("TurnLean", true) { tiltMode == "Dynamic" }
 
     private var cameraPos: Vec3? = null
+
+    // ===== 整合模块：CameraClip / NoFOV / NoBob / NoHurtCam / FPS HurtCam =====
+    // ViewClip：取消第三人称相机碰撞（原 CameraClip 模块）
+    val viewClip by boolean("ViewClip", true)
+    // NoFOV：按倍率修改自身 FOV 修饰（原 NoFOV 模块）
+    val noFOV by boolean("NoFOV", false)
+    val fov by float("FOV", 1f, 0f..1.5f) { noFOV }
+    // NoBob：移除视角摆动（原 NoBob 模块）
+    val noBob by boolean("NoBob", false)
+    // NoHurtCam：取消受伤视角抖动（原 NoHurtCam 模块）
+    val noHurtCam by boolean("NoHurtCam", false)
+    // FPS HurtCam：受伤时屏幕四周红色渐变边框（Ported from MoonLight Camera）
+    val fpsHurtCam by boolean("FPSHurtCam", false)
+
+    val noBobHandler = handler<MotionEvent> {
+        if (noBob)
+            mc.thePlayer?.distanceWalkedModified = -1f
+    }
+
+    val onRender2D = handler<Render2DEvent> { event ->
+        val player = mc.thePlayer ?: return@handler
+        if (!fpsHurtCam || player.maxHurtTime <= 0)
+            return@handler
+
+        val hurtTimePercentage = (player.hurtTime - event.partialTicks) / player.maxHurtTime
+        if (hurtTimePercentage <= 0f)
+            return@handler
+
+        val scaledResolution = ScaledResolution(mc)
+        val width = scaledResolution.scaledWidth.toFloat()
+        val height = scaledResolution.scaledHeight.toFloat()
+        val lineWidth = 20f
+
+        GL11.glDisable(GL11.GL_TEXTURE_2D)
+        GL11.glEnable(GL11.GL_BLEND)
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA)
+        GL11.glShadeModel(GL11.GL_SMOOTH)
+        GL11.glDisable(GL11.GL_ALPHA_TEST)
+
+        // 边缘顶点为不透明红（alpha 随 hurtTime 衰减），内侧顶点透明，形成渐变边框
+        fun vertex(x: Float, y: Float, edge: Boolean) {
+            GL11.glColor4f(1f, 0f, 0f, if (edge) hurtTimePercentage else 0f)
+            GL11.glVertex2f(x, y)
+        }
+
+        GL11.glBegin(GL11.GL_QUADS)
+        // Left
+        vertex(0f, 0f, true)
+        vertex(0f, height, true)
+        vertex(lineWidth, height - lineWidth, false)
+        vertex(lineWidth, lineWidth, false)
+
+        // Right
+        vertex(width - lineWidth, lineWidth, false)
+        vertex(width - lineWidth, height - lineWidth, false)
+        vertex(width, height, true)
+        vertex(width, 0f, true)
+
+        // Top
+        vertex(0f, 0f, true)
+        vertex(lineWidth, lineWidth, false)
+        vertex(width - lineWidth, lineWidth, false)
+        vertex(width, 0f, true)
+
+        // Bottom
+        vertex(lineWidth, height - lineWidth, false)
+        vertex(0f, height, true)
+        vertex(width, height, true)
+        vertex(width - lineWidth, height - lineWidth, false)
+        GL11.glEnd()
+
+        GL11.glColor4f(1f, 1f, 1f, 1f)
+        GL11.glEnable(GL11.GL_ALPHA_TEST)
+        GL11.glShadeModel(GL11.GL_FLAT)
+        GL11.glDisable(GL11.GL_BLEND)
+        GL11.glEnable(GL11.GL_TEXTURE_2D)
+    }
 
     // 镜头倾斜状态：当前 roll（度）与平滑后的转向角速度（度/秒）
     private var currentRoll = 0F

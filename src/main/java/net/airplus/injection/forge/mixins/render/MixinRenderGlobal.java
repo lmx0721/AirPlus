@@ -7,7 +7,9 @@ package net.airplus.injection.forge.mixins.render;
 
 import net.airplus.features.module.modules.render.FPSBoost;
 import net.airplus.features.module.modules.render.FreeCam;
+import net.airplus.features.module.modules.render.MoBendsMod;
 import net.airplus.injection.implementations.IMixinEntity;
+import net.airplus.utils.client.MinecraftInstance;
 import net.airplus.utils.client.PacketUtilsKt;
 import net.minecraft.client.renderer.RenderGlobal;
 import net.minecraft.client.renderer.culling.ICamera;
@@ -27,6 +29,11 @@ public abstract class MixinRenderGlobal {
 
     @Redirect(method = "renderEntities", at = @At(value = "INVOKE", target = "Lnet/minecraft/entity/EntityLivingBase;isPlayerSleeping()Z"))
     private boolean injectFreeCam(EntityLivingBase instance) {
+        // MoreBends「Visible In First Person」：第一人称下让 vanilla 渲染视口实体（自己），
+        // 本体随后经 MixinRendererLivingEntity 的 MoBends 钩子换成 Bends 动画渲染器
+        if (instance == MinecraftInstance.mc.thePlayer && MoBendsMod.INSTANCE.renderSelfInFirstPerson()) {
+            return true;
+        }
         return FreeCam.INSTANCE.renderPlayerFromAllPerspectives(instance);
     }
 
