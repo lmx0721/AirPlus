@@ -10,10 +10,9 @@
 /buildSrc/build/
 /.idea/
 /.trae/
+/.cluade/
 /.workbuddy/
-
-# No VsCode!
-/.vscode/
+/.vscode/*
 
 /.eclipse/
 

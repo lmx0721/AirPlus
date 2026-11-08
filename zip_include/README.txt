@@ -1,47 +1,109 @@
- ▄▄▄     ▄▄▄ ▄▄▄▄▄▄▄ ▄▄   ▄▄ ▄▄▄ ▄▄▄▄▄▄  ▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄ ▄▄   ▄▄ ▄▄    ▄ ▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄ 
-█   █   █   █       █  █ █  █   █      ██  ▄    █       █  █ █  █  █  █ █       █       █
-█   █   █   █   ▄   █  █ █  █   █  ▄    █ █▄█   █   ▄   █  █ █  █   █▄█ █       █    ▄▄▄█
-█   █   █   █  █ █  █  █▄█  █   █ █ █   █       █  █ █  █  █▄█  █       █     ▄▄█   █▄▄▄ 
-█   █▄▄▄█   █  █▄█  █       █   █ █▄█   █  ▄   ██  █▄█  █       █  ▄    █    █  █    ▄▄▄█
-█       █   █      ██       █   █       █ █▄█   █       █       █ █ █   █    █▄▄█   █▄▄▄ 
-█▄▄▄▄▄▄▄█▄▄▄█▄▄▄▄██▄█▄▄▄▄▄▄▄█▄▄▄█▄▄▄▄▄▄██▄▄▄▄▄▄▄█▄▄▄▄▄▄▄█▄▄▄▄▄▄▄█▄█  █▄▄█▄▄▄▄▄▄▄█▄▄▄▄▄▄▄█
-a open-source minecraft hacked-client for 1.8.9.
-https://liquidbounce.net/
+﻿================================================================
+                        AirPlus  b4
+          Minecraft 1.8.9  ·  Forge  ·  开源  ·  GPL-3.0
+================================================================
+                  https://github.com/lmx0721/AirPlus
 
-➔ How to install on Forge
-1. Install Forge for 1.8.9 (from https://files.minecraftforge.net/net/minecraftforge/forge/index_1.8.9.html).
-2. Create a folder called "mods" inside in the ".minecraft" directory.
-3. Copy "liquidbounce.jar" into the mods folder.
-4. RECOMMENDED: Install OptiFine mod for improved performance (from https://optifine.net/downloads)
-5. RECOMMENDED: Install ViaForge mod to join any 1.7-1.18.2 server (from https://www.curseforge.com/minecraft/mc-mods/viaforge)
-7. Launch Forge through the Minecraft launcher.
 
-➔ Reminder for nightly builds
-This is a development build. Use these versions only if you know what you are doing! Bugs can and will occur!
+AirPlus 是一个基于 Mixin 注入的 Minecraft 1.8.9 Forge 客户端，
+由 LiquidBounce Legacy 二次开发，内置 190+ 功能模块、可编辑 HUD、
+多套 ClickGUI 主题、脚本系统与音乐播放器。
 
-➔ How to report issues
-If you found an issue with this version, please report it on our GitHub Issues:
-https://github.com/CCBlueX/LiquidBounce/issues
+本压缩包内是本客户端的完整发布版本，已包含全部运行时依赖，
+无需额外安装任何前置 mod（协议转换库也已内置）。
 
-Make sure it includes all required information, so we can reproduce it on our own and solve the issue.
-In case of an error, please always provide a full log and crash log. (.minecraft/logs/latest.log)
 
-➔ Support
-If you need support, join our Guilded below. Feel free to tell us your question in the support channel, no need to ask for asking. There will always be people helping out.
+----------------------------------------------------------------
+一、安装步骤
+----------------------------------------------------------------
 
-Please don't contact us in direct messages, when you're looking for support.
+1. 安装 64 位 Java 8。
+   Minecraft 1.8.9 官方只支持 Java 8，用 Java 17/21 启动会直接崩溃。
+   https://adoptium.net/temurin/releases/?version=8
 
-➔ Do you want to contribute or want to know how our client is written?
-Feel free to check the source code on GitHub:
+2. 安装 Forge 1.8.9（推荐 11.15.1.2318）。
+   https://files.minecraftforge.net/net/minecraftforge/forge/index_1.8.9.html
+
+3. 找到 .minecraft 目录，在里面新建一个名为 mods 的文件夹。
+
+4. 把 airplus-b4.jar 复制进 mods 文件夹。
+   注意：不要把 jar 解压，也不要双击运行它。
+
+5. 在启动器里选择 Forge 1.8.9 配置文件，启动游戏。
+   进入主菜单后就是 AirPlus 的界面，按右 Shift 打开 ClickGUI。
+
+6. 建议在启动器里把内存调到 2048 MB 以上，否则加载背景着色器时容易卡顿。
+
+提示：本项目内置 ViaVersion，可以直接连接 1.9 ~ 1.21 的高版本服务器，
+      不需要再单独装 ViaForge。
+
+
+----------------------------------------------------------------
+二、配置文件位置
+----------------------------------------------------------------
+
+首次启动后会在 .minecraft 下生成 AirPlus-1.8.9 文件夹，包含：
+
+  modules.json     模块开关与键位
+  values.json      各模块的具体设置
+  clickgui.json    界面布局与主题
+  hud.json         HUD 组件位置
+  accounts.json    账号列表
+  friends.json     好友名单
+  xray-blocks.json XRay 方块列表
+  shortcuts.json   快捷指令
+  settings/        其他本地设置
+  themes/          自定义主题
+  fonts/           自定义字体
+
+更换客户端版本时，建议先备份整个 AirPlus-1.8.9 文件夹。
+配置格式在版本更新后可能变化，旧配置会被自动备份。
+
+
+----------------------------------------------------------------
+三、出了问题时
+----------------------------------------------------------------
+
+1. 先看日志：.minecraft/logs/latest.log
+   崩溃报告：.minecraft/crash-reports/
+   这两样是排查问题的必需信息，反馈时请一并附上。
+
+2. 常见原因：
+   - Java 版本不是 8：启动器里指定的 java.exe 必须是 JDK/JRE 8。
+   - 没走 Forge 启动：本客户端是 CoreMod，必须由 Forge 加载。
+   - mods 文件夹里同时存在多个客户端：会混入注入冲突，请只保留一个。
+   - OptiFine 版本过旧：推荐使用 1.8.9 的 OptiFine HD U M5 或更新版本。
+
+3. 反馈 Bug 请开 issue，并写清复现步骤、客户端版本号、完整的
+   latest.log。没有日志的 issue 基本无法处理。
+   https://github.com/lmx0721/AirPlus/issues
+
+
+----------------------------------------------------------------
+四、参与开发
+----------------------------------------------------------------
+
+源码：https://github.com/lmx0721/AirPlus
+编码规范见仓库根目录的 CODING_STANDARDS.md。
+欢迎提交 Pull Request，修复反作弊兼容性、优化渲染性能、
+补齐新模块都是很好的切入点。
+
+
+----------------------------------------------------------------
+五、许可证与声明
+----------------------------------------------------------------
+
+本项目基于 GNU General Public License v3.0 发布。
+你可以自由使用、修改和分发，包括商业用途，但基于本项目的
+衍生作品必须以同样的 GPL-3.0 协议开源，不得闭源或混淆后分发。
+
+本项目源自 CCBlueX 的 LiquidBounce Legacy：
 https://github.com/CCBlueX/LiquidBounce
+感谢 LiquidBounce 社区的所有维护者。
 
-➔ Links
-Our website: https://ccbluex.net/
-Our youtube: https://youtube.com/ccbluex
-Our twitter: https://twitter.com/ccbluex
-Our guilded: https://www.guilded.gg/CCBlueX
+本软件仅供学习与研究使用。在多人服务器中使用可能导致账号
+被封禁，相关后果由使用者自行承担，作者不承担任何责任。
+请遵守你所在服务器的规则与当地法律法规。
 
-➔ License
-This project is subject to the GNU General Public License v3.0. This does only apply for source code located directly in this clean repository. During the development and compilation process, additional source code may be used to which we have obtained no rights. Such code is not covered by the GPL license.
-
-Copyright © 2015 - 2025 | CCBlueX | All rights reserved.
+Copyright © 2026 | AirPlus | GPL-3.0
+================================================================
