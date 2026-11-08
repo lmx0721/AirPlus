@@ -27,6 +27,8 @@ export interface ModrinthVersion {
 export interface OptifineVersion {
   fileName: string;
   display: string;
+  /** 官网的 preview 版（不稳定，推荐安装时优先挑非 preview） */
+  preview?: boolean;
 }
 
 export interface ModFile {

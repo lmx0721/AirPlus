@@ -164,24 +164,7 @@ pub fn start_task(
             manifest::record_download(o, &file_name, &url, done.size, done.sha1.clone());
         }
 
-        let mut progress = DownloadProgress {
-            task_id: task_id.clone(),
-            name: name.clone(),
-            downloaded: 0,
-            total: 0,
-            speed_bps: 0,
-            state: "running".into(),
-            error: None,
-        };
-        match &result {
-            Ok(_) => progress.state = "done".into(),
-            Err(LauncherError::Cancelled) => progress.state = "cancelled".into(),
-            Err(e) => {
-                progress.state = "error".into();
-                progress.error = Some(e.to_string());
-            }
-        }
-        emit(&app, &progress);
+        // 终态进度由 run_download_full 统一发（内部下载与后台任务共用同一套收尾）
 
         app.state::<AppState>().cancels.lock().unwrap().remove(&task_id);
     });
@@ -214,7 +197,62 @@ pub async fn run_download(
 }
 
 /// 同 `run_download`，但把大小与 sha1 一并返回（写下载清单用）。
+///
+/// 只要调用方给了 `task_id`，这里就保证「发过 running 进度」之后一定发一条终态。
+/// 否则那些在启动流程里被 await 的内部下载（Forge / 客户端 / JRE / 库）会永远停在
+/// 最后一条 running 进度上——游戏都起来了，任务面板还挂着「下载中」和取消按钮。
 pub async fn run_download_full(
+    app: &AppHandle,
+    task_id: Option<&str>,
+    name: &str,
+    url: &str,
+    dest: &Path,
+    sha1_hex: Option<&str>,
+    token: &CancellationToken,
+) -> Result<Downloaded> {
+    let result = retry_download(app, task_id, name, url, dest, sha1_hex, token).await;
+    if let Some(tid) = task_id {
+        emit_terminal(tid, name, &result);
+    }
+    result
+}
+
+/// 终态进度：done 时把进度条推满，失败/取消则标记状态，让前端 5 秒后自动移除卡片
+fn emit_terminal(task_id: &str, name: &str, result: &Result<Downloaded>) {
+    let p = match result {
+        Ok(d) => DownloadProgress {
+            task_id: task_id.to_string(),
+            name: name.to_string(),
+            downloaded: d.size,
+            total: d.size,
+            speed_bps: 0,
+            state: "done".into(),
+            error: None,
+        },
+        Err(LauncherError::Cancelled) => DownloadProgress {
+            task_id: task_id.to_string(),
+            name: name.to_string(),
+            downloaded: 0,
+            total: 0,
+            speed_bps: 0,
+            state: "cancelled".into(),
+            error: None,
+        },
+        Err(e) => DownloadProgress {
+            task_id: task_id.to_string(),
+            name: name.to_string(),
+            downloaded: 0,
+            total: 0,
+            speed_bps: 0,
+            state: "error".into(),
+            error: Some(e.to_string()),
+        },
+    };
+    push(p);
+}
+
+/// 带重试的下载主体：网络错误保留 .part 以便续传，sha1 错误清空重来。
+async fn retry_download(
     app: &AppHandle,
     task_id: Option<&str>,
     name: &str,
