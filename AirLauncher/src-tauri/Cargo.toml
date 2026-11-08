@@ -24,6 +24,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tauri-plugin-dialog = "2"
+# 单实例互斥：Windows 下插件内部用命名互斥体（CreateMutexW），第二个进程直接退出
+tauri-plugin-single-instance = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "gzip"] }

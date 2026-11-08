@@ -201,6 +201,18 @@ fn chrono_like_now() -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 单实例互斥：必须是第一个注册的插件。插件的初始化在窗口创建之前跑完，
+        // 第二个进程在这里就发现「已有实例持有互斥体」直接退出，
+        // 不会出现两个启动器同时写同一个数据目录、同时启动两个游戏的情况。
+        // 回调在**已存在的那个实例**里执行，用来把窗口拎到前台，
+        // 否则用户双击图标后什么都看不到，会以为程序没启动。
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.unminimize();
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {

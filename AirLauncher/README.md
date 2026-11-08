@@ -13,9 +13,10 @@ AirPlus 客户端（`lmx0721/AirPlus`）专属启动器 —— 亚克力半透�
 | ☕ Java 8 自动下载 | 走 Adoptium API 下载 Temurin 8 JRE，解压到启动器目录，用户零配置 |
 | ⚒️ Forge 1.8.9 自动安装 | 直接解析 Forge installer（不跑安装器），写 version JSON + universal jar |
 | 🎮 完整启动游戏 | 版本链合并（Forge → 1.8.9）、libraries / natives / assets 下载校验、进程拉起、实时日志回传、可结束游戏进程树 |
-| 👤 微软登录 | Rust 原生实现完整 OAuth → XBL → XSTS → Minecraft Services 流程，本地 http 回调，refresh token 静默续期，多账号管理 |
+| 👤 微软登录 | Rust 原生实现完整 OAuth → XBL → XSTS → Minecraft Services 流程，设备码登录（无需回调端口），refresh token 静默续期，多账号管理 |
 | 🧩 Modrinth 模组 | 搜索 / 按 `1.8.9 + forge` 过滤 / 版本列表 / 一键下载安装到实例 mods 目录 |
 | ✨ OptiFine | 解析 optifine.net 两跳直链下载，失效时支持手动导入本地 jar |
+| 🔒 单实例保护 | 命名互斥体加锁：重复双击不会再开出第二个启动器，只会把已运行的窗口拎到前台 |
 | ⚙️ 其他 | 内存 / JVM 参数 / 下载镜像（BMCLAPI）/ GitHub PAT，统一下载管线（并发、断点续传、SHA1 校验、可取消） |
 
 ## 环境要求
