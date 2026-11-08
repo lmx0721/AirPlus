@@ -1,0 +1,117 @@
+/*
+ * AirLauncher
+ * A Tauri-based launcher for the AirPlus Minecraft client.
+ * https://github.com/lmx0721/AirPlus
+ */
+@import "./lib/theme/tokens.css";
+
+* {
+  box-sizing: border-box;
+}
+
+/*
+ * 窗口为 transparent:true + DWM 亚克力。
+ * 根节点必须是全透明的，否则不透明底会把亚克力整块盖住；
+ * 氛围渐变与半透明压暗层挪到 +layout.svelte 的 .shell 上。
+ * （原来的 background-attachment: fixed 会让视口重复重绘，已删除）
+ */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* 不透明回退模式下，根节点补一个实心底色 */
+:root[data-window-effect="none"] body {
+  background: var(--overlay);
+}
+
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+button {
+  font-family: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 通用控件 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 13px;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.btn:hover:not(:disabled) {
+  background: var(--card-hover);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn.primary {
+  background: var(--accent-soft);
+  border-color: rgba(7, 152, 252, 0.45);
+  color: var(--accent);
+}
+.btn.primary:hover:not(:disabled) {
+  background: rgba(7, 152, 252, 0.26);
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.input {
+  background: rgba(8, 8, 12, 0.45);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 13px;
+  outline: none;
+}
+.input:focus {
+  border-color: rgba(7, 152, 252, 0.5);
+}

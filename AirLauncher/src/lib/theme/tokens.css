@@ -1,0 +1,38 @@
+/*
+ * AirLauncher
+ * A Tauri-based launcher for the AirPlus Minecraft client.
+ * https://github.com/lmx0721/AirPlus
+ *
+ * 色板取自客户端 ThemeSelector.kt 的深色毛玻璃配色。
+ * 窗口为 transparent + DWM 亚克力，色值必须带 alpha，
+ * 否则内容层会把亚克力整块盖住（看起来和 opaque 一模一样）。
+ */
+:root {
+  --overlay: rgba(8, 8, 12, 0.62);
+  --window: rgba(12, 12, 17, 0.52);
+  --window-strong: rgba(16, 16, 22, 0.6);
+  --card: rgba(35, 34, 39, 0.72);
+  --card-hover: rgba(46, 44, 51, 0.82);
+  --text: #eae7e2;
+  --text-muted: rgba(255, 255, 255, 0.42);
+  --line: rgba(255, 255, 255, 0.1);
+  --accent: #0798fc;
+  --accent-soft: rgba(7, 152, 252, 0.16);
+  --danger: #e5484d;
+  --ok: #46a758;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font:
+    "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei UI",
+    "Microsoft YaHei", system-ui, sans-serif;
+}
+
+/* 回退：设置里选「不透明」时由 JS 在 <html> 上打 data-window-effect="none"。
+   此时 DWM 效果已被移除，必须给回纯色底，否则窗口背景直接漏出桌面。 */
+:root[data-window-effect="none"] {
+  --overlay: #08080c;
+  --window: #16151a;
+  --window-strong: #1b1a1f;
+  --card: #232227;
+  --card-hover: #2e2c33;
+}

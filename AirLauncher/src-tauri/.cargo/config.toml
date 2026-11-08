@@ -1,0 +1,3 @@
+# 关闭 MSVC 链接器的 PDB 生成（debug = 0 已不产生调试信息，这里兜底禁用 /DEBUG）
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/DEBUG:NONE"]
