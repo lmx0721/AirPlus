@@ -55,6 +55,11 @@ object InventoryMove : Module("InventoryMove", Category.MOVEMENT, gameDetecting 
 
     private val inventoryMotion by float("InventoryMotion", 1F, 0F..2F)
 
+    // Rise（Ported from Rise GrimInventoryMove）
+    // GUI 内疾跑状态由 GrimInventoryMoveDisabler（Disabler.Rise-GrimInventoryMove）读取 managerExtraSprintTicks
+    val grim by boolean("Rise", false)
+    val managerExtraSprintTicks by int("Rise-ManagerExtraSprintTicks", 9, 0..20) { grim }
+
     private val affectedBindings = arrayOf(
         mc.gameSettings.keyBindForward,
         mc.gameSettings.keyBindBack,
@@ -77,6 +82,10 @@ object InventoryMove : Module("InventoryMove", Category.MOVEMENT, gameDetecting 
             player.motionX *= inventoryMotion
             player.motionZ *= inventoryMotion
         }
+
+        // Rise：背包/箱子界面打开时取消疾跑（Rise 的 SprintEvent 近似，在 onUpdate 内实现）
+        if (grim && (screen is GuiInventory || screen is GuiChest))
+            player.isSprinting = false
 
         if (silentlyCloseAndReopen && screen is GuiInventory) {
             if (canClickInventory(closeWhenViolating = true) && !reopenOnClick) serverOpenInventory = true

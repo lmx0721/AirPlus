@@ -445,6 +445,7 @@
         "module.health.description": "在屏幕中间显示自己的血量",
         "module.island.description": "灵动岛",
         "module.jelly.description": "桃花谢了有玫瑰~",
+        "module.superBypass.description": "绕过所有反作弊，但是后果自负",
 
         "module.guiImage.description": "在界面右下角放上你喜欢的图片!",
         "module.killEffect.description": "击杀玩家时播放特效",

@@ -78,16 +78,19 @@ object InternalBlurShader {
         val mainBuffer = mc.framebuffer
 
         // 保存真实 GL 状态 + GlStateManager 缓存
+        net.airplus.utils.render.GLErrorProbe.drain("D-iblur-in")
         val scissorEnabled = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)
         val blendEnabled = GL11.glIsEnabled(GL11.GL_BLEND)
         val alphaEnabled = GL11.glIsEnabled(GL11.GL_ALPHA_TEST)
         val stencilEnabled = GL11.glIsEnabled(GL11.GL_STENCIL_TEST)
         val depthMaskPrev = GL11.glGetInteger(GL11.GL_DEPTH_WRITEMASK) == GL11.GL_TRUE
         colorMaskBuf.clear()
-        GL11.glGetInteger(GL11.GL_COLOR_WRITEMASK, colorMaskBuf)
+        if (!LwjglCompat.snapshotColorMask(colorMaskBuf)) {
+            LwjglCompat.fallbackColorMaskAllTrue(colorMaskBuf)
+        }
         // GL_CURRENT_COLOR：调用方进入时的当前颜色（光照在顶点阶段应用，不影响该属性）
         currentColorBuf.clear()
-        GL11.glGetFloat(GL11.GL_CURRENT_COLOR, currentColorBuf)
+        GL11.glGetFloat(LwjglCompat.GL_CURRENT_COLOR, currentColorBuf)
         val prevColorR = currentColorBuf[0]; val prevColorG = currentColorBuf[1]
         val prevColorB = currentColorBuf[2]; val prevColorA = currentColorBuf[3]
         val activeTexturePrev = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE)
@@ -96,6 +99,7 @@ object InternalBlurShader {
         textureBindingPrev = GL11.glGetInteger(0x8069)
         // 被改 WRAP 的纹理 → 原 (WRAP_S, WRAP_T)；同帧多次调用时沿用首次记录的原值
         touchedWraps.clear()
+        net.airplus.utils.render.GLErrorProbe.drain("E1-snap")
 
         // 全屏矩阵（glGetFloatv 方式，不占用矩阵栈）
         projMatrixBuf.clear()
@@ -109,6 +113,8 @@ object InternalBlurShader {
         GL11.glTranslated(0.0, 0.0, -2000.0)
         GL11.glMatrixMode(GL11.GL_MODELVIEW)
         GL11.glLoadIdentity()
+
+        net.airplus.utils.render.GLErrorProbe.drain("E2-matrix")
 
         try {
             // 中间 pass 写入无 stencil 的独立 FBO，统一强制干净状态（真实 GL + 缓存同步）
@@ -144,6 +150,7 @@ object InternalBlurShader {
                 GL20.glUniform2f(uniformDirectionLocation, 1.0f, 0.0f)
                 GlStateManager.color(1f, 1f, 1f, 1f)
                 drawQuads()
+                net.airplus.utils.render.GLErrorProbe.drain("E3-pass1")
 
                 // Pass 2：垂直模糊 A → B
                 outputB.framebufferClear()
@@ -151,6 +158,7 @@ object InternalBlurShader {
                 bindSourceAndClamp(outputA.framebufferTexture)
                 GL20.glUniform2f(uniformDirectionLocation, 0.0f, 1.0f)
                 drawQuads()
+                net.airplus.utils.render.GLErrorProbe.drain("E4-pass2")
 
                 GL20.glUseProgram(0)
             }
@@ -164,8 +172,7 @@ object InternalBlurShader {
             GL11.glMatrixMode(prevMatrixMode)
 
             mainBuffer.bindFramebuffer(true)
-
-            // 归还被改掉的 WRAP：恢复参数需要先把对应纹理重新绑回 unit 0
+            net.airplus.utils.render.GLErrorProbe.drain("E5-r-fbo")
             for ((tex, wrap) in touchedWraps) {
                 GL11.glBindTexture(GL11.GL_TEXTURE_2D, tex)
                 GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, wrap.first)
@@ -178,6 +185,7 @@ object InternalBlurShader {
             GlStateManager.bindTexture(textureBindingPrev)
             OpenGlHelper.setActiveTexture(activeTexturePrev)
             GL13.glActiveTexture(activeTexturePrev)
+            net.airplus.utils.render.GLErrorProbe.drain("E6-r-tex")
 
             // 当前颜色两步法：恢复为调用方进入时的颜色（缓存守卫可能吞掉单步恢复）
             GlStateManager.color(0f, 0f, 0f, 0f)
@@ -190,6 +198,7 @@ object InternalBlurShader {
             GlStateManager.colorMask(!m0, !m1, !m2, !m3)
             GlStateManager.colorMask(m0, m1, m2, m3)
             GlStateManager.depthMask(depthMaskPrev)
+            net.airplus.utils.render.GLErrorProbe.drain("E7-r-color")
             if (blendEnabled) GlStateManager.enableBlend() else GlStateManager.disableBlend()
             if (alphaEnabled) {
                 GL11.glEnable(GL_ALPHA_TEST); GlStateManager.enableAlpha()
@@ -199,6 +208,7 @@ object InternalBlurShader {
             // stencil 开关恢复：不恢复会把「stencil 写入被丢弃」泄漏给后续的遮罩重建
             if (stencilEnabled) GL11.glEnable(GL11.GL_STENCIL_TEST) else GL11.glDisable(GL11.GL_STENCIL_TEST)
             if (scissorEnabled) GL11.glEnable(GL11.GL_SCISSOR_TEST) else GL11.glDisable(GL11.GL_SCISSOR_TEST)
+            net.airplus.utils.render.GLErrorProbe.drain("E-iblur-out")
         }
 
         return outputB.framebufferTexture

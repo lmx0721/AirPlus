@@ -19,7 +19,7 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 object WallClimb : Module("WallClimb", Category.MOVEMENT) {
-    private val mode by choices("Mode", arrayOf("Simple", "CheckerClimb", "Clip", "AAC3.3.12", "AACGlide"), "Simple")
+    private val mode by choices("Mode", arrayOf("Simple", "CheckerClimb", "Clip", "AAC3.3.12", "AACGlide", "Rise"), "Simple")
     private val clipMode by choices("ClipMode", arrayOf("Jump", "Fast"), "Fast") { mode == "Clip" }
     private val checkerClimbMotion by float("CheckerClimbMotion", 0f, 0f..1f) { mode == "CheckerClimb" }
 
@@ -33,6 +33,13 @@ object WallClimb : Module("WallClimb", Category.MOVEMENT) {
             return@handler
 
         if (mode == "Simple") {
+            event.y = 0.2
+            thePlayer.motionY = 0.0
+        }
+
+        // Rise（Ported from Rise GrimWallClimb）：原实现为空壳（PreMotion 空监听器），
+        // 无独立逻辑，此处沿用 Simple 的行为以保证模式可用
+        if (mode == "Rise") {
             event.y = 0.2
             thePlayer.motionY = 0.0
         }

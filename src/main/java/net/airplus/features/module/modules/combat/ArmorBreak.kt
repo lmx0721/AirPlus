@@ -2,8 +2,9 @@
  * AirPlus Hacked Client
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
- *
- * Ported from Moonlight FluxArmorBreaker (Code By cubk).
+ * skid edmoonlight
+ * Flux 模式移植自 Moonlight FluxArmorBreaker (Code By cubk)。
+ * EdMoonlight 模式移植自 Moonlight EdMoonlight NewArmorBreaker（见 combat/armorbreak 包）。
  */
 package net.airplus.features.module.modules.combat
 
@@ -15,6 +16,7 @@ import net.airplus.event.handler
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
 import net.airplus.features.module.modules.player.Gapple
+import net.airplus.features.module.modules.combat.armorbreak.EdMoonlightMode
 import net.airplus.utils.client.PacketUtils.sendPacket
 import net.minecraft.enchantment.Enchantment
 import net.minecraft.enchantment.EnchantmentHelper
@@ -35,22 +37,60 @@ import java.util.LinkedList
 
 object ArmorBreak : Module("ArmorBreak", Category.COMBAT) {
 
-    private val hurtTime by int("HurtTime", 4, 0..10)
-    private val includeAxe by boolean("IncludeAxe", false)
-    private val includeKBWeapon by boolean("IncludeKBWeapon", false)
-    private val earlySwitchTick by int("EarlySwitchTick", 1, 0..9)
-    private val c09HotbarSwitch by boolean("C09SwitchInHotbar", false)
-    private val noGapple by boolean("NoAutoGapple", true)
-    private val noisePayload by boolean("NoisePayload", true)
-    private val noiseBlock by boolean("NoiseBlock", true)
-    private val doubleHit by boolean("DoubleHit", false)
-    private val doubleHitDelay by int("DoubleHitDelay", 1, 1..5)
-    private val doubleHitSwitchAxe by boolean("DoubleHitSwitchAxe", true)
-    private val forceBlock by boolean("ForceBlock", false)
-    private val funMode by boolean("FunMode", false)
+    /** 模式：Flux（FluxArmorBreaker）/ EdMoonlight（NewArmorBreaker）。 */
+    internal val mode by choices("Mode", arrayOf("Flux", "EdMoonlight"), "Flux")
+
+    /** 引用 EdMoonlightMode 触发其对象初始化，确保事件处理器在启动时注册。 */
+    private val edMoonlightBridge = EdMoonlightMode
+
+    // ---- Flux 模式设置 ----
+    private val hurtTime by int("HurtTime", 4, 0..10) { mode == "Flux" }
+    private val includeAxe by boolean("IncludeAxe", false) { mode == "Flux" }
+    private val includeKBWeapon by boolean("IncludeKBWeapon", false) { mode == "Flux" }
+    private val earlySwitchTick by int("EarlySwitchTick", 1, 0..9) { mode == "Flux" }
+    private val c09HotbarSwitch by boolean("C09SwitchInHotbar", false) { mode == "Flux" }
+    private val noGapple by boolean("NoAutoGapple", true) { mode == "Flux" }
+    private val noisePayload by boolean("NoisePayload", true) { mode == "Flux" }
+    private val noiseBlock by boolean("NoiseBlock", true) { mode == "Flux" }
+    private val doubleHit by boolean("DoubleHit", false) { mode == "Flux" }
+    private val doubleHitDelay by int("DoubleHitDelay", 1, 1..5) { mode == "Flux" && doubleHit }
+    private val doubleHitSwitchAxe by boolean("DoubleHitSwitchAxe", true) { mode == "Flux" && doubleHit }
+    private val forceBlock by boolean("ForceBlock", false) { mode == "Flux" }
+    private val funMode by boolean("FunMode", false) { mode == "Flux" }
+
+    // ---- EdMoonlight 模式设置（moonlight NewArmorBreaker） ----
+    val abSwitchMode by choices("Switch Mode", arrayOf("Switch", "Spoof"), "Switch") { mode == "EdMoonlight" }
+    val abIncludeAxe by boolean("Include Axe", false) { mode == "EdMoonlight" }
+    val abKeepEqualScore by boolean("Keep Equal Score Weapons", false) { mode == "EdMoonlight" }
+    val abMinSharpness by float("Min Sharpness", 5f, 0f..10f) { mode == "EdMoonlight" && abIncludeAxe }
+    val abOnlyDiamondAxe by boolean("Only Diamond Axe", false) { mode == "EdMoonlight" && abIncludeAxe }
+    val abBlinkSwitchAxe by boolean("Blink Switch Axe", false) { mode == "EdMoonlight" && abIncludeAxe }
+    val abSmartRung by boolean("Smart Rung", true) { mode == "EdMoonlight" }
+    val abBurst by boolean("Burst", false) { mode == "EdMoonlight" }
+    val abTickHit by boolean("Tick Hit", false) { mode == "EdMoonlight" }
+    val abTickPlanner by boolean("Tick Hit Planner", true) { mode == "EdMoonlight" && abTickHit }
+    val abServerHitGap by float("Server Hit Gap", 1f, 1f..3f) { mode == "EdMoonlight" && abTickHit && abTickPlanner }
+    val abEdgeRisk by float("Edge Risk", 15f, 0f..50f) { mode == "EdMoonlight" && abTickHit && abTickPlanner }
+    val abCritForecast by boolean("Crit Forecast", true) { mode == "EdMoonlight" && abTickHit && abTickPlanner }
+    val abAlignCrits by boolean("Align Crits", true) { mode == "EdMoonlight" && abTickHit && abTickPlanner && abCritForecast }
+    val abKnockbackForecast by boolean("Knockback Forecast", true) { mode == "EdMoonlight" && abTickHit && abTickPlanner && abCritForecast }
+    val abClimbNoKb by boolean("No Climb Knockback", true) { mode == "EdMoonlight" && abTickHit }
+    val abBurstInterval by float("Burst Interval", 10f, 10f..13f) { mode == "EdMoonlight" && (abBurst || abTickHit) }
+    val abBurstRefresh by choices("Burst Refresh", arrayOf("Auto", "Position", "Flying", "None"), "Auto") { mode == "EdMoonlight" }
+    val abEarlySwitchTick by int("Early Switch Tick", 1, 0..9) { mode == "EdMoonlight" && (!abIncludeAxe || abSmartRung) }
+    val abNoGapple by boolean("No Auto Gapple", true) { mode == "EdMoonlight" }
+    val abOnlySwordWhenGapple by boolean("Only Sword When Gapple", false) { mode == "EdMoonlight" && abNoGapple }
+    val abForceBlock by boolean("Switch Force Block", false) { mode == "EdMoonlight" }
+    val abPreSwitch by boolean("Pre Switch", false) { mode == "EdMoonlight" }
+    val abMaxLadderSize by float("Max Ladder Size", 0f, 0f..9f) { mode == "EdMoonlight" }
+    val abMaxAxeHoldTicks by float("Max Axe Hold Ticks", 0f, 0f..20f) { mode == "EdMoonlight" }
+    val abTimingMode by choices("Timing Mode", arrayOf("Classic", "Lag Guard", "Auto"), "Auto") { mode == "EdMoonlight" && !abPreSwitch }
+    val abAutoLadderSize by boolean("Auto Ladder Size", true) { mode == "EdMoonlight" && abMaxLadderSize <= 0f }
+    val abDebug by boolean("Debug", false) { mode == "EdMoonlight" }
+    val abTraceLog by boolean("Trace Log", false) { mode == "EdMoonlight" && abDebug }
 
     override val tag: String?
-        get() = "Flux"
+        get() = mode
 
     private var lastSwordDamage = -1.0
     private var switchEnd = false
@@ -74,6 +114,9 @@ object ArmorBreak : Module("ArmorBreak", Category.COMBAT) {
     }
 
     override fun onDisable() {
+        if (mode == "EdMoonlight") {
+            EdMoonlightMode.onModeDisabled()
+        }
         val player = mc.thePlayer
         if (restoreSlot != -1 && player != null) {
             sendPacket(C09PacketHeldItemChange(player.inventory.currentItem), triggerEvent = false)
@@ -249,6 +292,7 @@ object ArmorBreak : Module("ArmorBreak", Category.COMBAT) {
     }
 
     private val onAttack = handler<AttackEvent> { event ->
+        if (mode != "Flux") return@handler
         val target = event.targetEntity as? EntityLivingBase ?: return@handler
         val player = mc.thePlayer ?: return@handler
 
@@ -302,6 +346,7 @@ object ArmorBreak : Module("ArmorBreak", Category.COMBAT) {
     }
 
     private val onMotion = handler<MotionEvent> { event ->
+        if (mode != "Flux") return@handler
         if (event.eventState != EventState.POST) return@handler
         val player = mc.thePlayer ?: return@handler
 

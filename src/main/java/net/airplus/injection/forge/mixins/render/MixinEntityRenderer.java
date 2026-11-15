@@ -14,6 +14,7 @@ import net.airplus.features.module.modules.misc.OverrideRaycast;
 import net.airplus.features.module.modules.player.Reach;
 import net.airplus.features.module.modules.render.*;
 import net.airplus.utils.client.ClientUtils;
+import net.airplus.utils.render.LwjglCompat;
 import net.airplus.utils.rotation.Rotation;
 import net.airplus.utils.rotation.RotationUtils;
 import net.airplus.viaversion.vialoadingbase.ViaLoadingBase;
@@ -341,6 +342,7 @@ public abstract class MixinEntityRenderer {
 
     @Inject(at = @At("TAIL"), method = "updateCameraAndRender")
     private void injectCameraRestorations(float p_updateCameraAndRender_1_, long p_updateCameraAndRender_2_, CallbackInfo ci) {
+        net.airplus.utils.render.GLErrorProbe.drain("I-frame-end");
         FreeLook.INSTANCE.restoreOriginalRotation();
         FreeCam.INSTANCE.restoreOriginalPosition();
     }
@@ -366,7 +368,7 @@ public abstract class MixinEntityRenderer {
         }
         airplus$lastHandStateLog = System.currentTimeMillis();
         airplus$dumpBuf.clear();
-        GL11.glGetFloat(GL11.GL_CURRENT_COLOR, airplus$dumpBuf);
+        GL11.glGetFloat(LwjglCompat.GL_CURRENT_COLOR, airplus$dumpBuf);
         LogManager.getLogger("AirPlus").warn(
                 "[HandStateDump] blend={} src=0x{} dst=0x{} program={} color=({},{},{},{}) activeTex=0x{} texBind={} tex2D={} colMat={}/{} lighting={} alphaTest={} fog={}",
                 GL11.glIsEnabled(GL11.GL_BLEND),

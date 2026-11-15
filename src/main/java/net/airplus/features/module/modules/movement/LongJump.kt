@@ -6,7 +6,9 @@
 package net.airplus.features.module.modules.movement
 
 import net.airplus.event.JumpEvent
+import net.airplus.event.MotionEvent
 import net.airplus.event.MoveEvent
+import net.airplus.event.PacketEvent
 import net.airplus.event.UpdateEvent
 import net.airplus.event.handler
 import net.airplus.features.module.Category
@@ -20,6 +22,7 @@ import net.airplus.features.module.modules.movement.longjumpmodes.other.Hycraft
 import net.airplus.features.module.modules.movement.longjumpmodes.other.Redesky
 import net.airplus.features.module.modules.movement.longjumpmodes.other.VerusDamage
 import net.airplus.features.module.modules.movement.longjumpmodes.other.VerusDamage.damaged
+import net.airplus.features.module.modules.movement.longjumpmodes.rise.Rise as RiseLongJump
 import net.airplus.utils.extensions.isMoving
 import net.airplus.utils.extensions.tryJump
 
@@ -33,7 +36,10 @@ object LongJump : Module("LongJump", Category.MOVEMENT) {
         AACv1, AACv2, AACv3,
 
         // Other
-        Redesky, Hycraft, Buzz, VerusDamage
+        Redesky, Hycraft, Buzz, VerusDamage,
+
+        // Rise
+        RiseLongJump
     )
 
     private val modes = longJumpModes.map { it.modeName }.toTypedArray()
@@ -77,6 +83,16 @@ object LongJump : Module("LongJump", Category.MOVEMENT) {
 
     val onMove = handler<MoveEvent> { event ->
         modeModule.onMove(event)
+    }
+
+    val onMotion = handler<MotionEvent> { event ->
+        modeModule.onMotion(event)
+    }
+
+    val onPacket = handler<PacketEvent> { event ->
+        mc.thePlayer ?: return@handler
+
+        modeModule.onPacket(event)
     }
 
     override fun onEnable() {

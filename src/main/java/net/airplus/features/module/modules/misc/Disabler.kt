@@ -11,6 +11,7 @@ import net.airplus.features.module.Category
 import net.airplus.features.module.Module
 import net.airplus.ui.client.hud.element.elements.Notification
 import net.airplus.utils.client.PacketUtils.sendPacket
+import net.airplus.utils.client.PacketUtils.handlePackets
 import net.airplus.utils.client.chat
 import net.airplus.utils.extensions.airTicks
 import net.airplus.utils.extensions.isInLiquid
@@ -58,6 +59,10 @@ object Disabler : Module("Disabler", Category.MISC) {
     val startSprint by boolean("StartSprint", true)
     private val grimPlace by boolean("GrimPlace", false)
 
+    // Rise（Ported from Rise GrimInventoryMoveDisabler / GrimSpectateDisabler）
+    val grimInventoryMove by boolean("Rise-GrimInventoryMove", false)
+    val grimSpectate by boolean("Rise-GrimSpectate", false)
+
     private val vulcanScaffold by boolean("VulcanScaffold", false)
     private val vulcanPacketTick by int("VulcanScaffoldPacketTick", 15, 1..20) { vulcanScaffold }
 
@@ -68,6 +73,15 @@ object Disabler : Module("Disabler", Category.MISC) {
     private val intaveFly by boolean("intaveFly", false)
     private var shouldDelay = false
     private val packets = LinkedBlockingQueue<Packet<INetHandlerPlayClient>>()
+
+    // Rise GrimInventoryMoveDisabler 状态：疾跑状态机去重 + 点击包重发防重入
+    private var imSprinting = false
+    private var imSprintStateKnown = false
+    private var imResending = false
+
+    // Rise GrimSpectateDisabler 状态
+    private val spectateHeldPackets = LinkedBlockingQueue<Packet<*>>()
+    private var spectateFlagged = false
 
     private val noRotationDisabler by boolean("NoRotationDisabler", false)
     private val modifyMode by choices(
@@ -141,6 +155,80 @@ object Disabler : Module("Disabler", Category.MISC) {
     val onPacket = handler<PacketEvent> { event ->
         val player = mc.thePlayer ?: return@handler
         val packet = event.packet
+
+        // Rise GrimInventoryMoveDisabler：疾跑状态包去重 + 点击背包前停疾跑、点击后恢复
+        if (grimInventoryMove && event.eventType == EventState.SEND) {
+            if (packet is C0BPacketEntityAction) {
+                when (packet.action) {
+                    C0BPacketEntityAction.Action.START_SPRINTING -> {
+                        if (imSprintStateKnown && imSprinting) {
+                            event.cancelEvent()
+                            return@handler
+                        }
+
+                        imSprinting = true
+                        imSprintStateKnown = true
+                    }
+
+                    C0BPacketEntityAction.Action.STOP_SPRINTING -> {
+                        if (imSprintStateKnown && !imSprinting) {
+                            event.cancelEvent()
+                            return@handler
+                        }
+
+                        imSprinting = false
+                        imSprintStateKnown = true
+                    }
+
+                    else -> {}
+                }
+            } else if (!imResending && (packet is C0EPacketClickWindow || packet is C0DPacketCloseWindow)) {
+                // 未在疾跑则不处理点击包
+                if (!imSprintStateKnown || !imSprinting)
+                    return@handler
+
+                event.cancelEvent()
+
+                if (imSprinting) {
+                    sendPacket(C0BPacketEntityAction(player, C0BPacketEntityAction.Action.STOP_SPRINTING), false)
+                    imSprinting = false
+                    imSprintStateKnown = true
+                }
+
+                imResending = true
+                sendPacket(packet, true)
+                imResending = false
+
+                if (player.isSprinting && !imSprinting) {
+                    sendPacket(C0BPacketEntityAction(player, C0BPacketEntityAction.Action.START_SPRINTING), false)
+                    imSprinting = true
+                    imSprintStateKnown = true
+                }
+            }
+        }
+
+        // Rise GrimSpectateDisabler：飞行中首个 S08 标记 flagged，之后扣包并代发 C0F
+        if (grimSpectate && event.eventType == EventState.RECEIVE) {
+            if (player.ticksExisted < 20) {
+                spectateHeldPackets.clear()
+            } else {
+                if (packet is S08PacketPlayerPosLook) {
+                    if (player.capabilities.isFlying && !spectateFlagged) {
+                        spectateFlagged = true
+                    } else if (spectateFlagged) {
+                        spectateHeldPackets.add(packet)
+                        event.cancelEvent()
+                        chat("Grim Spectate: flagged, re-enable to release.")
+                    }
+                }
+
+                if (spectateFlagged && packet is S32PacketConfirmTransaction) {
+                    spectateHeldPackets.add(packet)
+                    event.cancelEvent()
+                    sendPacket(C0FPacketConfirmTransaction(0, 0.toShort(), true), false)
+                }
+            }
+        }
 
         // OldGrim (原 Disabler2)
         if (oldGrim && event.eventType == EventState.SEND) {
@@ -700,6 +788,23 @@ object Disabler : Module("Disabler", Category.MISC) {
             betaVerusPacketBuffer.clear()
             betaVerusLagTimer.reset()
         }
+    }
+
+    override fun onDisable() {
+        // Rise GrimSpectateDisabler：关闭时回放扣包并复位
+        if (spectateHeldPackets.isNotEmpty()) {
+            while (!spectateHeldPackets.isEmpty()) {
+                val held = spectateHeldPackets.poll() ?: break
+                handlePackets(held)
+            }
+        }
+
+        spectateFlagged = false
+
+        // Rise GrimInventoryMoveDisabler：复位疾跑状态机
+        imSprinting = false
+        imSprintStateKnown = false
+        imResending = false
     }
 
     private fun debugMessage(msg: String) {

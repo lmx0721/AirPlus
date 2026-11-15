@@ -1,10 +1,18 @@
+/*
+ * AirPlus Hacked Client
+ * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
+ * https://github.com/lmx0721/AirPlus
+ * skid edmoonlight，gold bounce,liquid bounce+
+ */
 package net.airplus.ui.client.hud.element.elements
 
 import net.airplus.config.*
+import net.airplus.event.AttackEvent
 import net.airplus.event.Listenable
 import net.airplus.event.Render3DEvent
 import net.airplus.event.handler
 import net.airplus.features.module.modules.combat.KillAura
+import net.airplus.features.module.modules.misc.AntiBot
 import net.airplus.features.module.modules.render.getMixedColor
 import net.airplus.utils.client.ClientThemesUtils
 import net.airplus.ui.client.hud.designer.GuiHudDesigner
@@ -14,12 +22,14 @@ import net.airplus.ui.client.hud.element.ElementInfo
 import net.airplus.ui.client.hud.element.elements.targets2.TargetStyle
 import net.airplus.ui.client.hud.element.elements.targets2.impl.*
 import net.airplus.utils.render.*
+import net.airplus.utils.render.animation.AnimationUtil
 import net.minecraft.client.gui.GuiChat
 import net.minecraft.client.gui.ScaledResolution
 import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.entity.player.EntityPlayer
 import org.lwjgl.opengl.GL11
 import java.awt.Color
+import kotlin.math.exp
 
 @ElementInfo(name = "Target2", retrieveDamage = true)
 class Target2 : Element("Target2"), Listenable {
@@ -27,6 +37,12 @@ class Target2 : Element("Target2"), Listenable {
     private val styleList = mutableListOf<TargetStyle>()
 
     private val styleValue = ListValue("Style", arrayOf("Chill"), "Chill")
+
+    // 多目标模式（全局设置，对所有样式生效）：维护目标动画表，网格/跟随两种布局
+    val multiTargetValue by boolean("MultiTarget", true)
+
+    // 仅 KillAura 目标：关闭时普通攻击的目标（最近 3 秒内被攻击过且仍存活）也纳入显示
+    val onlyKillAuraValue by boolean("OnlyKillAura", true)
 
     val blurValue by boolean("Blur", false)
     // 模糊类型/强度由 Client 模块的全局 Blur 设置统一控制（HudBlur）
@@ -41,6 +57,9 @@ class Target2 : Element("Target2"), Listenable {
 
     val noAnimValue by boolean("No-Animation", false)
     val globalAnimSpeed by float("Global-AnimSpeed", 3F, 1F..6.30F) { !noAnimValue }
+
+    // 多目标卡片出入场动画时长（ms），对齐 moonlight Anim Speed 语义
+    val multiAnimSpeed by float("Multi-AnimSpeed", 300F, 50F..800F) { multiTargetValue }
 
     val showWithChatOpen by boolean("Show-ChatOpen", true)
 
@@ -79,7 +98,7 @@ class Target2 : Element("Target2"), Listenable {
 
     private var velAlpha = 0f
     private var velScale = 0f
-    
+
     private var lastHasTarget = false
 
     val counter1 = intArrayOf(50)
@@ -87,6 +106,54 @@ class Target2 : Element("Target2"), Listenable {
 
     private var mainTarget: EntityPlayer? = null
     private var renderTarget: EntityPlayer? = null
+
+    /** 攻击记录：目标 → 最近一次攻击时间戳（OnlyKillAura 关闭时纳入目标集，保留 3 秒） */
+    private val attackHistory = LinkedHashMap<EntityPlayer, Long>()
+
+    private val attackEventHandler = handler<AttackEvent> { event ->
+        if (onlyKillAuraValue) return@handler
+        val entity = event.targetEntity
+        if (entity is EntityPlayer && entity !== mc.thePlayer && !AntiBot.isBot(entity)) {
+            attackHistory[entity] = System.currentTimeMillis()
+        }
+    }
+
+    /** 最近 3 秒内被攻击过且仍存活的最新攻击目标（单目标模式 OnlyKillAura 关闭时使用） */
+    private fun latestAttackTarget(): EntityPlayer? {
+        val now = System.currentTimeMillis()
+        attackHistory.entries.removeAll { now - it.value > ATTACK_KEEP_MS }
+        return attackHistory.entries
+            .asSequence()
+            .filter { (ent, time) -> now - time <= ATTACK_KEEP_MS && !ent.isDead && ent.isEntityAlive }
+            .maxByOrNull { it.value }?.key
+    }
+
+    // ===== 多目标（MultiTarget）共用状态 =====
+    // 目标 → 卡片动画状态（淡入/淡出进度 + 绘制位置），AnimationUtil.base 按帧推进，时长取 multiAnimSpeed
+    private class MultiCard {
+        var progress = 0F
+        // 绘制位置：网格模式下为相对组件原点的槽位坐标；跟随模式下为屏幕投影锚点坐标
+        var posX = 0F
+        var posY = 0F
+        var posInitialized = false
+        // FollowTarget：Render3D 阶段采样的该目标屏幕投影
+        var sampleX = 0F
+        var sampleY = 0F
+        var sampleValid = false
+    }
+
+    /** 一张卡片的绘制布局：局部平移与卡片局部原点的屏幕绝对坐标 */
+    private class MultiLayout(
+        val localX: Float,
+        val localY: Float,
+        val absX: Float,
+        val absY: Float,
+        val border: Border
+    )
+
+    private val multiAnims = LinkedHashMap<EntityPlayer, MultiCard>()
+    private var multiLastFrame = 0L
+    private var lastFollowMode = false
 
     // FollowTarget：Render3D 阶段用世界矩阵投影出的屏幕位置（projectOn2D 依赖当前 GL 矩阵，
     // 必须在世界渲染阶段采集，2D 阶段绘制时直接使用）
@@ -113,6 +180,19 @@ class Target2 : Element("Target2"), Listenable {
         if (!followTargetValue) {
             anchorInitialized = false
             anchorTarget = null
+            return@handler
+        }
+
+        if (multiTargetValue) {
+            // 多目标跟随：为动画表中的每个目标独立采样一份屏幕投影
+            for ((target, card) in multiAnims) {
+                if (target === mc.thePlayer) continue
+                projectFollow(target)?.let {
+                    card.sampleX = it.first
+                    card.sampleY = it.second
+                    card.sampleValid = true
+                } ?: run { card.sampleValid = false }
+            }
             return@handler
         }
 
@@ -171,6 +251,8 @@ class Target2 : Element("Target2"), Listenable {
         existingValues.forEach { addValue(it) }
 
         val styles = arrayOf(
+            Arc(this),
+            Armor(this),
             Astolfo(this),
             Astolfo2(this),
             AsuidBounce(this),
@@ -178,23 +260,29 @@ class Target2 : Element("Target2"), Listenable {
             Chill(this),
             Exhibition(this),
             Flux(this),
-            HaloPulse(this),
+            Flux2(this),
             Hanabi(this),
+            HaloPulse(this),
             LiquidBounce(this),
             Lnk(this),
             Moon(this),
             Moon4(this),
             Moon5(this),
+            Myau(this),
+            Naven2(this),
             Novoline(this),
             Novoline2(this),
             Novoline3(this),
             Onyx(this),
+            Opai(this),
             Raven(this),
             RavenB4(this),
             Remix(this),
             Rice(this),
             RiseModern(this),
             Slowly(this),
+            Southside(this),
+            Styles(this),
             Tifality(this)
         )
         styles.forEach { styleList.add(it) }
@@ -205,21 +293,30 @@ class Target2 : Element("Target2"), Listenable {
 
     override fun drawElement(): Border? {
         val isEditing = mc.currentScreen is GuiHudDesigner
-        
-        val kaTarget = KillAura.target
 
         if (isEditing) {
             mainTarget = mc.thePlayer
-        } else if (kaTarget != null && kaTarget is EntityPlayer) {
-            mainTarget = kaTarget as EntityPlayer
-        } else if (mc.currentScreen is GuiChat && showWithChatOpen) {
-            mainTarget = mc.thePlayer
-        } else {
+        } else if (multiTargetValue) {
+            // 多目标路径不使用单目标状态
             mainTarget = null
+        } else {
+            val kaTarget = KillAura.target
+            val attackT = if (!onlyKillAuraValue) latestAttackTarget() else null
+            mainTarget = when {
+                kaTarget != null && kaTarget is EntityPlayer -> kaTarget as EntityPlayer
+                attackT != null -> attackT
+                mc.currentScreen is GuiChat && showWithChatOpen -> mc.thePlayer
+                else -> null
+            }
         }
 
         val currentStyleName = styleValue.get()
         val mainStyle = styleList.find { it.name.equals(currentStyleName, ignoreCase = true) } ?: return Border(0F, 0F, 120F, 48F)
+
+        // 多目标模式（全局设置，对所有样式生效）走独立渲染路径
+        if (multiTargetValue) {
+            return drawMultiTarget(mainStyle, isEditing)
+        }
 
         val hasTarget = mainTarget != null
 
@@ -277,7 +374,7 @@ class Target2 : Element("Target2"), Listenable {
 
                     val dt = ((now - anchorLastFrame).coerceIn(1L, 100L) / 1000.0).toFloat()
                     anchorLastFrame = now
-                    val move = 1F - kotlin.math.exp(-dt * 14F)
+                    val move = 1F - exp(-dt * 14F)
                     anchorX += (sampleX - anchorX) * move
                     anchorY += (sampleY - anchorY) * move
                 }
@@ -313,7 +410,7 @@ class Target2 : Element("Target2"), Listenable {
 
         val targetScale = if (hasTarget) 1F else 0F
         val targetAlpha = if (hasTarget) 1F else 0F
-        
+
         if (hasTarget && !lastHasTarget) {
             animScale = 0F
             animAlpha = 0F
@@ -427,7 +524,7 @@ class Target2 : Element("Target2"), Listenable {
             }
 
             GlStateManager.pushMatrix()
-            
+
             when (animationType) {
                 "Scale", "Bounce", "Zoom" -> {
                     GlStateManager.translate(anchorCenterX, anchorCenterY, 0f)
@@ -437,7 +534,7 @@ class Target2 : Element("Target2"), Listenable {
             }
 
             mainStyle.drawTarget(convertTarget)
-            
+
             GlStateManager.popMatrix()
         } catch (e: Exception) {
             e.printStackTrace()
@@ -449,12 +546,316 @@ class Target2 : Element("Target2"), Listenable {
         return returnBorder
     }
 
+    /**
+     * 多目标渲染路径（MultiTarget 全局设置，对所有样式生效）：
+     * 维护「目标 → 动画状态」表，目标出现淡入、消失/死亡淡出，淡出完成后移除。
+     * 布局：
+     *  - FollowTarget 关闭：网格排列，一行最多 2 张卡片，从左到右、从上到下，位于组件自身位置；
+     *    淡出中的卡片保留槽位，卡片被移除后其后的卡片槽位前移、绘制位置缓动补齐。
+     *  - FollowTarget 开启：每张卡片跟随各自目标的屏幕投影，保持相对锚点居中；
+     *    投影失败（视野外/背面）时不消失，绘制位置缓动回落到组件自身位置继续渲染。
+     */
+    private fun drawMultiTarget(mainStyle: TargetStyle, isEditing: Boolean): Border {
+        // ===== 目标收集 =====
+        val alive = HashSet<EntityPlayer>()
+        if (isEditing) {
+            mc.thePlayer?.let { alive.add(it) }
+        } else {
+            if (KillAura.handleEvents()) {
+                for (t in KillAura.targets) {
+                    if (t is EntityPlayer && t !== mc.thePlayer && !t.isDead && t.isEntityAlive && !AntiBot.isBot(t)) alive.add(t)
+                }
+            }
+            if (!onlyKillAuraValue) {
+                // 最近 3 秒内被普通攻击过且仍存活的玩家也纳入目标集
+                val now = System.currentTimeMillis()
+                attackHistory.entries.removeAll { now - it.value > ATTACK_KEEP_MS }
+                for ((ent, time) in attackHistory) {
+                    if (ent !== mc.thePlayer && now - time <= ATTACK_KEEP_MS && !ent.isDead && ent.isEntityAlive && !AntiBot.isBot(ent)) alive.add(ent)
+                }
+            }
+        }
+
+        val now = System.currentTimeMillis()
+        val dtMs = if (multiLastFrame == 0L) 50L else (now - multiLastFrame).coerceIn(1L, 100L)
+        multiLastFrame = now
+        val dtSec = dtMs / 1000F
+        val duration = mainStyle.animDurationMs().coerceAtLeast(50F)
+        val speed = (dtMs / duration * 3.0).coerceIn(0.01, 1.0)
+        val move = 1F - exp(-dtSec * 14F)
+
+        // 推进动画：可攻击目标淡入；死亡/失效目标淡出，淡出完成后移除（对齐 moonlight TargetHUD.onTick）
+        val animIter = multiAnims.entries.iterator()
+        while (animIter.hasNext()) {
+            val entry = animIter.next()
+            val forwards = entry.key in alive
+            val card = entry.value
+            card.progress = AnimationUtil.base(card.progress.toDouble(), if (forwards) 1.0 else 0.0, speed).toFloat()
+            if (!forwards && card.progress <= 0.01F) animIter.remove()
+        }
+        alive.forEach { multiAnims.putIfAbsent(it, MultiCard()) }
+
+        // 网格/跟随两套坐标系不同，模式切换时重置绘制位置避免互相缓动
+        if (lastFollowMode != followTargetValue) {
+            multiAnims.values.forEach { it.posInitialized = false }
+            lastFollowMode = followTargetValue
+        }
+
+        // 样式内部状态清理（对齐 moonlight 各 TargetXxx.cleanup）
+        mainStyle.cleanup(alive)
+
+        // 收集本帧要绘制的卡片（最多 10 张）
+        val cards = mutableListOf<Pair<EntityPlayer, MultiCard>>()
+        for (entry in multiAnims) {
+            if (entry.value.progress <= 0.01F) continue
+            cards.add(entry.key to entry.value)
+            if (cards.size >= 10) break
+        }
+
+        if (cards.isEmpty()) {
+            animProgress = 1F
+            return Border(0F, 0F, 120F, 48F)
+        }
+
+        val follow = followTargetValue && !isEditing
+        val gap = 4F
+        val layouts = ArrayList<MultiLayout>(cards.size)
+        var gridRight = 0F
+        var gridBottom = 0F
+
+        if (!follow) {
+            // 网格排列：一行最多 2 张卡片，从左到右、从上到下
+            var slotX = 0F
+            var slotY = 0F
+            var rowMaxH = 0F
+            var countInRow = 0
+            for ((target, card) in cards) {
+                val border = mainStyle.getBorder(target) ?: Border(0F, 0F, 120F, 48F)
+                val w = border.x2 - border.x
+                val h = border.y2 - border.y
+
+                if (!card.posInitialized) {
+                    card.posX = slotX
+                    card.posY = slotY
+                    card.posInitialized = true
+                } else {
+                    // 绘制位置指数平滑向槽位补齐
+                    card.posX += (slotX - card.posX) * move
+                    card.posY += (slotY - card.posY) * move
+                }
+
+                // 卡片内容按各样式 border 原点绘制（如 Astolfo 内容位于 (-23,41)..(148,107)），
+                // 平移量补偿 border.x/y，使内容 AABB 恰好落在槽位 [slotX, slotX + w] 内
+                layouts.add(
+                    MultiLayout(
+                        card.posX - border.x, card.posY - border.y,
+                        (renderX + card.posX - border.x).toFloat(), (renderY + card.posY - border.y).toFloat(),
+                        border
+                    )
+                )
+                gridRight = maxOf(gridRight, slotX + w)
+                gridBottom = maxOf(gridBottom, slotY + h)
+
+                rowMaxH = maxOf(rowMaxH, h)
+                countInRow++
+                slotX += w + gap
+                if (countInRow >= 2) {
+                    slotX = 0F
+                    slotY += rowMaxH + gap
+                    countInRow = 0
+                    rowMaxH = 0F
+                }
+            }
+        } else {
+            // 屏幕外/投影失败卡片的备用槽位游标：一行最多 2 张（与网格模式同布局），
+            // 多张卡片同时投影失败时各归各槽缓动回落，不再全部叠在组件原点互相遮挡；
+            // 某张卡片恢复可见后，其后的回落卡片槽位前移、绘制位置缓动补齐
+            var fbSlotX = renderX.toFloat()
+            var fbSlotY = renderY.toFloat()
+            var fbRowMaxH = 0F
+            var fbCountInRow = 0
+
+            for ((target, card) in cards) {
+                val border = mainStyle.getBorder(target) ?: Border(0F, 0F, 120F, 48F)
+                val w = border.x2 - border.x
+                val h = border.y2 - border.y
+                val centerX = border.x + w / 2F
+                val centerY = border.y + h / 2F
+
+                if (card.sampleValid && target !== mc.thePlayer) {
+                    // 投影成功：卡片锚点缓动贴向目标投影
+                    if (!card.posInitialized) {
+                        card.posX = card.sampleX
+                        card.posY = card.sampleY
+                        card.posInitialized = true
+                    } else {
+                        card.posX += (card.sampleX - card.posX) * move
+                        card.posY += (card.sampleY - card.posY) * move
+                    }
+                } else {
+                    // 投影失败/编辑器/自己：缓动回落到组件位置的备用槽位继续渲染
+                    // （锚点 = 槽位左上角 + 面板中心，使卡片内容 AABB 恰好落在槽位内）
+                    val fallbackX = fbSlotX + centerX
+                    val fallbackY = fbSlotY + centerY
+                    if (!card.posInitialized) {
+                        card.posX = fallbackX
+                        card.posY = fallbackY
+                        card.posInitialized = true
+                    } else {
+                        card.posX += (fallbackX - card.posX) * move
+                        card.posY += (fallbackY - card.posY) * move
+                    }
+
+                    fbRowMaxH = maxOf(fbRowMaxH, h)
+                    fbCountInRow++
+                    fbSlotX += w + gap
+                    if (fbCountInRow >= 2) {
+                        fbSlotX = renderX.toFloat()
+                        fbSlotY += fbRowMaxH + gap
+                        fbCountInRow = 0
+                        fbRowMaxH = 0F
+                    }
+                }
+
+                // 卡片局部原点屏幕坐标 = 锚点 - 面板中心（每张卡相对自身锚点居中）
+                val absX = card.posX - centerX
+                val absY = card.posY - centerY
+                layouts.add(MultiLayout(absX - renderX.toFloat(), absY - renderY.toFloat(), absX, absY, border))
+            }
+        }
+
+        GL11.glPushMatrix()
+        try {
+            for ((index, pair) in cards.withIndex()) {
+                val (target, card) = pair
+                val layout = layouts[index]
+                val border = layout.border
+
+                // 出入场动画系数（AnimationType）：Scale/Zoom 按进度缩放，Bounce 带回弹过冲，None 不缩放
+                val animK = when (animationType) {
+                    "None" -> 1F
+                    "Bounce" -> easeOutBack(card.progress.coerceIn(0F, 1F))
+                    else -> card.progress
+                }
+                val bcx = border.x + (border.x2 - border.x) / 2F
+                val bcy = border.y + (border.y2 - border.y) / 2F
+
+                // 每张卡片按自身进度重算主题色/背景色与淡出透明度（getColor 依赖 animProgress）
+                val preBarColor = when (colorModeValue) {
+                    "Rainbow" -> Color(ColorUtils.getRainbowOpaque(waveSecondValue, saturationValue, brightnessValue, 0))
+                    "Custom" -> Color(redValue, greenValue, blueValue)
+                    "Sky" -> ColorUtils.skyRainbow(0, saturationValue, brightnessValue, 1f)
+                    "Fade" -> ColorUtils.fade(Color(redValue, greenValue, blueValue), 0, 100)
+                    "Health" -> BlendUtils.getHealthColor(target.health, target.maxHealth)
+                    "Theme" -> ClientThemesUtils.getColor()
+                    "Mixer" -> getMixedColor(0, waveSecondValue)
+                    else -> ColorUtils.LiquidSlowly(System.nanoTime(), 0, saturationValue, brightnessValue)
+                }
+                animProgress = 1F - card.progress
+                barColor = ColorUtils.reAlpha(preBarColor, preBarColor.alpha / 255F * card.progress)
+                bgColor = Color(bgColorValue.red, bgColorValue.green, bgColorValue.blue, (bgColorValue.alpha * card.progress).toInt())
+
+                GL11.glPushMatrix()
+                GL11.glTranslatef(layout.localX, layout.localY, 0F)
+
+                if (shadowValue && mainStyle.shaderSupport) {
+                    // 先回退卡片平移再保留 HUD 的 scale（对齐单目标路径）：
+                    // 形状绘制矩阵 = S(scale) * T(render + local)，与卡片内容完全一致
+                    GL11.glPushMatrix()
+                    GL11.glTranslated(-renderX - layout.localX, -renderY - layout.localY, 0.0)
+                    ShadowUtils.shadow(shadowStrength, {
+                        GL11.glPushMatrix()
+                        GL11.glTranslated(renderX + layout.localX, renderY + layout.localY, 0.0)
+                        mainStyle.handleShadow(target)
+                        GL11.glPopMatrix()
+                    }, {
+                        GL11.glPushMatrix()
+                        GL11.glTranslated(renderX + layout.localX, renderY + layout.localY, 0.0)
+                        mainStyle.handleShadowCut(target)
+                        GL11.glPopMatrix()
+                    })
+                    GL11.glPopMatrix()
+                }
+
+                if (blurValue && mainStyle.shaderSupport) {
+                    // 动画后的卡片局部 AABB（绕内容中心缩放，与下方 drawTarget 的动画变换一致）
+                    val lx1 = bcx + (border.x - bcx) * animK
+                    val ly1 = bcy + (border.y - bcy) * animK
+                    val lx2 = bcx + (border.x2 - bcx) * animK
+                    val ly2 = bcy + (border.y2 - bcy) * animK
+
+                    // 完全重置矩阵为单位阵（HUD scale + 平移 + 卡片平移全部抵消）后按
+                    // 屏幕绝对坐标绘制遮罩。此前残留的卡片平移会把遮罩推到错误位置，
+                    // 而 HudBlur 强制打开 colorMask 时白色遮罩形状会直接画进画面。
+                    GL11.glPushMatrix()
+                    GL11.glTranslated(-renderX - layout.localX, -renderY - layout.localY, 0.0)
+                    GL11.glScalef(1F / scale, 1F / scale, 1F)
+                    HudBlur.blur(
+                        (scale * (layout.absX + lx1)).toFloat(), (scale * (layout.absY + ly1)).toFloat(),
+                        (scale * (layout.absX + lx2)).toFloat(), (scale * (layout.absY + ly2)).toFloat(),
+                        strengthScale = card.progress
+                    ) {
+                        // 遮罩与 drawTarget 的动画变换一致：绕内容中心按 animK 缩放
+                        GL11.glTranslatef((scale * (layout.absX + bcx)).toFloat(), (scale * (layout.absY + bcy)).toFloat(), 0F)
+                        GL11.glScalef(scale * animK, scale * animK, 1F)
+                        GL11.glTranslatef(-bcx, -bcy, 0F)
+                        mainStyle.handleBlur(target)
+                    }
+                    GL11.glPopMatrix()
+                }
+
+                // 出入场动画（AnimationType）：新卡片出现/消失时绕内容中心缩放
+                if (animK < 0.999F) {
+                    GL11.glTranslatef(bcx, bcy, 0F)
+                    GL11.glScalef(animK, animK, 1F)
+                    GL11.glTranslatef(-bcx, -bcy, 0F)
+                }
+
+                mainStyle.drawTarget(target)
+                GL11.glPopMatrix()
+
+                GlStateManager.resetColor()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        } finally {
+            GlStateManager.resetColor()
+            GL11.glPopMatrix()
+        }
+
+        return if (follow) {
+            // 跟随模式：卡片画在各目标投影处，组件占位用固定 Border
+            Border(0F, 0F, 120F, 48F)
+        } else {
+            // 网格模式：返回整个网格的 AABB
+            Border(0F, 0F, gridRight.coerceAtLeast(1F), gridBottom.coerceAtLeast(1F))
+        }
+    }
+
     override fun handleDamage(ent: EntityPlayer) {
+        val currentStyleName = styleValue.get()
+        val mainStyle = styleList.find { it.name.equals(currentStyleName, ignoreCase = true) }
+        if (multiTargetValue) {
+            // 多目标模式：受击目标在动画表中即转发（伤害反馈按目标各自维护）
+            if (multiAnims.containsKey(ent)) mainStyle?.handleDamage(ent)
+            return
+        }
         if (mainTarget != null && ent == mainTarget) {
-            val currentStyleName = styleValue.get()
-            val mainStyle = styleList.find { it.name.equals(currentStyleName, ignoreCase = true) }
             mainStyle?.handleDamage(ent)
         }
+    }
+
+    /** easeOutBack：带过冲回弹的出场曲线（AnimationType = Bounce 时使用） */
+    private fun easeOutBack(t: Float): Float {
+        val c1 = 1.70158F
+        val c3 = c1 + 1F
+        val x = t - 1F
+        return 1F + c3 * x * x * x + c1 * x * x
+    }
+
+    companion object {
+        /** 普通攻击目标的保留窗口（毫秒） */
+        const val ATTACK_KEEP_MS = 3000L
     }
 
     fun getFadeProgress() = animProgress

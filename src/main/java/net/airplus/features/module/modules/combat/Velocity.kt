@@ -22,6 +22,7 @@ import net.airplus.utils.kotlin.RandomUtils.nextInt
 import net.airplus.utils.movement.MovementUtils.isOnGround
 import net.airplus.utils.movement.MovementUtils.speed
 import net.airplus.utils.rotation.RaycastUtils.runWithModifiedRaycastResult
+import net.airplus.utils.rotation.RotationSettings
 import net.airplus.utils.rotation.RotationUtils.currentRotation
 import net.airplus.utils.timing.MSTimer
 import net.minecraft.block.BlockAir
@@ -50,13 +51,13 @@ object Velocity : Module("Velocity", Category.COMBAT) {
     /**
      * OPTIONS
      */
-    private val mode by choices(
+    val mode by choices(
         "Mode", arrayOf(
             "Simple", "AAC", "AACPush", "AACZero", "AACv4",
             "Reverse", "SmoothReverse", "Jump", "Glitch", "Legit",
             "GhostBlock", "Vulcan", "S32Packet", "MatrixReduce",
             "IntaveReduce", "Delay", "GrimC03", "Hypixel", "HypixelAir",
-            "Click", "BlocksMC", "OldGrim"
+            "Click", "BlocksMC", "OldGrim", "Rise"
         ), "Simple"
     )
 
@@ -133,6 +134,49 @@ object Velocity : Module("Velocity", Category.COMBAT) {
     private val clickRange by float("ClickRange", 3f, 1f..6f) { mode == "Click" }
     private val swingMode by choices("SwingMode", arrayOf("Off", "Normal", "Packet"), "Normal") { mode == "Click" }
 
+    // Rise（Ported from Rise GrimVelocity / Grim2Velocity / GrimReduceVelocity / GrimTestVelocity）
+    // riseMode / rise 设置需要被 VelocityRise 读取，故为 public
+    val riseMode by choices("Rise-VelocityMode", arrayOf("Grim", "Grim2", "Reduce", "Test"), "Grim") { mode == "Rise" }
+    val riseOptions = RotationSettings(this) { mode == "Rise" }
+
+    // Grim
+    val riseSmartCombatForHighPing by boolean("Rise-SmartCombatForHighPing", false) { mode == "Rise" && riseMode == "Grim" }
+    val riseRotate by boolean("Rise-Rotate", true) { mode == "Rise" && riseMode == "Grim" }
+
+    // Grim2
+    val riseFullRotationFix by boolean("Rise-FullRotationFix", true) { mode == "Rise" && riseMode == "Grim2" }
+    val riseFakeS08 by boolean("Rise-FakeS08", true) { mode == "Rise" && riseMode == "Grim2" }
+    val riseCancelVelocity by boolean("Rise-CancelVelocity", true) { mode == "Rise" && riseMode == "Grim2" }
+    val riseRotationNoise by float("Rise-RotationNoise", 0.001f, 0f..0.1f) { mode == "Rise" && riseMode == "Grim2" }
+    val riseDebugLog by boolean("Rise-DebugLog", false) { mode == "Rise" && riseMode == "Grim2" }
+
+    // Reduce
+    val riseReduceTicks by int("Rise-ReduceTicks", 14, 1..20) { mode == "Rise" && riseMode == "Reduce" }
+    val riseTeleportDisableTicks by int("Rise-TeleportDisableTicks", 2, 1..7) { mode == "Rise" && riseMode == "Reduce" }
+    val riseRange by int("Rise-Range", 8, 1..100) { mode == "Rise" && riseMode == "Reduce" }
+    val riseDelayPlus by boolean("Rise-DelayPlus", false) { mode == "Rise" && riseMode == "Reduce" }
+    val riseReduceRotate by boolean("Rise-ReduceRotate", false) { mode == "Rise" && riseMode == "Reduce" }
+    val riseStopSprint by boolean("Rise-StopSprint", true) { mode == "Rise" && riseMode == "Reduce" }
+    val riseJumpReset by boolean("Rise-JumpReset", true) { mode == "Rise" && riseMode == "Reduce" }
+    val riseExtraHit by boolean("Rise-ExtraHit", true) { mode == "Rise" && riseMode == "Reduce" }
+    val riseOnSwingDisableOnAura by boolean("Rise-OnSwingDisableOnAura", true) { mode == "Rise" && riseMode == "Reduce" }
+    val riseDelayTillGround by boolean("Rise-DelayTillGround", true) { mode == "Rise" && riseMode == "Reduce" }
+
+    // Test
+    val riseTestType by choices("Rise-TestType", arrayOf("Reduce", "Jump Reset", "Grim Full"), "Reduce") { mode == "Rise" && riseMode == "Test" }
+    val riseMinAttacks by int("Rise-MinAttacks", 2, 1..5) { mode == "Rise" && riseMode == "Test" && riseTestType == "Reduce" }
+    val riseMaxAttacks by int("Rise-MaxAttacks", 3, 1..10) { mode == "Rise" && riseMode == "Test" && riseTestType == "Reduce" }
+    val riseDelayRelease by boolean("Rise-DelayRelease", false) { mode == "Rise" && riseMode == "Test" && riseTestType == "Reduce" }
+    val riseDelaySpeedThreshold by float("Rise-DelaySpeedThreshold", 0.6f, 0.1f..2f) { mode == "Rise" && riseMode == "Test" && riseTestType == "Reduce" && riseDelayRelease }
+    val riseDelayTimeoutMs by int("Rise-DelayTimeoutMs", 5000, 50..10000) { mode == "Rise" && riseMode == "Test" && riseTestType == "Reduce" && riseDelayRelease }
+    val riseDelayLogging by boolean("Rise-DelayLogging", false) { mode == "Rise" && riseMode == "Test" && riseTestType == "Reduce" && riseDelayRelease }
+    val riseJumpResetTick by int("Rise-JumpResetTick", 1, 0..9) { mode == "Rise" && riseMode == "Test" && riseTestType == "Jump Reset" }
+    val riseGrimLevel by float("Rise-GrimLevel", 0.001f, 0.001f..0.1f) { mode == "Rise" && riseMode == "Test" && riseTestType == "Grim Full" }
+    val riseLogging by boolean("Rise-Logging", true) { mode == "Rise" && riseMode == "Test" }
+
+    // 触发 VelocityRise 对象初始化（注册事件监听）
+    private val velocityRiseListener = VelocityRise
+
     /**
      * VALUES
      */
@@ -173,18 +217,25 @@ object Velocity : Module("Velocity", Category.COMBAT) {
     private var lastAttackerCheckTime = 0L
 
     override val tag
-        get() = if (mode == "Simple" || mode == "Legit") {
+        get() = if (mode == "Rise") {
+            riseMode
+        } else if (mode == "Simple" || mode == "Legit") {
             val horizontalPercentage = (horizontal * 100).toInt()
             val verticalPercentage = (vertical * 100).toInt()
 
             "$horizontalPercentage% $verticalPercentage%"
         } else mode
 
+    override fun onEnable() {
+        VelocityRise.onEnabled()
+    }
+
     override fun onDisable() {
         pauseTicks = 0
         mc.thePlayer?.speedInAir = 0.02F
         timerTicks = 0
         reset()
+        VelocityRise.onDisabled()
     }
 
     val onUpdate = handler<UpdateEvent> {

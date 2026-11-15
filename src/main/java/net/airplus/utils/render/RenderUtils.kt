@@ -18,6 +18,7 @@ import net.airplus.utils.io.flipSafely
 import net.airplus.utils.render.animation.AnimationUtil
 import net.minecraft.client.gui.FontRenderer
 import net.minecraft.client.gui.ScaledResolution
+import net.airplus.utils.render.shader.shaders.RoundedRectShader
 import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.client.renderer.GlStateManager.*
 import net.minecraft.client.renderer.Tessellator
@@ -1068,6 +1069,27 @@ object RenderUtils : MinecraftInstance {
         val (newX1, newY1, newX2, newY2) = orderPoints(x1, y1, x2, y2)
 
         drawRoundedRectangle(newX1, newY1, newX2, newY2, red, green, blue, alpha, radius, cornersToRound)
+    }
+
+    /**
+     * 抗锯齿圆角矩形（SDF 着色器逐像素 coverage，圆角边缘无锯齿）。
+     * 着色器不可用或需要非 ALL 圆角时回退到多边形 [drawRoundedRect]。
+     */
+    fun drawRoundedRectAA(
+        x1: Float,
+        y1: Float,
+        x2: Float,
+        y2: Float,
+        color: Int,
+        radius: Float,
+        cornersToRound: RoundedCorners = RoundedCorners.ALL
+    ) {
+        if (cornersToRound != RoundedCorners.ALL || !RoundedRectShader.INSTANCE.isUsable) {
+            drawRoundedRect(x1, y1, x2, y2, color, radius, cornersToRound)
+            return
+        }
+        val (newX1, newY1, newX2, newY2) = orderPoints(x1, y1, x2, y2)
+        RoundedRectShader.draw(newX1, newY1, newX2, newY2, radius, Color(color, true))
     }
 
     fun drawRoundedRect2(

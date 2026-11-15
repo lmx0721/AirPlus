@@ -56,7 +56,7 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
 
     @Inject(method = "canRenderName(Lnet/minecraft/entity/EntityLivingBase;)Z", at = @At("HEAD"), cancellable = true)
     private <T extends EntityLivingBase> void canRenderName(T entity, CallbackInfoReturnable<Boolean> callbackInfoReturnable) {
-        // NameTags 非 Legacy 样式（Xinxin/Opai/Moon）：开启时取消原版玩家名牌，由模块自绘
+        // NameTags 模块开启时取消原版玩家名牌，由模块自绘；模块关闭时恢复原版行为
         if (entity instanceof net.minecraft.entity.player.EntityPlayer && NameTags.INSTANCE.getCancelVanillaName()) {
             callbackInfoReturnable.setReturnValue(false);
             return;

@@ -19,6 +19,7 @@ import net.airplus.utils.block.isReplaceable
 import net.airplus.utils.client.PacketUtils.sendPacket
 import net.airplus.utils.extensions.eyes
 import net.airplus.utils.extensions.onPlayerRightClick
+import net.airplus.utils.extensions.tryJump
 import net.airplus.utils.inventory.InventoryUtils
 import net.airplus.utils.inventory.SilentHotbar
 import net.airplus.utils.inventory.inventorySlot
@@ -31,6 +32,7 @@ import net.airplus.utils.rotation.RotationUtils.getVectorForRotation
 import net.airplus.utils.rotation.RotationUtils.rotationDifference
 import net.airplus.utils.rotation.RotationUtils.setTargetRotation
 import net.airplus.utils.rotation.RotationUtils.toRotation
+import net.minecraft.block.Block
 import net.minecraft.block.BlockBush
 import net.minecraft.init.Blocks
 import net.minecraft.item.ItemBlock
@@ -70,7 +72,10 @@ import java.awt.Color
  *    - 以该点计算的旋转（经 sensitivity 修正）做射线检测，确切命中支撑块
  *      及其对应侧面（保证不隔墙放置、点到的就是能放上去的面）；
  * 4. 择优：在所有可行解中取「与当前视角旋转差」最小的一个 —— 转头量最小，
- *    动作最自然，也降低被反作弊盯上的概率。
+ *    动作最自然，也降低被反作弊盯上的概率；
+ * 5. 顶层方块（方块 1）的支撑面高于站立视平面，无法直接点击 → 自动起跳，
+ *    配合「锚点只在落地时刷新」保证跳跃中形状不漂移；
+ * 6. 挖掘前自动静默切换到热栏内对该方块挖掘速度最快的工具。
  */
 object AutoDick : Module("AutoDick", Category.FUN, gameDetecting = false) {
 
@@ -96,20 +101,27 @@ object AutoDick : Module("AutoDick", Category.FUN, gameDetecting = false) {
     // 蹲在原地不动时不无限重建-重挖，只有形状被外力改变或玩家转向新位置后才开新一轮
     private var doneShape: List<BlockPos>? = null
 
+    // 形状锚点：只在玩家落地时刷新。跳跃中 posY 上升会带动 floor(posY) +1，
+    // 导致整个形状上移一格（选点错误），故空中锁定锚点不动
+    private var groundAnchor: BlockPos? = null
+
     override fun onEnable() {
         reset()
         doneShape = null
+        groundAnchor = null
     }
 
     override fun onDisable() {
         reset()
         doneShape = null
+        groundAnchor = null
         SilentHotbar.resetSlot(this, true)
     }
 
     val onWorld = handler<WorldEvent> {
         reset()
         doneShape = null
+        groundAnchor = null
     }
 
     private fun reset() {
@@ -121,6 +133,15 @@ object AutoDick : Module("AutoDick", Category.FUN, gameDetecting = false) {
     val onUpdate = handler<UpdateEvent> {
         val player = mc.thePlayer ?: return@handler
         val world = mc.theWorld ?: return@handler
+
+        // 锚点只在落地时刷新，跳跃中形状保持稳定
+        if (player.onGround) {
+            groundAnchor = BlockPos(
+                MathHelper.floor_double(player.posX),
+                MathHelper.floor_double(player.posY),
+                MathHelper.floor_double(player.posZ)
+            )
+        }
 
         val order = buildOrder(player)
 
@@ -145,7 +166,14 @@ object AutoDick : Module("AutoDick", Category.FUN, gameDetecting = false) {
             return@handler
         }
 
-        val placeRotation = findPlaceRotation(player, world, nextMissing) ?: return@handler
+        val placeRotation = findPlaceRotation(player, world, nextMissing)
+
+        if (placeRotation == null) {
+            // 顶层方块的唯一支撑面是方块 2 的顶面（高于站立视平面），视线从下方
+            // 进入支撑块会被判到错误的面 → 自动起跳，让视平面越过支撑面再放置
+            if (nextMissing == order.last() && player.onGround) player.tryJump()
+            return@handler
+        }
 
         if (options.rotationsActive) {
             setTargetRotation(placeRotation.rotation, options, if (options.keepRotation) options.resetTicks else 1)
@@ -166,7 +194,8 @@ object AutoDick : Module("AutoDick", Category.FUN, gameDetecting = false) {
      * BuildDistance：距离玩家 1~6 格处建造（受实际放置距离上限约束）。
      */
     private fun buildOrder(player: net.minecraft.entity.player.EntityPlayer): List<BlockPos> {
-        val base = BlockPos(
+        // 锚点：优先用落地时锁定的位置（跳跃中形状不漂移），否则退回实时计算
+        val base = groundAnchor ?: BlockPos(
             MathHelper.floor_double(player.posX),
             MathHelper.floor_double(player.posY),
             MathHelper.floor_double(player.posZ)
@@ -351,6 +380,7 @@ object AutoDick : Module("AutoDick", Category.FUN, gameDetecting = false) {
         if (breaking != pos) {
             reset()
             breaking = pos
+            switchToBestTool(block)
         }
 
         // 转向要挖的方块
@@ -390,6 +420,27 @@ object AutoDick : Module("AutoDick", Category.FUN, gameDetecting = false) {
             // 方块 4 已挖掉 → 记录本周期完成
             doneShape = order
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 最佳工具切换（挖掘开始前：热栏内对该方块挖掘速度最快的槽位）
+    // ------------------------------------------------------------------
+    /**
+     * 在热栏内寻找对 [block] 挖掘速度最快的槽位并静默切换。
+     * 当前有效槽位（含静默切换状态）已是最佳时不切换。
+     */
+    private fun switchToBestTool(block: Block) {
+        val player = mc.thePlayer ?: return
+
+        var fastest = 1F
+        val slot = (0..8).maxByOrNull {
+            val stack = player.inventory.getStackInSlot(it) ?: return@maxByOrNull 1F
+            stack.getStrVsBlock(block).also { speed -> fastest = fastest.coerceAtLeast(speed) }
+        } ?: return
+
+        if (fastest == (player.currentEquippedItem?.getStrVsBlock(block) ?: 1F)) return
+
+        SilentHotbar.selectSlotSilently(this, slot, immediate = true, render = false, resetManually = true)
     }
 
     // ------------------------------------------------------------------

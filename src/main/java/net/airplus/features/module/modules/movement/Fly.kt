@@ -19,6 +19,7 @@ import net.airplus.features.module.modules.movement.flymodes.hypixel.Hypixel
 import net.airplus.features.module.modules.movement.flymodes.ncp.NCP
 import net.airplus.features.module.modules.movement.flymodes.ncp.OldNCP
 import net.airplus.features.module.modules.movement.flymodes.other.*
+import net.airplus.features.module.modules.movement.flymodes.rise.Rise as RiseFly
 import net.airplus.features.module.modules.movement.flymodes.spartan.BugSpartan
 import net.airplus.features.module.modules.movement.flymodes.spartan.Spartan
 import net.airplus.features.module.modules.movement.flymodes.spartan.Spartan2
@@ -73,7 +74,10 @@ object Fly : Module("Fly", Category.MOVEMENT, Keyboard.KEY_F) {
         MineSecure, HawkEye, HAC, WatchCat,
 
         // Other
-        Jetpack, KeepAlive, Collide, Jump, Flag, Fireball, GrimGhostBlock
+        Jetpack, KeepAlive, Collide, Jump, Flag, Fireball, GrimGhostBlock,
+
+        // Rise
+        RiseFly
     )
 
     /**
@@ -172,6 +176,12 @@ object Fly : Module("Fly", Category.MOVEMENT, Keyboard.KEY_F) {
 
     val autoJump by boolean("AutoJump", true) { mode == "Fireball" }
 
+    // Rise（Ported from Rise Grim3Flight / Grim2Flight / Grim191181Flight）
+    val riseMode by choices("Rise-FlyMode", arrayOf("Grim", "Grim2", "Grim19-1.18.1"), "Grim") { mode == "Rise" }
+    val riseGlideLessFlyMore by boolean("Rise-GlideLessFlyMore", false) { mode == "Rise" }
+    val riseSpeed by float("Rise-Speed", 0.275f, 0f..0.32f) { mode == "Rise" }
+    val riseTimer by float("Rise-Timer", 1f, 0.1f..10f) { mode == "Rise" }
+
     // Visuals
     private val mark by boolean("Mark", true).subjective()
 
@@ -202,6 +212,7 @@ object Fly : Module("Fly", Category.MOVEMENT, Keyboard.KEY_F) {
         if (!mode.startsWith("AAC") && mode != "Hypixel" && mode != "VerusGlide"
             && mode != "SmoothVanilla" && mode != "Vanilla" && mode != "Rewinside"
             && mode != "Fireball" && mode != "Collide" && mode != "Jump" && mode != "GrimGhostBlock"
+            && mode != "Rise"
         ) {
 
             if (mode == "CubeCraft") thePlayer.stopXZ()
@@ -272,6 +283,10 @@ object Fly : Module("Fly", Category.MOVEMENT, Keyboard.KEY_F) {
 
     val onMove = handler<MoveEvent> { event ->
         modeModule.onMove(event)
+    }
+
+    val onWorld = handler<WorldEvent> { event ->
+        modeModule.onWorld(event)
     }
 
     fun handleVanillaKickBypass() {

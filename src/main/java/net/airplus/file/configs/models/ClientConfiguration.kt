@@ -17,11 +17,11 @@ object ClientConfiguration : Configurable("ClientConfiguration"), MinecraftInsta
     // The game language can be overridden by the user. empty=default
     var overrideLanguage by text("OverrideLanguage","")
 
-    // 主菜单布局风格（Flux = Flux 风格，其余见 MainMenuStyles；旧值 Default/Custom 由 MainMenuStyles.normalize 迁移）
-    var mainMenuStyle by text("MainMenuStyle", "Flux")
+    // 主菜单布局风格（默认 Diagonal；其余见 MainMenuStyles，含 EdMoonlight；旧值 Default/Custom 由 MainMenuStyles.normalize 迁移）
+    var mainMenuStyle by text("MainMenuStyle", "Diagonal")
 
-    // 主菜单背景索引（0 = Flux 动态背景，其余对应 MainMenuStyles.BACKGROUND_IMAGES，取模避免越界）
-    var customMenuBackgroundImageIndex by int("MainMenuBackgroundIndex", 0, 0..999)
+    // 主菜单背景索引（0 = Flux 动态背景，图片从 1 起对应 MainMenuStyles.BACKGROUND_IMAGES：1=Miku 2=Miku 2 3=Nina ...，取模避免越界）
+    var customMenuBackgroundImageIndex by int("MainMenuBackgroundIndex", 3, 0..999)
 
     fun updateClientWindow() {
         if (clientTitle) {

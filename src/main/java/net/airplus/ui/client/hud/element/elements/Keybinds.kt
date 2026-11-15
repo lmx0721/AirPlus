@@ -7,6 +7,7 @@
  * 体系内重实现）：圆角岛卡片 + 头部圆点/标题/分隔线 + 20x20 按键徽章 + 模块名。
  * 行滑入滑出动画：150ms 入 / 100ms 出（下方 5px 位移 + 透明度，按 deltaTime 推进）。
  * HUD 编辑态或聊天打开时显示全部绑定模块，否则仅显示启用的。
+ * 卡片/按键徽章背景色可自定义（Theme/Custom 颜色模式 + 颜色含透明度），背景 blur 可开关。
  */
 package net.airplus.ui.client.hud.element.elements
 
@@ -20,8 +21,10 @@ import net.airplus.ui.client.hud.element.Side
 import net.airplus.ui.font.Fonts
 import net.airplus.utils.client.ClientThemesUtils
 import net.airplus.utils.extensions.lerpWith
+import net.airplus.utils.render.HudBlur
 import net.airplus.utils.render.RenderUtils.drawRoundedBorder
 import net.airplus.utils.render.RenderUtils.drawRoundedRect
+import net.airplus.utils.render.RenderUtils.drawRoundedRectAA
 import net.airplus.utils.render.RenderUtils.deltaTime
 import net.minecraft.client.gui.GuiChat
 import org.lwjgl.input.Keyboard
@@ -41,6 +44,15 @@ class Keybinds(
 
     // Scale 为独立设置（同 MusicLyric 的 customScale 做法），叠加在元素缩放之上
     private val scaleSetting by float("Scale", 0.85F, 0.5F..2F)
+
+    // 卡片背景色（Custom = 自定义颜色含透明度，Theme = 主题色加深）+ 背景 blur
+    private val bgColorMode by choices("BG-ColorMode", arrayOf("Custom", "Theme"), "Custom")
+    private val bgColorValue by color("BG-Color", Color(20, 20, 24, 220)) { bgColorMode == "Custom" }
+    private val bgBlur by boolean("Blur", false)
+
+    // 按键徽章背景色（启用态；禁用态保持灰色）：Theme = 主题色，Custom = 自定义颜色含透明度
+    private val badgeColorMode by choices("Badge-ColorMode", arrayOf("Theme", "Custom"), "Theme")
+    private val badgeColorValue by color("Badge-Color", Color(64, 97, 255, 255)) { badgeColorMode == "Custom" }
 
     /**
      * 行动画状态：[alpha] 0..1（150ms 入 / 100ms 出），[y] 行位平滑（增删行时其余行滑动）。
@@ -96,12 +108,27 @@ class Keybinds(
         glPushMatrix()
         glScalef(scaleSetting, scaleSetting, scaleSetting)
 
-        // 圆角岛卡片（深色底 + 1px 描边）
-        drawRoundedRect(0F, 0F, width, height, BG.rgb, RADIUS)
+        // 背景模糊（模糊 AABB 需换算成屏幕绝对坐标：元素 scale × 内部 scaleSetting 双重缩放；
+        // 遮罩在当前矩阵下按局部坐标绘制）
+        if (bgBlur) {
+            HudBlur.blur(
+                (scale * (scaleSetting * 0F + renderX)).toFloat(),
+                (scale * (scaleSetting * 0F + renderY)).toFloat(),
+                (scale * (scaleSetting * width + renderX)).toFloat(),
+                (scale * (scaleSetting * height + renderY)).toFloat()
+            ) {
+                drawRoundedRect(0F, 0F, width, height, -1, RADIUS)
+            }
+        }
+
+        // 圆角岛卡片（背景色可自定义 + 1px 描边）
+        val bg = if (bgColorMode == "Custom") bgColorValue
+        else ClientThemesUtils.getColor().let { Color(it.red, it.green, it.blue, 220) }
+        drawRoundedRectAA(0F, 0F, width, height, bg.rgb, RADIUS)
         drawRoundedBorder(0F, 0F, width, height, 1F, BORDER.rgb, RADIUS)
 
         // 头部：主题色圆点 + "Keybinds" 标题 + 分隔线
-        drawRoundedRect(12F, 11F, 20F, 19F, ClientThemesUtils.getColor().rgb, 4F)
+        drawRoundedRectAA(12F, 11F, 20F, 19F, ClientThemesUtils.getColor().rgb, 4F)
         titleFont.drawString(TITLE, 24F, 15F - titleFont.height / 2F, Color(235, 235, 240).rgb)
         drawRoundedRect(6F, 25F, width - 6F, 26F, SEPARATOR.rgb, 0.5F)
 
@@ -118,12 +145,13 @@ class Keybinds(
             val rowY = state.y + (1F - alpha) * 5F // 入场：下方 5px 位移
             val enabled = module.state
 
-            val badgeColor = if (enabled) {
-                ClientThemesUtils.getColorWithAlpha(0, (255 * alpha).toInt())
+            val badgeBase = if (enabled) {
+                if (badgeColorMode == "Custom") badgeColorValue else ClientThemesUtils.getColor()
             } else {
-                Color(64, 64, 70, (255 * alpha).toInt())
+                Color(64, 64, 70)
             }
-            drawRoundedRect(6F, rowY, 26F, rowY + ROW_HEIGHT, badgeColor.rgb, 4F)
+            val badgeColor = Color(badgeBase.red, badgeBase.green, badgeBase.blue, (255 * alpha).toInt())
+            drawRoundedRectAA(6F, rowY, 26F, rowY + ROW_HEIGHT, badgeColor.rgb, 4F)
 
             val abbreviation = abbreviate(Keyboard.getKeyName(module.keyBind))
             val badgeTextColor = if (enabled) {
@@ -131,10 +159,12 @@ class Keybinds(
             } else {
                 Color(210, 210, 215, (255 * alpha).toInt())
             }
+            // 徽章内居中：垂直用 visualLineHeight 行盒公式（height 含下行空间会偏移），
+            // 水平用浮点宽（getStringWidth 整数截断在 1-3 字符上会偏 0.25px+）
             badgeFont.drawString(
                 abbreviation,
-                16F - badgeFont.getStringWidth(abbreviation) / 2F,
-                rowY + 10F - badgeFont.height / 2F,
+                16F - badgeFont.defaultFont.getStringWidth(abbreviation) / 4F,
+                rowY + (ROW_HEIGHT - badgeFont.visualLineHeight) / 2F + 2.75F,
                 badgeTextColor.rgb
             )
 
@@ -181,7 +211,6 @@ class Keybinds(
         private const val IN_MS = 150F
         private const val OUT_MS = 100F
 
-        private val BG = Color(20, 20, 24, 220)
         private val BORDER = Color(255, 255, 255, 40)
         private val SEPARATOR = Color(255, 255, 255, 40)
 

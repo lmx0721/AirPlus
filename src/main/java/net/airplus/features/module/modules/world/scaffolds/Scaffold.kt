@@ -846,7 +846,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         var stack = player.hotBarSlot(currentSlot).stack
 
         //TODO: blacklist more blocks than only bushes
-        if (stack == null || stack.item !is ItemBlock || (stack.item as ItemBlock).block is BlockBush || stack.stackSize <= 0 || sortByHighestAmount || earlySwitch) {
+        val heldStack = stack
+        val heldBlock = heldStack?.item as? ItemBlock
+        if (heldStack == null || heldBlock == null || heldBlock.block is BlockBush || heldBlock.block in InventoryUtils.BLOCK_BLACKLIST || heldStack.stackSize <= 0 || sortByHighestAmount || earlySwitch) {
             val blockSlot = if (sortByHighestAmount) {
                 InventoryUtils.findLargestBlockStackInHotbar() ?: return
             } else if (earlySwitch) {

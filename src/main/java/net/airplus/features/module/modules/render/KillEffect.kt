@@ -1,8 +1,10 @@
 // skid SetsunaClient
 package net.airplus.features.module.modules.render
 
+import com.mojang.authlib.GameProfile
 import net.airplus.event.AttackEvent
 import net.airplus.event.Render2DEvent
+import net.airplus.event.Render3DEvent
 import net.airplus.event.UpdateEvent
 import net.airplus.event.WorldEvent
 import net.airplus.event.async.TickScheduler
@@ -16,11 +18,15 @@ import net.airplus.utils.render.RenderUtils
 import net.minecraft.client.audio.ISound
 import net.minecraft.client.audio.PositionedSoundRecord
 import net.minecraft.client.gui.ScaledResolution
+import net.minecraft.client.model.ModelBase
+import net.minecraft.client.model.ModelPlayer
+import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.entity.EntityLivingBase
 import net.minecraft.entity.player.EntityPlayer
 import net.minecraft.util.ResourceLocation
 import org.lwjgl.opengl.GL11
 import java.awt.Color
+import java.util.ArrayDeque
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.cos
@@ -31,6 +37,10 @@ import kotlin.math.sin
 /**
  * Shows a short animated confirmation after a recently attacked target dies.
  * Kill ownership is inferred client-side (same as the Setsuna original).
+ *
+ * Default 样式（Moonlight DeadEffect Default 1:1 移植）：玩家死亡（deathTime==1）时克隆
+ * [EntityPlayer] 尸体模型，上浮 + 淡出，GL_BACK 线框 [ModelPlayer] 渲染，
+ * frametime 用 nanoTime 1s 滑动窗口计算；与击杀确认（Combo/Badge/Minimal）互不干扰。
  *
  * 迁移说明：
  * - Skija 渲染全部换成 1.8.9 的 GL11 即时模式 + RenderUtils 圆角矩形。
@@ -43,10 +53,17 @@ object KillEffect : Module("KillEffect", Category.RENDER) {
     private const val MAX_TRACKED_TARGETS = 32
     private const val ENTER_DURATION_NANOS = 220_000_000L
     private const val EXIT_DURATION_NANOS = 240_000_000L
+    private const val ONE_SECOND_NANOS = 1_000_000_000L
 
     // Settings
 
-    private val styleValue by choices("Style", arrayOf("Combo", "Badge", "Minimal"), "Combo")
+    private val styleValue by choices("Style", arrayOf("Combo", "Badge", "Minimal", "Default"), "Combo")
+
+    // Default 模式专属设置（Moonlight DeadEffect Default 1:1）
+    private val colorValue by color("Color", Color(0, 128, 255)) { styleValue == "Default" }
+    private val speedValue by float("Speed", 20f, 20f..100f) { styleValue == "Default" }
+    private val maxOffsetValue by float("Max Offset", 1f, 0.1f..100f) { styleValue == "Default" }
+
     private val targetsValue by choices("Targets", arrayOf("Players", "All"), "Players")
     private val accentValue by color("Accent", Color(87, 226, 255))
     private val scaleValue by float("Scale", 1.0f, 0.5f..2.0f)
@@ -81,6 +98,11 @@ object KillEffect : Module("KillEffect", Category.RENDER) {
 
     private val trackedTargets = LinkedHashMap<UUID, TrackedTarget>()
 
+    // Default 模式状态（Moonlight DeadEffect Default 1:1）
+    private val popList = ArrayDeque<Person>()
+    private val frameTimestamps = ArrayDeque<Long>()
+    private var fps = 0
+
     private var effectStartedNanos = 0L
     private var lastKillNanos = 0L
     private var victimName = ""
@@ -97,6 +119,15 @@ object KillEffect : Module("KillEffect", Category.RENDER) {
     val onUpdate = handler<UpdateEvent> {
         if (mc.thePlayer == null || mc.theWorld == null) {
             trackedTargets.clear()
+            popList.clear()
+            return@handler
+        }
+
+        // Moonlight DeadEffect Default 模式：玩家死亡克隆尸体上浮淡出，与击杀确认互不干扰
+        updateCorpses()
+
+        // Default 模式只渲染 3D 尸体特效，不触发 2D 击杀确认
+        if (styleValue == "Default") {
             return@handler
         }
 
@@ -122,6 +153,11 @@ object KillEffect : Module("KillEffect", Category.RENDER) {
     }
 
     val onAttack = handler<AttackEvent> { event ->
+        // Default 模式（尸体特效）不追踪攻击目标
+        if (styleValue == "Default") {
+            return@handler
+        }
+
         val player = mc.thePlayer
         val target = event.targetEntity
         if (player == null || mc.theWorld == null || target !is EntityLivingBase ||
@@ -146,7 +182,7 @@ object KillEffect : Module("KillEffect", Category.RENDER) {
     }
 
     val onRender2D = handler<Render2DEvent> {
-        if (!showing) {
+        if (!showing || styleValue == "Default") {
             return@handler
         }
 
@@ -182,6 +218,73 @@ object KillEffect : Module("KillEffect", Category.RENDER) {
         } finally {
             GL11.glPopMatrix()
         }
+    }
+
+    // Moonlight DeadEffect Default 模式渲染 1:1：GL_BACK 线框 ModelPlayer，上浮 + 淡出
+    val onRender3D = handler<Render3DEvent> {
+        if (styleValue != "Default" || popList.isEmpty()) {
+            return@handler
+        }
+
+        GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS)
+        val textureWasEnabled = GL11.glIsEnabled(GL11.GL_TEXTURE_2D)
+        val blendWasEnabled = GL11.glIsEnabled(GL11.GL_BLEND)
+        val lineSmoothWasEnabled = GL11.glIsEnabled(GL11.GL_LINE_SMOOTH)
+        GL11.glDepthMask(false)
+        GL11.glDisable(GL11.GL_DEPTH_TEST)
+        GlStateManager.enableBlend()
+        GlStateManager.tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, 0, 1)
+        GlStateManager.disableTexture2D()
+        GL11.glEnable(GL11.GL_LINE_SMOOTH)
+        GL11.glHint(GL11.GL_LINE_SMOOTH_HINT, GL11.GL_NICEST)
+
+        val iterator = popList.iterator()
+        while (iterator.hasNext()) {
+            val person = iterator.next()
+            if (person.alpha <= 0.0) {
+                iterator.remove()
+                mc.theWorld?.removeEntity(person.player)
+            } else {
+                person.alpha -= 180f / speedValue * frametime()
+                person.player.posY += maxOffsetValue / speedValue * frametime()
+                person.model.bipedLeftLegwear.showModel = false
+                person.model.bipedRightLegwear.showModel = false
+                person.model.bipedLeftArmwear.showModel = false
+                person.model.bipedRightArmwear.showModel = false
+                person.model.bipedBodyWear.showModel = false
+                person.model.bipedHead.showModel = true
+                person.model.bipedHeadwear.showModel = false
+                GlStateManager.color(
+                    colorValue.red / 255f,
+                    colorValue.green / 255f,
+                    colorValue.blue / 255f,
+                    (person.alpha / 255.0).toFloat()
+                )
+                GL11.glPolygonMode(GL11.GL_BACK, GL11.GL_LINE)
+                renderEntity(
+                    person.player,
+                    person.model,
+                    person.player.limbSwing,
+                    person.player.limbSwingAmount,
+                    person.player.ticksExisted.toFloat(),
+                    person.player.rotationYawHead,
+                    person.player.rotationPitch,
+                    1f
+                )
+                GlStateManager.resetColor()
+            }
+        }
+
+        if (!lineSmoothWasEnabled) {
+            GL11.glDisable(GL11.GL_LINE_SMOOTH)
+        }
+        if (textureWasEnabled) {
+            GlStateManager.enableTexture2D()
+        }
+        if (!blendWasEnabled) {
+            GlStateManager.disableBlend()
+        }
+        GL11.glPopAttrib()
     }
 
     override fun onEnable() {
@@ -526,6 +629,105 @@ object KillEffect : Module("KillEffect", Category.RENDER) {
         font.drawCenteredString(text, 0.0f, top, color)
     }
 
+    // Default 模式（Moonlight DeadEffect Default 移植）
+
+    /**
+     * Moonlight DeadEffect Default 模式的 Update 逻辑 1:1：
+     * nanoTime 1s 滑动窗口统计 frametime，玩家死亡（deathTime==1）时克隆 [EntityPlayer] 尸体。
+     */
+    private fun updateCorpses() {
+        if (styleValue != "Default") {
+            return
+        }
+
+        // Frametime：1s 滑动窗口统计帧数
+        val now = System.nanoTime()
+        frameTimestamps.addLast(now)
+        while (frameTimestamps.isNotEmpty() && now - frameTimestamps.peekFirst() > ONE_SECOND_NANOS) {
+            frameTimestamps.pollFirst()
+        }
+        fps = frameTimestamps.size
+
+        val world = mc.theWorld
+        if (world == null) {
+            popList.clear()
+            return
+        }
+
+        for (player in world.playerEntities) {
+            if (player.deathTime == 1) {
+                val corpse = object : EntityPlayer(world, GameProfile(player.uniqueID, player.name)) {
+                    override fun isSpectator(): Boolean = false
+                }
+                corpse.copyLocationAndAnglesFrom(player)
+                corpse.limbSwing = player.limbSwing
+                corpse.limbSwingAmount = player.limbSwingAmount
+                corpse.setSneaking(player.isSneaking)
+                popList.add(Person(corpse))
+            }
+        }
+    }
+
+    private fun frametime(): Float = if (fps <= 0) 1f else 1f / fps
+
+    private fun renderEntity(
+        entity: EntityLivingBase,
+        model: ModelBase,
+        limbSwing: Float,
+        limbSwingAmount: Float,
+        ageInTicks: Float,
+        headYaw: Float,
+        headPitch: Float,
+        scale: Float
+    ) {
+        if (model is ModelPlayer) {
+            model.bipedBodyWear.showModel = false
+            model.bipedLeftLegwear.showModel = false
+            model.bipedRightLegwear.showModel = false
+            model.bipedLeftArmwear.showModel = false
+            model.bipedRightArmwear.showModel = false
+            model.bipedHeadwear.showModel = true
+            model.bipedHead.showModel = false
+        }
+
+        val partialTicks = mc.timer.renderPartialTicks
+        val x = (entity.posX - mc.renderManager.viewerPosX).toFloat()
+        val y = (entity.posY - mc.renderManager.viewerPosY).toFloat()
+        val z = (entity.posZ - mc.renderManager.viewerPosZ).toFloat()
+
+        GlStateManager.pushMatrix()
+        GlStateManager.translate(x, y, z)
+        GlStateManager.rotate(180f - entity.rotationYawHead, 0f, 1f, 0f)
+        val scaleFactor = prepareScale(entity, scale)
+        val renderHeadYaw = entity.rotationYawHead
+        val alphaWasEnabled = GL11.glIsEnabled(GL11.GL_ALPHA_TEST)
+        GlStateManager.enableAlpha()
+        model.setLivingAnimations(entity, limbSwing, limbSwingAmount, partialTicks)
+        model.setRotationAngles(
+            limbSwing, limbSwingAmount, 0f, renderHeadYaw, entity.rotationPitch, scaleFactor, entity
+        )
+        model.render(entity, limbSwing, limbSwingAmount, 0f, renderHeadYaw, entity.rotationPitch, scaleFactor)
+        if (!alphaWasEnabled) {
+            GlStateManager.disableAlpha()
+        }
+        GlStateManager.popMatrix()
+    }
+
+    private fun prepareScale(entity: EntityLivingBase, scale: Float): Float {
+        GlStateManager.enableRescaleNormal()
+        GlStateManager.scale(-1f, -1f, 1f)
+        val bb = entity.entityBoundingBox
+        val width = bb.maxX - bb.minX
+        val depth = bb.maxZ - bb.minZ
+        GlStateManager.scale(
+            (scale + width).toFloat(),
+            scale * entity.height,
+            (scale + depth).toFloat()
+        )
+        GlStateManager.translate(0f, -1.501f, 0f)
+        return 0.0625f
+    }
+
     // Tracking helpers
 
     private fun trimTrackedTargets() {
@@ -544,6 +746,10 @@ object KillEffect : Module("KillEffect", Category.RENDER) {
         victimDistance = 0.0f
         comboCount = 0
         previewCombo = 0
+        // Default 模式（Moonlight DeadEffect）状态重置
+        popList.clear()
+        frameTimestamps.clear()
+        fps = 0
     }
 
     private fun displayName(target: EntityLivingBase): String {
@@ -600,4 +806,10 @@ object KillEffect : Module("KillEffect", Category.RENDER) {
         val name: String,
         val distance: Float,
     )
+
+    /** Moonlight DeadEffect Default 的尸体条目：克隆玩家 + 独立 ModelPlayer + 淡出透明度 */
+    private class Person(val player: EntityPlayer) {
+        val model = ModelPlayer(0f, false)
+        var alpha = 180.0
+    }
 }

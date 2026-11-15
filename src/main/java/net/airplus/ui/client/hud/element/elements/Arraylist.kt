@@ -2,6 +2,7 @@
  * AirPlus Hacked Client
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
+ * skid edmoonlight
  */
 package net.airplus.ui.client.hud.element.elements
 
@@ -28,12 +29,15 @@ import net.airplus.utils.render.RenderUtils.deltaTime
 import net.airplus.utils.render.RenderUtils.drawImage
 import net.airplus.utils.render.RenderUtils.drawRect
 import net.airplus.utils.render.RenderUtils.drawRoundedRect
+import net.airplus.utils.render.RenderUtils.drawRoundedRectAA
 import net.airplus.utils.render.shader.shaders.GradientFontShader
 import net.airplus.utils.render.shader.shaders.GradientShader
 import net.airplus.utils.render.shader.shaders.RainbowFontShader
 import net.airplus.utils.render.shader.shaders.RainbowShader
+import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.client.renderer.GlStateManager.resetColor
 import java.awt.Color
+import kotlin.math.exp
 import kotlin.math.pow
 
 /**
@@ -47,79 +51,88 @@ class Arraylist(
     side: Side = Side(Horizontal.RIGHT, Vertical.UP),
 ) : Element("Arraylist", x, y, scale, side) {
 
+    private val style by choices("Style", arrayOf("LB", "Grouped", "Flow", "HotKey"), "LB")
+
+    // Grouped / Flow / HotKey 卡片样式（移植自 MoonLight）的专属设置
+    private val cardAlpha by float("Background-Alpha", 0.6F, 0F..1F) { style != "LB" }
+    private val cardRadius by float("Corner-Radius", 6F, 0F..8F) { style != "LB" }
+    private val cardBlur by boolean("Card-Blur", false) { style != "LB" }
+    private val hotkeyHeader by boolean("HotKeys-Header", true) { style == "HotKey" }
+
     private val textColorMode by choices(
         "Text-Mode", arrayOf("Custom", "Fade", "Random", "Rainbow", "Gradient", "Theme"), "theme"
-    )
-    private val textColors = ColorSettingsInteger(this, "TextColor") { textColorMode == "Custom" }.with(blueRibbon)
-    private val textFadeColors = ColorSettingsInteger(this, "Text-Fade") { textColorMode == "Fade" }.with(0, 111, 255)
+    ) { style == "LB" }
+    private val textColors = ColorSettingsInteger(this, "TextColor") { style == "LB" && textColorMode == "Custom" }.with(blueRibbon)
+    private val textFadeColors = ColorSettingsInteger(this, "Text-Fade") { style == "LB" && textColorMode == "Fade" }.with(0, 111, 255)
 
-    private val textFadeDistance by int("Text-Fade-Distance", 50, 0..100) { textColorMode == "Fade" }
+    private val textFadeDistance by int("Text-Fade-Distance", 50, 0..100) { style == "LB" && textColorMode == "Fade" }
 
-    private val gradientTextSpeed by float("Text-Gradient-Speed", 1f, 0.5f..10f) { textColorMode == "Gradient" }
+    private val gradientTextSpeed by float("Text-Gradient-Speed", 1f, 0.5f..10f) { style == "LB" && textColorMode == "Gradient" }
 
     private val maxTextGradientColors by int(
         "Max-Text-Gradient-Colors", 4, 1..MAX_GRADIENT_COLORS
-    ) { textColorMode == "Gradient" }
+    ) { style == "LB" && textColorMode == "Gradient" }
     private val textGradColors =
-        ColorSettingsFloat.create(this, "Text-Gradient") { textColorMode == "Gradient" && it <= maxTextGradientColors }
+        ColorSettingsFloat.create(this, "Text-Gradient") { style == "LB" && textColorMode == "Gradient" && it <= maxTextGradientColors }
 
-    private val rectMode by choices("Rect-Mode", arrayOf("None", "Left", "Right", "Outline"), "Right")
-    private val roundedRectRadius by float("RoundedRect-Radius", 0F, 0F..2F) { rectMode !in setOf("None", "Outline") }
+    private val rectMode by choices("Rect-Mode", arrayOf("None", "Left", "Right", "Outline"), "Right") { style == "LB" }
+    private val roundedRectRadius by float("RoundedRect-Radius", 0F, 0F..2F) { style == "LB" && rectMode !in setOf("None", "Outline") }
     private val rectColorMode by choices(
         "Rect-ColorMode", arrayOf("Custom", "Fade", "Random", "Rainbow", "Gradient", "Theme"), "theme"
-    ) { rectMode != "None" }
+    ) { style == "LB" && rectMode != "None" }
     private val rectColors =
-        ColorSettingsInteger(this, "RectColor", applyMax = true) { isCustomRectSupported }.with(blueRibbon)
-    private val rectFadeColors = ColorSettingsInteger(this, "Rect-Fade", applyMax = true) { rectColorMode == "Fade" }
+        ColorSettingsInteger(this, "RectColor", applyMax = true) { style == "LB" && isCustomRectSupported }.with(blueRibbon)
+    private val rectFadeColors = ColorSettingsInteger(this, "Rect-Fade", applyMax = true) { style == "LB" && rectColorMode == "Fade" }
 
-    private val rectFadeDistance by int("Rect-Fade-Distance", 50, 0..100) { rectColorMode == "Fade" }
+    private val rectFadeDistance by int("Rect-Fade-Distance", 50, 0..100) { style == "LB" && rectColorMode == "Fade" }
 
-    private val gradientRectSpeed by float("Rect-Gradient-Speed", 1f, 0.5f..10f) { isCustomRectGradientSupported }
+    private val gradientRectSpeed by float("Rect-Gradient-Speed", 1f, 0.5f..10f) { style == "LB" && isCustomRectGradientSupported }
 
     private val maxRectGradientColors by int(
         "Max-Rect-Gradient-Colors", 4, 1..MAX_GRADIENT_COLORS
-    ) { isCustomRectGradientSupported }
+    ) { style == "LB" && isCustomRectGradientSupported }
     private val rectGradColors = ColorSettingsFloat.create(
         this, "Rect-Gradient"
-    ) { isCustomRectGradientSupported && it <= maxRectGradientColors }
+    ) { style == "LB" && isCustomRectGradientSupported && it <= maxRectGradientColors }
 
-    private val roundedBackgroundRadius by float("RoundedBackGround-Radius", 1F, 0F..5F) { bgColors.color().alpha > 0 }
+    private val roundedBackgroundRadius by float("RoundedBackGround-Radius", 1F, 0F..5F) { style == "LB" && bgColors.color().alpha > 0 }
 
     private val backgroundMode by choices(
         "Background-Mode", arrayOf("Custom", "Fade", "Random", "Rainbow", "Gradient", "Theme"), "Custom"
-    )
+    ) { style == "LB" }
     private val bgColors =
-        ColorSettingsInteger(this, "BackgroundColor") { backgroundMode == "Custom" }.with(Color.BLACK.withAlpha(150))
-    private val bgFadeColors = ColorSettingsInteger(this, "Background-Fade") { backgroundMode == "Fade" }
+        ColorSettingsInteger(this, "BackgroundColor") { style == "LB" && backgroundMode == "Custom" }.with(Color.BLACK.withAlpha(150))
+    private val bgFadeColors = ColorSettingsInteger(this, "Background-Fade") { style == "LB" && backgroundMode == "Fade" }
 
-    private val bgFadeDistance by int("Background-Fade-Distance", 50, 0..100) { backgroundMode == "Fade" }
+    private val bgFadeDistance by int("Background-Fade-Distance", 50, 0..100) { style == "LB" && backgroundMode == "Fade" }
 
     private val gradientBackgroundSpeed by float(
         "Background-Gradient-Speed", 1f, 0.5f..10f
-    ) { backgroundMode == "Gradient" }
+    ) { style == "LB" && backgroundMode == "Gradient" }
 
     private val maxBackgroundGradientColors by int(
         "Max-Background-Gradient-Colors", 4, 1..MAX_GRADIENT_COLORS
-    ) { backgroundMode == "Gradient" }
+    ) { style == "LB" && backgroundMode == "Gradient" }
     private val bgGradColors = ColorSettingsFloat.create(
         this, "Background-Gradient"
-    ) { backgroundMode == "Gradient" && it <= maxBackgroundGradientColors }
+    ) { style == "LB" && backgroundMode == "Gradient" && it <= maxBackgroundGradientColors }
 
     // Icons
-    private val displayIcons by boolean("DisplayIcons", true)
-    private val iconShadows by boolean("IconShadows", true) { displayIcons }
-    private val xDistance by float("ShadowXDistance", 0F, -2F..2F) { iconShadows }
-    private val yDistance by float("ShadowYDistance", 0F, -2F..2F) { iconShadows }
-    private val shadowColor by color("ShadowColor", Color.BLACK.withAlpha(128), rainbow = true) { iconShadows }
+    private val displayIcons by boolean("DisplayIcons", true) { style == "LB" }
+    private val iconShadows by boolean("IconShadows", true) { style == "LB" && displayIcons }
+    private val xDistance by float("ShadowXDistance", 0F, -2F..2F) { style == "LB" && iconShadows }
+    private val yDistance by float("ShadowYDistance", 0F, -2F..2F) { style == "LB" && iconShadows }
+    private val shadowColor by color("ShadowColor", Color.BLACK.withAlpha(128), rainbow = true) { style == "LB" && iconShadows }
 
     private val iconColorMode by choices(
         "IconColorMode", arrayOf("Custom", "Fade"), "Custom"
-    ) { displayIcons }
-    private val iconColor by color("IconColor", Color.WHITE) { iconColorMode == "Custom" && displayIcons }
-    private val iconFadeColor by color("IconFadeColor", Color.WHITE) { iconColorMode == "Fade" && displayIcons }
-    private val iconFadeDistance by int("IconFadeDistance", 50, 0..100) { iconColorMode == "Fade" && displayIcons }
+    ) { style == "LB" && displayIcons }
+    private val iconColor by color("IconColor", Color.WHITE) { style == "LB" && iconColorMode == "Custom" && displayIcons }
+    private val iconFadeColor by color("IconFadeColor", Color.WHITE) { style == "LB" && iconColorMode == "Fade" && displayIcons }
+    private val iconFadeDistance by int("IconFadeDistance", 50, 0..100) { style == "LB" && iconColorMode == "Fade" && displayIcons }
 
-    private fun isColorModeUsed(value: String) = value in listOf(textColorMode, rectMode, backgroundMode, iconColorMode)
+    private fun isColorModeUsed(value: String) =
+        value in listOf(textColorMode, rectMode, backgroundMode, iconColorMode) && style == "LB"
 
     private val saturation by float("Random-Saturation", 0.9f, 0f..1f) { isColorModeUsed("Random") }
     private val brightness by float("Random-Brightness", 1f, 0f..1f) { isColorModeUsed("Random") }
@@ -148,8 +161,8 @@ class Arraylist(
 
     private val animation by choices(
         "Animation", arrayOf("Slide", "Back"), "Slide"
-    ) { tags }
-    private val animationSpeed by float("AnimationSpeed", 0.2F, 0.01F..1F) { animation == "Back" }
+    ) { style == "LB" && tags }
+    private val animationSpeed by float("AnimationSpeed", 0.2F, 0.01F..1F) { style == "LB" && animation == "Back" }
 
     companion object : Configurable("StandaloneArraylist") {
         val spacedModulesValue = boolean("SpacedModules", false)
@@ -180,6 +193,13 @@ class Arraylist(
 
     init {
         updateTagDetails()
+
+        // 将 Style 选择移动到设置列表最顶部（参考 Target2 的做法）
+        val styleValue = values.first { it.name.equals("Style", ignoreCase = true) }
+        val existingValues = ArrayList(values)
+        get().clear()
+        addValue(styleValue)
+        existingValues.forEach { if (it !== styleValue) addValue(it) }
     }
 
     fun updateTagDetails() {
@@ -219,7 +239,16 @@ class Arraylist(
         return 1F + c3 * (t - 1F).pow(3) + c1 * (t - 1F).pow(2)
     }
 
-    override fun drawElement(): Border? {
+    override fun drawElement(): Border? = when (style) {
+        "Grouped" -> drawGrouped()
+        "Flow" -> drawFlow()
+        "HotKey" -> drawHotKey()
+        else -> drawLB()
+    }
+
+    // ===== LB 样式（原有 LiquidBounce 风格 Arraylist，逻辑零改动） =====
+
+    private fun drawLB(): Border? {
         assumeNonVolatile {
             // Slide animation - update every render
             val delta = deltaTime
@@ -674,8 +703,536 @@ class Arraylist(
         return null
     }
 
+    // ===== Grouped / Flow / HotKey 卡片样式（移植自 MoonLight ArrayListCards / HotKeyWidget） =====
+
+    private class CardItem {
+        lateinit var module: Module
+        var p = 0F
+        var on = false
+        var tag = ""
+        var nameW = 0F
+        var w = 0F
+
+        // Flow chip 摆放状态（虚拟右锚定坐标）
+        var x = 0F
+        var y = 0F
+        var cw = 0F
+        var placed = false
+    }
+
+    private val cardItems = HashMap<Module, CardItem>()
+    private val groupWidths = HashMap<Category, Float>()
+    private var cardsLastFrame = 0L
+
+    private val isLeftSide get() = side.horizontal == Horizontal.LEFT
+    private val isDownSide get() = side.vertical == Vertical.DOWN
+
+    // 虚拟坐标帧：x=0 为锚定边，内容向负 x 延伸（同 MoonLight 的右锚定布局），
+    // y 向下增长；LEFT / DOWN 侧在绘制原语处镜像。
+    private fun vmx(v: Float) = if (isLeftSide) -v else v
+
+    private fun vy(v: Float) = if (isDownSide) -v else v
+
+    private fun vtx(origin: Float, width: Float) = if (isLeftSide) -(origin + width) else origin
+
+    private fun cardDisplayName(module: Module): String = when (moduleCase) {
+        "Uppercase" -> module.getName().uppercase()
+        "Lowercase" -> module.getName().lowercase()
+        else -> module.getName()
+    }
+
+    private fun stripFormatting(text: String): String {
+        if (!text.contains('§')) return text
+        return buildString {
+            var i = 0
+            while (i < text.length) {
+                if (text[i] == '§' && i + 1 < text.length) {
+                    i += 2
+                } else {
+                    append(text[i])
+                    i++
+                }
+            }
+        }
+    }
+
+    private fun cardTagText(module: Module): String {
+        if (!tags) return ""
+        return module.tag?.let(::stripFormatting)?.trim() ?: ""
+    }
+
+    private fun measureCardItem(item: CardItem, module: Module) {
+        val tag = cardTagText(module)
+        item.tag = tag
+        item.nameW = font.getStringWidth(cardDisplayName(module)).toFloat()
+        item.w = item.nameW + (if (tag.isEmpty()) 0F else 3.5F + font.getStringWidth(tag))
+    }
+
+    private fun isCardVisible(module: Module): Boolean =
+        module.state && !module.isHidden &&
+            (inactiveStyle != "Hide" || module.isActive) &&
+            !(hideRender && module.category == Category.RENDER)
+
+    /**
+     * 推进卡片淡入淡出动画（0.24s 淡入 / 0.18s 淡出，指数平滑），
+     * 返回本帧的插值系数，供位置 approach 使用。
+     */
+    private fun advanceCards(): Float {
+        val now = System.nanoTime()
+        val first = cardsLastFrame == 0L
+        val dt = if (first) 0F else ((now - cardsLastFrame) / 1.0E9F).coerceAtMost(0.1F)
+        cardsLastFrame = now
+
+        for (module in moduleManager) {
+            val visible = isCardVisible(module)
+            var item = cardItems[module]
+            if (item == null) {
+                if (!visible) continue
+                item = CardItem()
+                item.module = module
+                item.p = if (first) 1F else 0F
+                cardItems[module] = item
+            }
+            item.on = visible
+            item.p = if (visible) {
+                (item.p + dt / 0.24F).coerceAtMost(1F)
+            } else {
+                (item.p - dt / 0.18F).coerceAtLeast(0F)
+            }
+            measureCardItem(item, module)
+        }
+        cardItems.values.removeAll { !it.on && it.p <= 0F }
+
+        return 1F - exp(-14F * dt)
+    }
+
+    private fun smooth(value: Float): Float {
+        val v = value.coerceIn(0F, 1F)
+        return v * v * (3F - 2F * v)
+    }
+
+    private fun approach(current: Float, target: Float, factor: Float): Float {
+        val next = current + (target - current) * factor
+        return if (kotlin.math.abs(target - next) < 0.05F) target else next
+    }
+
+    private fun cardTextY(centerY: Float): Float =
+        vy(centerY) - font.FONT_HEIGHT / 2F + 1.75F
+
+    /** 半透明墨色玻璃卡底（INK 色，透明度 = 设置值 × 淡入进度）。 */
+    private fun glass(x: Float, y: Float, w: Float, h: Float, radius: Float, alpha: Float) {
+        if (alpha < 0.03F || w <= 0.5F || h <= 0.5F) return
+        val a = (cardAlpha * 255F * alpha).toInt().coerceIn(0, 255)
+        drawRoundedRectAA(
+            vmx(x), vy(y), vmx(x + w), vy(y + h),
+            Color(13, 15, 30, a).rgb,
+            radius,
+            RenderUtils.RoundedCorners.ALL
+        )
+    }
+
+    /**
+     * 卡片模糊（Card-Blur 可开关）：虚拟帧坐标换算成屏幕绝对坐标后交给 HudBlur，
+     * 遮罩沿用调用方矩阵（HUD scale + 平移）镜像绘制，自动跟随卡片动画。
+     */
+    private fun glassBlur(
+        x: Float,
+        y: Float,
+        w: Float,
+        h: Float,
+        radius: Float,
+        alpha: Float,
+        mask: (() -> Unit)? = null
+    ) {
+        if (!cardBlur || alpha < 0.03F || w <= 0.5F || h <= 0.5F) return
+        val x1 = minOf(vmx(x), vmx(x + w))
+        val x2 = maxOf(vmx(x), vmx(x + w))
+        val y1 = minOf(vy(y), vy(y + h))
+        val y2 = maxOf(vy(y), vy(y + h))
+        HudBlur.blur(
+            (scale * (x1 + renderX)).toFloat(), (scale * (y1 + renderY)).toFloat(),
+            (scale * (x2 + renderX)).toFloat(), (scale * (y2 + renderY)).toFloat(),
+            radius = radius
+        ) {
+            // 自定义遮罩（如 HotKey 行的文本框 + 图标徽章两块，中间空隙不模糊），
+            // 缺省遮罩为整块圆角矩形
+            if (mask != null) mask()
+            else drawRoundedRect(x1, y1, x2, y2, -1, radius, RenderUtils.RoundedCorners.ALL)
+        }
+    }
+
+    /** 主题色圆点（用小圆角矩形拟合圆盘）。 */
+    private fun drawCardDisc(cx: Float, cy: Float, radius: Float, color: Color, alpha: Float) {
+        if (alpha <= 0.05F) return
+        drawRoundedRect(
+            vmx(cx - radius), vy(cy - radius), vmx(cx + radius), vy(cy + radius),
+            Color(color.red, color.green, color.blue, (color.alpha * alpha).toInt().coerceIn(0, 255)).rgb,
+            radius,
+            RenderUtils.RoundedCorners.ALL
+        )
+    }
+
+    /** 模块名（白）+ 后缀（暗淡），按侧向对齐；origin 为虚拟帧内文本块起点。 */
+    private fun drawCardItem(item: CardItem, origin: Float, centerY: Float, alpha: Float, dimInactive: Boolean) {
+        if (alpha <= 0.08F) return
+        val module = item.module
+        val textY = cardTextY(centerY)
+        val markAsInactive = dimInactive && inactiveStyle == "Color" && !module.isActive
+
+        val nameColor = if (markAsInactive) inactiveColor
+        else Color(255, 255, 255, (255F * alpha).toInt().coerceIn(0, 255)).rgb
+        font.drawString(cardDisplayName(module), vtx(origin, item.nameW), textY, nameColor, textShadow)
+
+        if (item.tag.isNotEmpty()) {
+            val tagW = font.getStringWidth(item.tag).toFloat()
+            val tagColor = if (markAsInactive) inactiveColor
+            else Color(255, 255, 255, (120F * alpha).toInt().coerceIn(0, 255)).rgb
+            font.drawString(item.tag, vtx(origin + item.nameW + 3.5F, tagW), textY, tagColor, textShadow)
+        }
+    }
+
+    /** 字距加宽的大写标题（移植 MoonLight drawCaps / capsWidth）。 */
+    private fun capsWidth(text: String): Float {
+        var w = 0F
+        for (c in text) {
+            w += font.getStringWidth(c.toString()) + 1.1F
+        }
+        return (w - 1.1F).coerceAtLeast(0F)
+    }
+
+    private fun drawCaps(text: String, x: Float, y: Float, color: Int) {
+        var cx = x
+        for (c in text) {
+            font.drawString(c.toString(), cx, y, color, textShadow)
+            cx += font.getStringWidth(c.toString()) + 1.1F
+        }
+    }
+
+    /** 卡片样式的 Border（供 HUD 编辑器框选），随锚定侧向镜像。 */
+    private fun cardBorder(spanW: Float, spanH: Float): Border {
+        val x1 = if (isLeftSide) 0F else -spanW
+        val x2 = if (isLeftSide) spanW else 0F
+        val y1 = if (isDownSide) -spanH else 0F
+        val y2 = if (isDownSide) 0F else spanH
+        return Border(x1, y1, x2, y2)
+    }
+
+    private fun emptyCardBorder(): Border =
+        if (isLeftSide) Border(0F, -1F, 20F, 20F) else Border(0F, -1F, -20F, 20F)
+
+    /** Grouped：按模块 Category 分块成玻璃卡，带分组标题 / 计数 / 圆点。 */
+    private fun drawGrouped(): Border? {
+        var result: Border? = null
+        assumeNonVolatile {
+            val factor = advanceCards()
+
+            val pad = 6F
+            val headerTop = 11F
+            val headerBottom = 3F
+            val rowH = textHeight + space
+            val groupGap = 3F
+
+            var maxSpanW = 0F
+            var yCursor = 0F
+
+            for (category in Category.entries) {
+                val items = cardItems.values.filter { it.module.category == category && it.p > 0F }.toMutableList()
+                if (items.isEmpty()) {
+                    groupWidths.remove(category)
+                    continue
+                }
+
+                items.sortByDescending { it.w }
+
+                var sum = 0F
+                var contentW = 0F
+                var onCount = 0
+                for (item in items) {
+                    sum += smooth(item.p)
+                    contentW = maxOf(contentW, item.w)
+                    if (item.on) onCount++
+                }
+
+                val categoryName = category.displayName.uppercase()
+                val countText = onCount.toString()
+                val headerW = capsWidth(categoryName) + 4F + font.getStringWidth(countText) + 6.7F
+                val targetW = maxOf(headerW, contentW) + pad * 2F
+
+                val prevW = groupWidths[category]
+                val groupW = if (prevW == null) targetW else approach(prevW, targetW, factor)
+                groupWidths[category] = groupW
+                maxSpanW = maxOf(maxSpanW, groupW)
+
+                val groupAlpha = sum.coerceAtMost(1F)
+                val cardH = (headerTop + headerBottom) * groupAlpha + rowH * sum
+
+                glassBlur(-groupW, yCursor, groupW, cardH, minOf(cardRadius, cardH / 2F), groupAlpha)
+                glass(-groupW, yCursor, groupW, cardH, minOf(cardRadius, cardH / 2F), groupAlpha)
+
+                // 分组标题：计数 + 大写标题 + 主题色圆点（淡入过半后出现）
+                val headerAlpha = (groupAlpha - 0.5F) * 2F
+                if (headerAlpha > 0F) {
+                    val th = font.FONT_HEIGHT.toFloat()
+                    val dotColor = ClientThemesUtils.getColor(category.ordinal)
+                    val headerCy = yCursor + headerTop / 2F
+                    val headerTextY = cardTextY(headerCy)
+
+                    var rightV = -pad
+                    val countW = font.getStringWidth(countText).toFloat()
+                    if (countW > 0F) {
+                        font.drawString(
+                            countText,
+                            vtx(rightV - countW, countW),
+                            headerTextY,
+                            Color(255, 255, 255, (110F * headerAlpha).toInt().coerceIn(0, 255)).rgb,
+                            textShadow
+                        )
+                        rightV -= countW + 4F
+                    }
+
+                    val titleW = capsWidth(categoryName)
+                    if (titleW > 0F) {
+                        val origin = rightV - titleW
+                        drawCaps(
+                            categoryName,
+                            vtx(origin, titleW),
+                            headerTextY,
+                            Color(255, 255, 255, (125F * headerAlpha).toInt().coerceIn(0, 255)).rgb
+                        )
+                        drawCardDisc(origin - 5.1F, headerCy, 1.6F, dotColor, headerAlpha)
+                    }
+                }
+
+                // 组内条目：按宽度降序，右对齐排布，行高随淡入进度折叠
+                var itemY = yCursor + headerTop * groupAlpha
+                for (item in items) {
+                    val ap = smooth(item.p)
+                    val itemH = rowH * ap
+                    if (ap > 0.08F) {
+                        val centerY = itemY + itemH / 2F
+                        drawCardItem(item, -6F - item.w, centerY, ap, dimInactive = true)
+                    }
+                    itemY += itemH
+                }
+
+                yCursor += cardH + groupGap * groupAlpha
+            }
+
+            resetColor()
+
+            result = when {
+                yCursor > 0F -> cardBorder(maxSpanW, yCursor)
+                mc.currentScreen is GuiHudDesigner -> emptyCardBorder()
+                else -> null
+            }
+        }
+        return result
+    }
+
+    /** Flow：按类别排序后的 chip 横向排布，超出 Flow 宽度自动换行。 */
+    private fun drawFlow(): Border? {
+        var result: Border? = null
+        assumeNonVolatile {
+            val factor = advanceCards()
+
+            val chipPad = 5F
+            val chipGap = 3F
+            val flowWidth = 150F
+            val rowH = textHeight + space
+            val dotW = 6.7F
+
+            val items = cardItems.values.filter { it.on && it.p > 0F }.toMutableList()
+            items.sortWith(compareBy({ it.module.category.ordinal }, { it.module.getName().lowercase() }))
+
+            var cursorX = 0F
+            var cursorY = 0F
+            var maxSpanW = 0F
+
+            for (item in items) {
+                val chipW = chipPad * 2F + dotW + item.w
+                if (cursorX < 0F && -cursorX + chipW > flowWidth) {
+                    cursorX = 0F
+                    cursorY += rowH + chipGap
+                }
+
+                cursorX -= chipW
+                item.cw = chipW
+                if (!item.placed) {
+                    item.x = cursorX
+                    item.y = cursorY
+                    item.placed = true
+                } else {
+                    item.x = approach(item.x, cursorX, factor)
+                    item.y = approach(item.y, cursorY, factor)
+                }
+
+                maxSpanW = maxOf(maxSpanW, -item.x)
+                cursorX -= chipGap
+            }
+
+            for (item in cardItems.values) {
+                if (!item.placed || item.p <= 0F) continue
+                val ap = smooth(item.p)
+                glassBlur(item.x, item.y, item.cw, rowH, minOf(cardRadius, rowH / 2F), ap)
+                glass(item.x, item.y, item.cw, rowH, minOf(cardRadius, rowH / 2F), ap)
+                if (ap > 0.1F) {
+                    val centerY = item.y + rowH / 2F
+                    val contentOrigin = item.x + chipPad
+                    drawCardDisc(contentOrigin + 1.6F, centerY, 1.6F, ClientThemesUtils.getColor(item.module.category.ordinal), ap)
+                    drawCardItem(item, contentOrigin + dotW, centerY, ap, dimInactive = true)
+                }
+            }
+
+            val spanH = if (items.isEmpty()) 0F else cursorY + rowH
+
+            resetColor()
+
+            result = when {
+                spanH > 0F -> cardBorder(maxSpanW, spanH)
+                mc.currentScreen is GuiHudDesigner -> emptyCardBorder()
+                else -> null
+            }
+        }
+        return result
+    }
+
+    /**
+     * HotKey：1:1 对齐 MoonLight HotKeyWidget 的模式——
+     * 可选 "HotKeys" 标题栏 + 全部开启模块的圆角行（13px 行高，模块名 + 后缀 + 13px
+     * 分类图标徽章贴锚定边，行围绕内侧锚点缩放入场），按宽度降序排列。
+     */
+    private fun drawHotKey(): Border? {
+        var result: Border? = null
+        assumeNonVolatile {
+            advanceCards()
+
+            val rowH = 13F
+            val badgeW = 13F
+            val badgeGap = 4F
+            val textPad = 3F
+
+            val items = cardItems.values.filter { it.on && it.p > 0F }
+                .sortedByDescending { it.w }
+
+            var yCursor = 0F
+            var spanH = 0F
+            var maxSpanW = 0F
+
+            // HotKeys 标题栏（moonlight hotkeysDisplay）
+            if (hotkeyHeader && items.isNotEmpty()) {
+                val headerW = 88F
+                val headerY = -(rowH + 6F)
+                spanH += rowH + 6F
+                maxSpanW = maxOf(maxSpanW, headerW)
+
+                glassBlur(-headerW, headerY, headerW, rowH, minOf(cardRadius, rowH / 2F), 1F)
+                glass(-headerW, headerY, headerW, rowH, minOf(cardRadius, rowH / 2F), 1F)
+
+                val th = font.FONT_HEIGHT.toFloat()
+                val headerTextW = font.getStringWidth("HotKeys").toFloat()
+                drawCardDisc(-headerW + 7F, headerY + rowH / 2F, 1.6F, ClientThemesUtils.getColor(0), 1F)
+                font.drawString(
+                    "HotKeys",
+                    vtx(-headerW + 13F, headerTextW),
+                    vy(headerY + (rowH - th) / 2F + 0.5F),
+                    Color.WHITE.rgb,
+                    textShadow
+                )
+            }
+
+            for (item in items) {
+                val ap = smooth(item.p)
+                if (ap <= 0.05F) continue
+
+                val boxW = item.w + textPad * 2F
+                val rowW = badgeW + badgeGap + boxW
+                maxSpanW = maxOf(maxSpanW, rowW)
+
+                val rowY = yCursor
+                yCursor += rowH * ap
+                spanH = rowY + rowH * ap
+
+                val centerY = rowY + rowH / 2F
+                val textY = cardTextY(centerY)
+                val radius = minOf(cardRadius, rowH / 2F)
+
+                // 行模糊（未缩放矩阵下按屏幕绝对坐标取景）：遮罩只覆盖文本框与图标
+                // 徽章两块底色，中间空隙不参与模糊（空隙处没有底色，不该有 blur）
+                glassBlur(-rowW, rowY, rowW, rowH, radius, ap) {
+                    drawRoundedRect(
+                        vmx(-rowW), vy(rowY), vmx(-badgeW - badgeGap), vy(rowY + rowH),
+                        -1, radius, RenderUtils.RoundedCorners.ALL
+                    )
+                    drawRoundedRect(
+                        vmx(-badgeW), vy(rowY), vmx(0F), vy(rowY + rowH),
+                        -1, radius, RenderUtils.RoundedCorners.ALL
+                    )
+                }
+
+                // 行淡入时围绕内侧锚点（文本框靠徽章一侧）缩放（对齐 MoonLight）
+                GlStateManager.pushMatrix()
+                if (ap < 1F) {
+                    val cx = vmx(-badgeW - badgeGap)
+                    val cy = vy(centerY)
+                    GlStateManager.translate(cx, cy, 0F)
+                    GlStateManager.scale(ap, ap, 1F)
+                    GlStateManager.translate(-cx, -cy, 0F)
+                }
+
+                // 行底 + 图标徽章（moonlight Dark 底色）
+                val rowColor = Color(21, 21, 21, (cardAlpha * 255F * ap).toInt().coerceIn(0, 255)).rgb
+                drawRoundedRectAA(
+                    vmx(-rowW), vy(rowY), vmx(-badgeW - badgeGap), vy(rowY + rowH),
+                    rowColor, radius, RenderUtils.RoundedCorners.ALL
+                )
+                drawRoundedRectAA(
+                    vmx(-badgeW), vy(rowY), vmx(0F), vy(rowY + rowH),
+                    rowColor, radius, RenderUtils.RoundedCorners.ALL
+                )
+
+                // 分类图标徽章（取镜像后的最小角，保证 LEFT/DOWN 侧不越界）
+                drawImage(
+                    item.module.category.iconResourceLocation,
+                    minOf(vmx(-badgeW + 1F), vmx(-1F)),
+                    minOf(vy(rowY + 1F), vy(rowY + rowH - 1F)),
+                    11, 11,
+                    Color(255, 255, 255, (255F * ap).toInt().coerceIn(0, 255))
+                )
+
+                // 模块名 + 后缀（主题色，右对齐于文本框）
+                val markAsInactive = inactiveStyle == "Color" && !item.module.isActive
+                val textColor = if (markAsInactive) inactiveColor
+                else ClientThemesUtils.getColorWithAlpha(0, (255F * ap).toInt().coerceIn(0, 255)).rgb
+                val nameOrigin = -(badgeW + badgeGap + textPad) - item.w
+                font.drawString(cardDisplayName(item.module), vtx(nameOrigin, item.nameW), textY, textColor, textShadow)
+                if (item.tag.isNotEmpty()) {
+                    val tagW = font.getStringWidth(item.tag).toFloat()
+                    val tagColor = if (markAsInactive) inactiveColor
+                    else Color(255, 255, 255, (120F * ap).toInt().coerceIn(0, 255)).rgb
+                    font.drawString(item.tag, vtx(nameOrigin + item.nameW + 3.5F, tagW), textY, tagColor, textShadow)
+                }
+
+                GlStateManager.popMatrix()
+            }
+
+            resetColor()
+
+            result = when {
+                spanH > 0F -> cardBorder(maxSpanW, spanH)
+                mc.currentScreen is GuiHudDesigner -> emptyCardBorder()
+                else -> null
+            }
+        }
+        return result
+    }
+
     override fun updateElement() {
-        modules = moduleManager.filter { it.slide > 0 && !it.isHidden && !(hideRender && it.category == Category.RENDER) }
-            .sortedBy { -font.getStringWidth(getDisplayString(it)) }
+        modules = when (style) {
+            "LB" -> moduleManager.filter {
+                it.slide > 0 && !it.isHidden && !(hideRender && it.category == Category.RENDER)
+            }.sortedBy { -font.getStringWidth(getDisplayString(it)) }
+
+            else -> moduleManager.filter { isCardVisible(it) }
+        }
     }
 }

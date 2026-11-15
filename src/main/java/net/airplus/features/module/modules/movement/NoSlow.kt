@@ -15,6 +15,7 @@ import net.airplus.utils.extensions.isMoving
 import net.airplus.utils.inventory.InventoryUtils
 import net.airplus.utils.inventory.SilentHotbar
 import net.airplus.utils.movement.MovementUtils.hasMotion
+import net.airplus.utils.rotation.RotationSettings
 import net.airplus.utils.timing.TickTimer
 import net.minecraft.item.*
 import net.minecraft.network.handshake.client.C00Handshake
@@ -32,9 +33,9 @@ import net.minecraft.util.EnumFacing
 
 object NoSlow : Module("NoSlow", Category.MOVEMENT, gameDetecting = false) {
 
-    private val swordMode by choices(
+    val swordMode by choices(
         "SwordMode",
-        arrayOf("None", "NCP", "UpdatedNCP", "AAC5", "SwitchItem", "InvalidC08", "Blink", "postplace", "Vision"),
+        arrayOf("None", "NCP", "UpdatedNCP", "AAC5", "SwitchItem", "InvalidC08", "Blink", "postplace", "Vision", "Rise"),
         "None"
     )
 
@@ -43,9 +44,9 @@ object NoSlow : Module("NoSlow", Category.MOVEMENT, gameDetecting = false) {
     private val blockForwardMultiplier by float("BlockForwardMultiplier", 1f, 0.2F..1f)
     private val blockStrafeMultiplier by float("BlockStrafeMultiplier", 1f, 0.2F..1f)
 
-    private val consumeMode by choices(
+    val consumeMode by choices(
         "ConsumeMode",
-        arrayOf("None", "UpdatedNCP", "AAC5", "SwitchItem", "InvalidC08", "Intave", "Drop", "Vision"),
+        arrayOf("None", "UpdatedNCP", "AAC5", "SwitchItem", "InvalidC08", "Intave", "Drop", "Vision", "Rise"),
         "None"
     )
 
@@ -60,11 +61,22 @@ object NoSlow : Module("NoSlow", Category.MOVEMENT, gameDetecting = false) {
         true
     ) { consumeForwardMultiplier > 0.2F || consumeStrafeMultiplier > 0.2F }
 
-    private val bowPacket by choices(
+    val bowPacket by choices(
         "BowMode",
-        arrayOf("None", "UpdatedNCP", "AAC5", "SwitchItem", "InvalidC08", "Vision"),
+        arrayOf("None", "UpdatedNCP", "AAC5", "SwitchItem", "InvalidC08", "Vision", "Rise"),
         "None"
     )
+
+    // Rise（Ported from Rise GrimNoSlow / Grim19NoSlow / Grim30NoSlow）
+    val riseMode by choices("Rise-NoSlowMode", arrayOf("Grim", "Grim19", "Grim30"), "Grim") {
+        swordMode == "Rise" || consumeMode == "Rise" || bowPacket == "Rise"
+    }
+    val riseHeypixel by boolean("Rise-Heypixel", false) {
+        riseMode == "Grim30" && (swordMode == "Rise" || consumeMode == "Rise" || bowPacket == "Rise")
+    }
+    val riseOptions = RotationSettings(this) {
+        riseMode == "Grim30" && (swordMode == "Rise" || consumeMode == "Rise" || bowPacket == "Rise")
+    }
 
     private val bowForwardMultiplier by float("BowForwardMultiplier", 1f, 0.2F..1f)
     private val bowStrafeMultiplier by float("BowStrafeMultiplier", 1f, 0.2F..1f)
@@ -76,6 +88,9 @@ object NoSlow : Module("NoSlow", Category.MOVEMENT, gameDetecting = false) {
     private var shouldSwap = false
     private var shouldBlink = true
     private var shouldNoSlow = false
+
+    // 触发 NoSlowRise 对象初始化（注册事件监听）
+    private val noSlowRiseListener = NoSlowRise
 
     private var hasDropped = false
 
@@ -348,6 +363,10 @@ object NoSlow : Module("NoSlow", Category.MOVEMENT, gameDetecting = false) {
     }
 
     val onSlowDown = handler<SlowDownEvent> { event ->
+        // Rise 模式：命中时已把减速设为 1f，直接跳过默认乘数逻辑
+        if (NoSlowRise.handleSlowDown(event))
+            return@handler
+
         val heldItem = mc.thePlayer.heldItem?.item
 
         if (heldItem !is ItemSword) {

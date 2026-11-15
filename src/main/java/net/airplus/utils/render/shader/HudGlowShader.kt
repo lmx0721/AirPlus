@@ -2,6 +2,7 @@ package net.airplus.utils.render.shader
 
 import net.airplus.utils.client.ClientUtils
 import net.airplus.utils.client.MinecraftInstance
+import net.airplus.utils.render.LwjglCompat
 import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.client.gui.ScaledResolution
 import net.minecraft.client.shader.Framebuffer
@@ -57,6 +58,7 @@ object HudGlowShader : MinecraftInstance {
     private var uniformRadius = -1
     private var uniformGain = -1
     private var uniformKernel = -1
+    private var uniformGlowColor = -1
 
     /** 辉光源 FBO：本帧所有组件的遮罩形状（白色 + 强度 alpha）累积于此（半分辨率，无 depth） */
     private var inputFramebuffer: Framebuffer? = null
@@ -129,14 +131,17 @@ object HudGlowShader : MinecraftInstance {
         val blendSrcAlpha = GL11.glGetInteger(0x80CA)
         val blendDstAlpha = GL11.glGetInteger(0x80CB)
         colorMaskBuf.clear()
-        GL11.glGetInteger(GL11.GL_COLOR_WRITEMASK, colorMaskBuf)
+        if (!LwjglCompat.snapshotColorMask(colorMaskBuf)) {
+            LwjglCompat.fallbackColorMaskAllTrue(colorMaskBuf)
+        }
         currentColorBuf.clear()
-        GL11.glGetFloat(GL11.GL_CURRENT_COLOR, currentColorBuf)
+        GL11.glGetFloat(LwjglCompat.GL_CURRENT_COLOR, currentColorBuf)
         val prevColorR = currentColorBuf[0]; val prevColorG = currentColorBuf[1]
         val prevColorB = currentColorBuf[2]; val prevColorA = currentColorBuf[3]
         val activeTexturePrev = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE)
         GL13.glActiveTexture(GL13.GL_TEXTURE0)
         val textureBindingPrev = GL11.glGetInteger(0x8069)
+        net.airplus.utils.render.GLErrorProbe.drain("AC1-snap")
 
         try {
             input.bindFramebuffer(true)
@@ -152,31 +157,41 @@ object HudGlowShader : MinecraftInstance {
             )
             GL11.glColorMask(true, true, true, true)
             GL11.glColor4f(1F, 1F, 1F, intensity.coerceIn(0F, 1F))
+            net.airplus.utils.render.GLErrorProbe.drain("AC2-setup")
             drawShape()
+            net.airplus.utils.render.GLErrorProbe.drain("AC3-shape")
         } finally {
             mc.framebuffer.bindFramebuffer(true)
+            net.airplus.utils.render.GLErrorProbe.drain("AC4-r-fbo")
 
-            // unit-0 绑定两步法（drawShape 可能改绑纹理，如 drawRoundedRect 的 SDF 贴图）
-            GL13.glActiveTexture(GL13.GL_TEXTURE0)
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0)
+            // unit-0 绑定还原（关键：必须同步 GlStateManager 缓存）。辉光管线用裸 GL
+            // 改绑过真实绑定；若此处只裸还原，GlStateManager 的 textureState 缓存停在
+            // 旧值 → 派发结束后原版守卫式 bindTexture(widgets/icons)（物品栏/血量/饥饿度
+            // 贴图）被缓存守卫跳过，图标采样错误纹理而消失。先裸绑回 prev 保证真实值，
+            // 再守卫式写一遍同步缓存（缓存已相等时守卫跳过，但真实已是 prev，二者一致）。
+            GlStateManager.setActiveTexture(GL13.GL_TEXTURE0)
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureBindingPrev)
-            GL13.glActiveTexture(activeTexturePrev)
+            GlStateManager.bindTexture(textureBindingPrev)
+            GlStateManager.setActiveTexture(activeTexturePrev)
 
-            // 当前颜色两步法
-            GL11.glColor4f(0F, 0F, 0F, 0F)
+            // 当前颜色还原：真实 + GlStateManager.color 缓存同步。裸 glColor4f 只改真实，
+            // 缓存停留旧值时，原版 renderTooltip 开头的守卫式 GlStateManager.color(1,1,1,1)
+            // 会被跳过 → 血量/饥饿度/经验条图标用 HUD 残留颜色绘制而消失/变色。
             GL11.glColor4f(prevColorR, prevColorG, prevColorB, prevColorA)
+            GlStateManager.color(prevColorR, prevColorG, prevColorB, prevColorA)
 
-            // colorMask 两步法恢复
+            // colorMask 两步法恢复（守卫式，先反向写推开缓存）
             val m0 = colorMaskBuf[0] == GL11.GL_TRUE; val m1 = colorMaskBuf[1] == GL11.GL_TRUE
             val m2 = colorMaskBuf[2] == GL11.GL_TRUE; val m3 = colorMaskBuf[3] == GL11.GL_TRUE
-            GL11.glColorMask(!m0, !m1, !m2, !m3)
-            GL11.glColorMask(m0, m1, m2, m3)
+            GlStateManager.colorMask(!m0, !m1, !m2, !m3)
+            GlStateManager.colorMask(m0, m1, m2, m3)
 
             // blend 因数两步法（try 里改过真实因数，先写脏值推开缓存守卫）
             GlStateManager.tryBlendFuncSeparate(GL_ZERO, GL_ONE, GL_ZERO, GL_ONE)
             GlStateManager.tryBlendFuncSeparate(
                 blendSrc, blendDst, blendSrcAlpha, blendDstAlpha
             )
+            net.airplus.utils.render.GLErrorProbe.drain("AC5-r-blend")
             if (blendEnabled) {
                 GlStateManager.disableBlend()
                 GlStateManager.enableBlend()
@@ -184,12 +199,25 @@ object HudGlowShader : MinecraftInstance {
                 GlStateManager.enableBlend()
                 GlStateManager.disableBlend()
             }
-            if (alphaEnabled) GL11.glEnable(GL11.GL_ALPHA_TEST) else GL11.glDisable(GL11.GL_ALPHA_TEST)
-            if (depthEnabled) GL11.glEnable(GL11.GL_DEPTH_TEST) else GL11.glDisable(GL11.GL_DEPTH_TEST)
-            // stencil：先恢复 op/func/writemask 再按原开关状态还原测试
+            if (alphaEnabled) {
+                GlStateManager.disableAlpha()
+                GlStateManager.enableAlpha()
+            } else {
+                GlStateManager.enableAlpha()
+                GlStateManager.disableAlpha()
+            }
+            if (depthEnabled) {
+                GlStateManager.disableDepth()
+                GlStateManager.enableDepth()
+            } else {
+                GlStateManager.enableDepth()
+                GlStateManager.disableDepth()
+            }
+            // stencil：先恢复 op/func/writemask 再按原开关状态还原测试（裸 GL，无缓存包装）
             GL11.glStencilOp(stFail, stZFail, stZPass)
             GL11.glStencilFunc(stFunc, stRef, stValueMask)
             GL11.glStencilMask(stWriteMask)
+            net.airplus.utils.render.GLErrorProbe.drain("AC6-r-stencil")
             if (stencilEnabled) GL11.glEnable(GL11.GL_STENCIL_TEST) else GL11.glDisable(GL11.GL_STENCIL_TEST)
             GL11.glScissor(scissorBuf[0], scissorBuf[1], scissorBuf[2], scissorBuf[3])
             if (scissorEnabled) GL11.glEnable(GL11.GL_SCISSOR_TEST) else GL11.glDisable(GL11.GL_SCISSOR_TEST)
@@ -210,6 +238,7 @@ object HudGlowShader : MinecraftInstance {
     fun flush(glowColor: Color, radius: Float, compression: Float, gain: Float = 1F) {
         if (!dirty) return
         dirty = false
+        net.airplus.utils.render.GLErrorProbe.drain("B-glow-in")
 
         val input = inputFramebuffer ?: return
         val output = outputFramebuffer ?: return
@@ -252,9 +281,11 @@ object HudGlowShader : MinecraftInstance {
         val blendSrcAlpha = GL11.glGetInteger(0x80CA)
         val blendDstAlpha = GL11.glGetInteger(0x80CB)
         colorMaskBuf.clear()
-        GL11.glGetInteger(GL11.GL_COLOR_WRITEMASK, colorMaskBuf)
+        if (!LwjglCompat.snapshotColorMask(colorMaskBuf)) {
+            LwjglCompat.fallbackColorMaskAllTrue(colorMaskBuf)
+        }
         currentColorBuf.clear()
-        GL11.glGetFloat(GL11.GL_CURRENT_COLOR, currentColorBuf)
+        GL11.glGetFloat(LwjglCompat.GL_CURRENT_COLOR, currentColorBuf)
         val prevColorR = currentColorBuf[0]; val prevColorG = currentColorBuf[1]
         val prevColorB = currentColorBuf[2]; val prevColorA = currentColorBuf[3]
 
@@ -275,6 +306,7 @@ object HudGlowShader : MinecraftInstance {
         val textureBindingPrev = GL11.glGetInteger(0x8069)
         GL13.glActiveTexture(GL13.GL_TEXTURE1)
         val textureBindingPrev1 = GL11.glGetInteger(0x8069)
+        net.airplus.utils.render.GLErrorProbe.drain("C1-snap")
 
         try {
             GL11.glDisable(GL11.GL_SCISSOR_TEST)
@@ -284,6 +316,7 @@ object HudGlowShader : MinecraftInstance {
             GL11.glDisable(GL11.GL_BLEND)
             GL11.glColorMask(true, true, true, true)
             GL11.glDepthMask(true)
+            net.airplus.utils.render.GLErrorProbe.drain("C2-setup")
 
             GL20.glUseProgram(programID)
             GL20.glUniform1i(uniformTexture, 0)
@@ -296,6 +329,7 @@ object HudGlowShader : MinecraftInstance {
             kernelUpload.put(kernelWeights, 0, kernelRadius)
             kernelUpload.flip()
             GL20.glUniform1(uniformKernel, kernelUpload)
+            net.airplus.utils.render.GLErrorProbe.drain("C3-uniform")
 
             bindGlowTextures(input.framebufferTexture, input.framebufferTexture)
 
@@ -305,23 +339,25 @@ object HudGlowShader : MinecraftInstance {
             output.bindFramebuffer(true)
             GL20.glUniform2f(uniformDirection, compression, 0.0f)
             GL20.glUniform1f(uniformGain, 1F)
-            GL11.glColor4f(1F, 1F, 1F, 1F)
+            GL20.glUniform3f(uniformGlowColor, 1F, 1F, 1F)
             drawFullscreenQuad(sr)
+            net.airplus.utils.render.GLErrorProbe.drain("C4-pass1")
 
             // Pass 2：垂直高斯 + 贴回主 framebuffer（标准 alpha 混合，颜色 = 辉光染色）
             mc.framebuffer.bindFramebuffer(true)
             bindGlowTextures(output.framebufferTexture, input.framebufferTexture)
             GL20.glUniform2f(uniformDirection, 0.0f, compression)
             GL20.glUniform1f(uniformGain, gain.coerceIn(1F, 10F))
-            GL11.glEnable(GL11.GL_BLEND)
-            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA)
-            GL11.glColor4f(
+            GL20.glUniform3f(
+                uniformGlowColor,
                 glowColor.red / 255F,
                 glowColor.green / 255F,
-                glowColor.blue / 255F,
-                1F
+                glowColor.blue / 255F
             )
+            GL11.glEnable(GL11.GL_BLEND)
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA)
             drawFullscreenQuad(sr)
+            net.airplus.utils.render.GLErrorProbe.drain("C5-pass2")
 
             GL20.glUseProgram(0)
 
@@ -330,6 +366,7 @@ object HudGlowShader : MinecraftInstance {
             // 清空点；聊天栏等晚段累积的形状会在下一轮派发末尾被合成，恰好各一次。
             input.setFramebufferColor(0F, 0F, 0F, 0F)
             input.framebufferClear()
+            net.airplus.utils.render.GLErrorProbe.drain("C6-clear")
 
             if (!firstFlushLogged) {
                 firstFlushLogged = true
@@ -348,25 +385,28 @@ object HudGlowShader : MinecraftInstance {
             modelMatrixBuf.rewind(); GL11.glLoadMatrix(modelMatrixBuf)
             GL11.glMatrixMode(prevMatrixMode)
 
-            // unit-0 / unit-1 绑定还原（两步法推开缓存守卫）
-            GL13.glActiveTexture(GL13.GL_TEXTURE1)
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0)
+            // unit-0 / unit-1 绑定还原（先裸绑回真实值，再守卫式同步 GlStateManager 缓存，
+            // 原理同 accumulate —— 缓存失步会让原版物品栏/状态栏的守卫式 bindTexture 被跳过）
+            GlStateManager.setActiveTexture(GL13.GL_TEXTURE1)
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureBindingPrev1)
-            GL13.glActiveTexture(GL13.GL_TEXTURE0)
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0)
+            GlStateManager.bindTexture(textureBindingPrev1)
+            GlStateManager.setActiveTexture(GL13.GL_TEXTURE0)
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureBindingPrev)
-            GL13.glActiveTexture(activeTexturePrev)
+            GlStateManager.bindTexture(textureBindingPrev)
+            GlStateManager.setActiveTexture(activeTexturePrev)
 
-            // 当前颜色两步法
-            GL11.glColor4f(0F, 0F, 0F, 0F)
+            // 当前颜色还原：真实 + GlStateManager.color 缓存同步
             GL11.glColor4f(prevColorR, prevColorG, prevColorB, prevColorA)
+            GlStateManager.color(prevColorR, prevColorG, prevColorB, prevColorA)
 
-            // colorMask 两步法恢复
+            // colorMask 两步法恢复（守卫式）
             val m0 = colorMaskBuf[0] == GL11.GL_TRUE; val m1 = colorMaskBuf[1] == GL11.GL_TRUE
             val m2 = colorMaskBuf[2] == GL11.GL_TRUE; val m3 = colorMaskBuf[3] == GL11.GL_TRUE
-            GL11.glColorMask(!m0, !m1, !m2, !m3)
-            GL11.glColorMask(m0, m1, m2, m3)
-            GL11.glDepthMask(depthMaskPrev)
+            GlStateManager.colorMask(!m0, !m1, !m2, !m3)
+            GlStateManager.colorMask(m0, m1, m2, m3)
+            // depthMask 两步法恢复（守卫式，flush 用裸 glDepthMask(true) 改过真实值）
+            GlStateManager.depthMask(!depthMaskPrev)
+            GlStateManager.depthMask(depthMaskPrev)
 
             // blend 开关与因数两步法还原
             GlStateManager.tryBlendFuncSeparate(GL_ZERO, GL_ONE, GL_ZERO, GL_ONE)
@@ -380,11 +420,25 @@ object HudGlowShader : MinecraftInstance {
                 GlStateManager.enableBlend()
                 GlStateManager.disableBlend()
             }
-            if (alphaEnabled) GL11.glEnable(GL11.GL_ALPHA_TEST) else GL11.glDisable(GL11.GL_ALPHA_TEST)
-            if (depthEnabled) GL11.glEnable(GL11.GL_DEPTH_TEST) else GL11.glDisable(GL11.GL_DEPTH_TEST)
+            if (alphaEnabled) {
+                GlStateManager.disableAlpha()
+                GlStateManager.enableAlpha()
+            } else {
+                GlStateManager.enableAlpha()
+                GlStateManager.disableAlpha()
+            }
+            if (depthEnabled) {
+                GlStateManager.disableDepth()
+                GlStateManager.enableDepth()
+            } else {
+                GlStateManager.enableDepth()
+                GlStateManager.disableDepth()
+            }
+            // stencil / scissor：1.8.9 GlStateManager 无对应缓存包装，裸还原即可
             if (stencilEnabled) GL11.glEnable(GL11.GL_STENCIL_TEST) else GL11.glDisable(GL11.GL_STENCIL_TEST)
             GL11.glScissor(scissorBuf[0], scissorBuf[1], scissorBuf[2], scissorBuf[3])
             if (scissorEnabled) GL11.glEnable(GL11.GL_SCISSOR_TEST) else GL11.glDisable(GL11.GL_SCISSOR_TEST)
+            net.airplus.utils.render.GLErrorProbe.drain("C-glow-out")
         }
     }
 
@@ -451,11 +505,13 @@ object HudGlowShader : MinecraftInstance {
     // Rise bloom.frag 同款：逐样本 rgb *= alpha 消除暗边，末端 rgb /= alpha 归一化；
     // 垂直 pass（direction.x == 0）采样形状纹理，形状内部（alpha > 0）discard，
     // 光晕只画在组件外圈。采样循环用常量上界 + 动态 break（全 GL 实现安全）。
-    // gl_Color：pass1 glColor = (1,1,1,1) 不受影响；pass2 应用 Client.GlowColor 染色。
-    // gain：强度 > 100% 的亮度增益（FBO alpha 上限为 1，超出部分由 rgb 乘子补足）。
-    // 铁律：shader 字符串内绝不能出现非 ASCII 字符 —— LWJGL2 glShaderSource 按低字节
+    // glowColor uniform：pass1 置 (1,1,1) 不受影响；pass2 应用 Client.GlowColor 染色。
+    // 铁律 1：shader 字符串内绝不能出现非 ASCII 字符 —— LWJGL2 glShaderSource 按低字节
     // 编码（中文 → 任意 ASCII 字节，含 CR/LF），会咬断 // 注释行产生碎片代码，
     // NVIDIA 编译器报 C1503 undefined variable "P" → 编译失败 → 辉光静默消失（曾踩坑）。
+    // 铁律 2：颜色绝不走 gl_Color —— 顶点着色器不写 gl_FrontColor 时，片元 gl_Color
+    // 按 GLSL 规范是未定义值，严格驱动上恒为白 → GlowColor 自定义颜色失效（曾踩坑），
+    // 故用 uniform 逐 pass 显式上传（pass1 = 白，pass2 = GlowColor）。
     private val fragmentSrc = """
         #version 120
         uniform sampler2D textureIn;
@@ -464,6 +520,7 @@ object HudGlowShader : MinecraftInstance {
         uniform vec2 direction;
         uniform float radius;
         uniform float gain;
+        uniform vec3 glowColor;
         uniform float kernel[33];
         const int MAX_RANGE = 32;
 
@@ -486,7 +543,7 @@ object HudGlowShader : MinecraftInstance {
                 t.rgb *= t.a;
                 sum += (s + t) * kernel[i];
             }
-            gl_FragColor = vec4((sum.rgb / max(sum.a, 0.0001)) * gain * gl_Color.rgb, sum.a);
+            gl_FragColor = vec4((sum.rgb / max(sum.a, 0.0001)) * gain * glowColor, sum.a);
         }
     """.trimIndent()
 
@@ -544,6 +601,7 @@ object HudGlowShader : MinecraftInstance {
         uniformRadius = GL20.glGetUniformLocation(programID, "radius")
         uniformGain = GL20.glGetUniformLocation(programID, "gain")
         uniformKernel = GL20.glGetUniformLocation(programID, "kernel")
+        uniformGlowColor = GL20.glGetUniformLocation(programID, "glowColor")
         return true
     }
 
@@ -557,6 +615,7 @@ object HudGlowShader : MinecraftInstance {
         uniformRadius = -1
         uniformGain = -1
         uniformKernel = -1
+        uniformGlowColor = -1
 
         inputFramebuffer?.deleteFramebuffer()
         inputFramebuffer = null

@@ -83,6 +83,7 @@ object HudBlur : MinecraftInstance, Listenable {
         // 阶段重拍基准快照，把当帧已渲染的全部 HUD 内容 + 聊天背景烙进快照 → 下一帧
         // 所有 HUD 元素复用被污染的快照 → 模糊区域发黑/出现其他组件画面。
         handler<Render2DEvent>(always = true, priority = Byte.MAX_VALUE) {
+            GLErrorProbe.drain("A-hud-start")
             // 帧会话判定：用 timer 累计值构造严格递增的帧 key（elapsedTicks + elapsedPartialTicks）。
             // 同一渲染帧内可能触发多次 Render2DEvent（GuiIngame / GuiSpectator / Profiler 等
             // 多处注入），此前用「1ms 墙钟去重」判定同帧——但 GUI 渲染耗时远超 1ms，帧内
@@ -121,6 +122,7 @@ object HudBlur : MinecraftInstance, Listenable {
                 Client.blurGlowCompression,
                 (Client.blurGlowStrength / 100F).coerceAtLeast(1F)
             )
+            GLErrorProbe.drain("H-hud-end")
         }
     }
 
@@ -177,6 +179,8 @@ object HudBlur : MinecraftInstance, Listenable {
         val height = bottom - top
 
         if (width <= 0F || height <= 0F) return
+
+        GLErrorProbe.drain("J-blurcall-in")
 
         // mask 绘制异常时也要恢复 colorMask/depthMask（erase 内部会还原），
         // push/pop 保护当前矩阵：自定义遮罩可能修改矩阵（如 Target2 的动画变换），
@@ -271,9 +275,14 @@ object HudBlur : MinecraftInstance, Listenable {
         // 像素 stencil 写入被丢弃 → 遮罩出现空洞 → 那块区域不贴模糊（「只模糊了一部分区域」）。
         // 2D HUD 内容不需要深度，统一关闭；退出时按进入前的开关两步法还原（推开缓存守卫）。
         val prevDepthTest = glIsEnabled(GL_DEPTH_TEST)
+        // colorMask 快照必须先于 EmbeddedStencil.write(false) 采集：write 会用裸 GL
+        // 把真实 colorMask 写成 false，若在其后快照，savedColorMask 就变成 (F,F,F,F)，
+        // 退出时 restoreColorMask 会把调用方恢复成全关，随后的 dispose() 又裸写回全开
+        // → 真实=ON / 缓存=OFF 的持久失步（colorMask 缓存毒化会静默丢弃同帧后续的
+        // 守卫式恢复）。先快照入口真实值，write 的裸写不经过缓存，退出时按入口值恢复。
+        forceColorMaskOn()
         if (!reuseOuterMask) EmbeddedStencil.write(false)
         try {
-            forceColorMaskOn()
             glDisable(GL_DEPTH_TEST)
             GlStateManager.disableDepth()
             if (!reuseOuterMask) {
@@ -285,9 +294,11 @@ object HudBlur : MinecraftInstance, Listenable {
             }
             drawClippedResult(left, top, right, bottom)
         } finally {
+            // dispose 先行（裸写 colorMask ON 兜底异常路径），再按入口快照恢复，
+            // 保证退出时 真实 == 缓存 == 进入前，不留持久失步
+            if (!reuseOuterMask) EmbeddedStencil.dispose()
             restoreColorMask()
             // 异常路径同样还原 stencil 状态，避免残留 GL_EQUAL 导致后续渲染错乱
-            if (!reuseOuterMask) EmbeddedStencil.dispose()
             if (prevDepthTest) {
                 GlStateManager.disableDepth()
                 GlStateManager.enableDepth()
@@ -298,6 +309,7 @@ object HudBlur : MinecraftInstance, Listenable {
             // 恢复入口 scissor 状态（硬化期间全程关闭）
             glScissor(scissorBox[0], scissorBox[1], scissorBox[2], scissorBox[3])
             if (entryScissorEnabled) glEnable(GL_SCISSOR_TEST)
+            GLErrorProbe.drain("K-blurcall-out")
         }
     }
 
@@ -334,7 +346,9 @@ object HudBlur : MinecraftInstance, Listenable {
 
     private fun forceColorMaskOn() {
         colorMaskBuf.clear()
-        GL11.glGetInteger(GL11.GL_COLOR_WRITEMASK, colorMaskBuf)
+        if (!LwjglCompat.snapshotColorMask(colorMaskBuf)) {
+            LwjglCompat.fallbackColorMaskAllTrue(colorMaskBuf)
+        }
         for (i in 0..3) savedColorMask[i] = colorMaskBuf[i] == GL11.GL_TRUE
         colorMaskForced = !(savedColorMask[0] && savedColorMask[1] && savedColorMask[2] && savedColorMask[3])
         if (colorMaskForced) {

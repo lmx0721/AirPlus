@@ -14,7 +14,7 @@ import net.airplus.utils.extensions.tryJump
 
 object AACHop350 : SpeedMode("AACHop3.5.0") {
 
-    fun onMotion(event: MotionEvent) {
+    override fun onMotion(event: MotionEvent) {
         val thePlayer = mc.thePlayer ?: return
 
         if (event.eventState == EventState.POST && thePlayer.isMoving && !thePlayer.isInLiquid && !mc.thePlayer.isSneaking) {

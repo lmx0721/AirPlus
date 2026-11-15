@@ -1,6 +1,7 @@
 // skid xylitol
 package net.airplus.utils.render.shader
 
+import net.airplus.utils.render.LwjglCompat
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.ScaledResolution
 import net.minecraft.client.renderer.GlStateManager
@@ -214,7 +215,9 @@ object KawaseBlur {
 
     private fun saveColorState() {
         colorMaskBuf.clear()
-        GL11.glGetInteger(GL11.GL_COLOR_WRITEMASK, colorMaskBuf)
+        if (!LwjglCompat.snapshotColorMask(colorMaskBuf)) {
+            LwjglCompat.fallbackColorMaskAllTrue(colorMaskBuf)
+        }
         prevDepthMask = GL11.glGetInteger(GL11.GL_DEPTH_WRITEMASK) == GL11.GL_TRUE
         // colorMask 强制开启必须用裸 GL：GlStateManager.colorMask 是缓存守卫调用，
         // 真实 colorMask 已被 raw 写入者改为 false 而缓存仍为 true 时守卫会跳过，
@@ -266,7 +269,7 @@ object KawaseBlur {
         // 记录进入时的当前颜色：pass 内会 GlStateManager.color(1,1,1,1) 改写，
         // 退出时经 restoreCallerState 用「先写脏值推开缓存、再写原值」两步法恢复
         currentColorBuf.clear()
-        GL11.glGetFloat(GL11.GL_CURRENT_COLOR, currentColorBuf)
+        GL11.glGetFloat(LwjglCompat.GL_CURRENT_COLOR, currentColorBuf)
 
         // 纹理单元固定到 0（pass 用裸 glBindTexture 绑定，shader 固定采样 unit 0；
         // 调用方若停留在其它 unit 会导致采样错误纹理 → 整块纯色/灰）

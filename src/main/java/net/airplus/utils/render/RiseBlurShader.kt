@@ -88,9 +88,11 @@ object RiseBlurShader {
         val stencilEnabled = GL11.glIsEnabled(GL11.GL_STENCIL_TEST)
         val depthMaskPrev = GL11.glGetInteger(GL11.GL_DEPTH_WRITEMASK) == GL11.GL_TRUE
         colorMaskBuf.clear()
-        GL11.glGetInteger(GL11.GL_COLOR_WRITEMASK, colorMaskBuf)
+        if (!LwjglCompat.snapshotColorMask(colorMaskBuf)) {
+            LwjglCompat.fallbackColorMaskAllTrue(colorMaskBuf)
+        }
         currentColorBuf.clear()
-        GL11.glGetFloat(GL11.GL_CURRENT_COLOR, currentColorBuf)
+        GL11.glGetFloat(LwjglCompat.GL_CURRENT_COLOR, currentColorBuf)
         val prevColorR = currentColorBuf[0]; val prevColorG = currentColorBuf[1]
         val prevColorB = currentColorBuf[2]; val prevColorA = currentColorBuf[3]
         val activeTexturePrev = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE)

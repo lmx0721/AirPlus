@@ -93,7 +93,7 @@ object Client : Module("Client", Category.CLIENT, canBeEnabled = false) {
         get() = blurGlowCompressionValue.get()
 
     // 主字体：自动获取注册表全部非图标字体（不含 Minecraft 原版字体与 Semibold 别名族）
-    private val mainFontValue = choices("MainFont", Fonts.mainFontCandidates(), "HarmonyOS Sans SC Regular")
+    private val mainFontValue = choices("MainFont", Fonts.mainFontCandidates(), "Neuton Bold")
         .onChanged { Fonts.applyMainFont(it) }
 
     // 全局字号（百分比）：仅在烘焙核心 UI 文本字体时套用
@@ -105,7 +105,7 @@ object Client : Module("Client", Category.CLIENT, canBeEnabled = false) {
         .onChanged { applyFontStyle() }
 
     // 中文回退字体（仅可选择内置的两款中文字体）
-    private val chineseFontValue = choices("ChineseFont", arrayOf("HarmonyOS Sans SC", "Setsuna"), "HarmonyOS Sans SC")
+    private val chineseFontValue = choices("ChineseFont", arrayOf("HarmonyOS Sans SC", "Setsuna"), "Setsuna")
         .onChanged { applyChineseFont() }
 
     // 回退字体字号方案

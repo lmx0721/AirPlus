@@ -1,6 +1,7 @@
 package net.airplus.utils.render.shader.shaders
 
 import net.airplus.utils.render.shader.Shader
+import net.minecraft.client.gui.ScaledResolution
 import net.minecraft.client.renderer.GlStateManager
 import org.lwjgl.opengl.GL11
 import java.awt.Color
@@ -11,9 +12,11 @@ class RoundedRectShader : Shader("roundedrect.frag") {
         setupUniform("u_size")
         setupUniform("u_radius")
         setupUniform("u_color")
+        setupUniform("u_scale")
     }
 
     override fun updateUniforms() {
+        setUniformf("u_scale", ScaledResolution(mc).scaleFactor.toFloat())
     }
 
     companion object {
@@ -25,6 +28,7 @@ class RoundedRectShader : Shader("roundedrect.frag") {
             val height = abs(y2 - y)
             val instance = INSTANCE
 
+            net.airplus.utils.render.GLErrorProbe.drain("F-rr-in")
             instance.startShader()
 
             instance.setUniformf("u_size", width, height)
@@ -38,6 +42,7 @@ class RoundedRectShader : Shader("roundedrect.frag") {
             drawQuad(x, y, width, height)
             GlStateManager.disableBlend()
 
+            net.airplus.utils.render.GLErrorProbe.drain("G-rr-out")
             instance.stopShader()
 
             return instance

@@ -7,6 +7,7 @@ package net.airplus.features.module.modules.render
 
 import net.airplus.event.Render2DEvent
 import net.airplus.event.Render3DEvent
+import net.airplus.event.WorldEvent
 import net.airplus.event.handler
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
@@ -28,6 +29,7 @@ import net.airplus.utils.render.ColorUtils.withAlpha
 import net.airplus.utils.render.ESPUtil
 import net.airplus.utils.render.HudBlur
 import net.airplus.utils.render.HudSlices
+import net.airplus.utils.render.RenderUtils
 import net.airplus.utils.render.RenderUtils.disableGlCap
 import net.airplus.utils.render.RenderUtils.drawTexturedModalRect
 import net.airplus.utils.render.RenderUtils.enableGlCap
@@ -35,14 +37,19 @@ import net.airplus.utils.render.RenderUtils.quickDrawBorderedRect
 import net.airplus.utils.render.RenderUtils.quickDrawRect
 import net.airplus.utils.render.RenderUtils.drawRoundedRect
 import net.airplus.utils.render.RenderUtils.resetCaps
+import net.airplus.utils.render.RoundedUtil
 import net.airplus.utils.rotation.RotationUtils.isEntityHeightVisible
+import net.minecraft.client.entity.AbstractClientPlayer
 import net.minecraft.client.entity.EntityPlayerSP
 import net.minecraft.client.gui.Gui
 import net.minecraft.client.gui.ScaledResolution
 import net.minecraft.client.renderer.GlStateManager.*
+import net.minecraft.client.renderer.OpenGlHelper
 import net.minecraft.client.renderer.RenderHelper
 import net.minecraft.client.renderer.Tessellator
 import net.minecraft.client.renderer.vertex.DefaultVertexFormats
+import net.minecraft.enchantment.Enchantment
+import net.minecraft.enchantment.EnchantmentHelper
 import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityLivingBase
 import net.minecraft.entity.item.EntityArmorStand
@@ -50,9 +57,15 @@ import net.minecraft.entity.item.EntityItem
 import net.minecraft.entity.monster.EntityMob
 import net.minecraft.entity.passive.EntityAnimal
 import net.minecraft.entity.player.EntityPlayer
+import net.minecraft.entity.player.EnumPlayerModelParts
 import net.minecraft.init.Items
+import net.minecraft.item.ItemArmor
+import net.minecraft.item.ItemAxe
+import net.minecraft.item.ItemBow
 import net.minecraft.item.ItemStack
+import net.minecraft.item.ItemSword
 import net.minecraft.potion.Potion
+import net.minecraft.util.AxisAlignedBB
 import net.minecraft.util.EnumChatFormatting
 import net.minecraft.util.ResourceLocation
 import org.lwjgl.opengl.GL11.*
@@ -62,6 +75,7 @@ import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.util.*
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -73,17 +87,18 @@ import kotlin.math.roundToInt
  * - Xinxin：从 SilenceFix 移植的 2D 方块名牌（原 NameTags2）
  * - Opai：从 Samsara 移植的胶囊式名牌（原 NameTagOpai）
  * - Moon：从 moon-rebase NametagsModule 迁移的原版风名牌
+ * - Apple：从 moonlight 移植的圆角面板名牌（头像 + 血量环 + 装备行）
  *
- * 非 Legacy 样式由 MixinRendererLivingEntity#canRenderName 取消原版名牌后自绘。
+ * 模块开启时由 MixinRendererLivingEntity#canRenderName 取消原版玩家名牌，各样式均自绘名牌。
  */
 object NameTags : Module("NameTags", Category.RENDER) {
 
     // ================= 样式选择（置于最上方） =================
-    private val mode by choices("Mode", arrayOf("Legacy", "Xinxin", "Opai", "Moon"), "Legacy")
+    private val mode by choices("Mode", arrayOf("Legacy", "Xinxin", "Opai", "Moon", "Apple"), "Legacy")
 
-    /** 供 MixinRendererLivingEntity 使用：非 Legacy 样式全部自绘，需要取消原版玩家名牌。 */
+    /** 供 MixinRendererLivingEntity 使用：模块开启时取消原版玩家名牌（所有样式均自绘），关闭时恢复原版行为。 */
     val cancelVanillaName: Boolean
-        get() = mode != "Legacy"
+        get() = handleEvents()
 
     // ================= Legacy 样式设置（名称保持向后兼容） =================
     private val renderSelf by boolean("RenderSelf", false) { mode == "Legacy" }
@@ -163,7 +178,23 @@ object NameTags : Module("NameTags", Category.RENDER) {
     private val moonDistance by boolean("MoonDistance", true) { mode == "Moon" }
     private val moonSeparateInfo by boolean("MoonSeparateInfo", true) { mode == "Moon" }
     private val moonRound by boolean("MoonRound", true) { mode == "Moon" }
+    private val moonBgColor by color("MoonBgColor", Color.BLACK.withAlpha(120)) { mode == "Moon" }
+    private val moonBgBlur by boolean("MoonBgBlur", false) { mode == "Moon" }
     private val moonFont by font("MoonFont", Fonts.fontRegular35) { mode == "Moon" }
+
+    // ================= Apple 样式设置（moonlight，原 Apple 面板名牌） =================
+    private val appleScale by float("AppleScale", 1F, 0.3F..2.5F) { mode == "Apple" }
+    private val appleAvatar by boolean("AppleAvatar", true) { mode == "Apple" }
+    private val appleHealthRing by boolean("AppleHealthRing", true) { mode == "Apple" }
+    private val appleTeamColors by boolean("AppleTeamColors", true) { mode == "Apple" }
+    private val appleDistance by boolean("AppleDistance", false) { mode == "Apple" }
+    private val appleArmor by boolean("AppleArmor", true) { mode == "Apple" }
+    private val appleHeldItem by boolean("AppleHeldItem", true) { mode == "Apple" && appleArmor }
+    private val appleDurability by boolean("AppleDurability", true) { mode == "Apple" && appleArmor }
+    private val appleEnchantLevels by boolean("AppleEnchantLevels", true) { mode == "Apple" && appleArmor }
+    private val appleDetailRange by float("AppleDetailRange", 40F, 8F..256F) { mode == "Apple" && appleArmor }
+    private val appleBackground by boolean("AppleBackground", true) { mode == "Apple" }
+    private val appleBackgroundAlpha by float("AppleBackgroundAlpha", 215F, 60F..255F) { mode == "Apple" && appleBackground }
 
     // ==================================================================
     // Legacy：经典 3D 公告栏名牌
@@ -1010,7 +1041,6 @@ object NameTags : Module("NameTags", Category.RENDER) {
     // ==================================================================
     // Moon 样式：moon-rebase NametagsModule 迁移（原版风公告栏名牌）
     // ==================================================================
-    private val MOON_BG_COLOR = Color(0, 0, 0, 120).rgb
     private val MOON_INFO_COLOR = 0xFFC0C0C0.toInt()
 
     /** moon targets 过滤：隐身优先，其次 玩家/动物/其余生物。 */
@@ -1049,11 +1079,27 @@ object NameTags : Module("NameTags", Category.RENDER) {
             }
         }
 
-        glPushMatrix()
-
         val renderManager = mc.renderManager
         val rotateX = if (mc.gameSettings.thirdPersonView == 2) -1.0f else 1.0f
         val (x, y, z) = entity.interpolatedPosition(entity.lastTickPos) - renderManager.renderPos
+
+        val nameW = f.getStringWidth(name).toFloat()
+        val infoW = if (info.isEmpty()) 0F else f.getStringWidth(info).toFloat()
+        val gap = if (info.isEmpty()) 0F else f.getStringWidth("  ").toFloat()
+        val lineH = ((f as? GameFontRenderer)?.fontHeight ?: f.FONT_HEIGHT).toFloat()
+
+        val twoLine = moonSeparateInfo && info.isNotEmpty()
+        val bgHalfW = (if (twoLine) max(nameW, infoW) else nameW + gap + infoW) / 2F + 3F
+        val bgH = if (twoLine) lineH * 2F + 3F else lineH + 3F
+
+        // Background Blur：公告板背景矩形四角投影为屏幕 AABB（需在 billboard 变换前、相机矩阵阶段调用）
+        val distance = thePlayer.getDistanceToEntity(entity)
+        val scale = ((distance / 4F).coerceAtLeast(1F) / 150F) * 1.2F
+        val blurBox = if (moonBgBlur)
+            moonBlurBox(x, y + entity.eyeHeight.toDouble() + 0.55, z, bgHalfW, bgH, scale, rotateX) else null
+
+        glPushMatrix()
+
         glTranslated(x, y + entity.eyeHeight.toDouble() + 0.55, z)
         glRotatef(-renderManager.playerViewY, 0F, 1F, 0F)
         glRotatef(renderManager.playerViewX * rotateX, 1F, 0F, 0F)
@@ -1063,29 +1109,29 @@ object NameTags : Module("NameTags", Category.RENDER) {
         enableGlCap(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
-        val distance = thePlayer.getDistanceToEntity(entity)
-        val scale = ((distance / 4F).coerceAtLeast(1F) / 150F) * 1.2F
         glScalef(-scale, -scale, scale)
 
-        val nameW = f.getStringWidth(name).toFloat()
-        val infoW = if (info.isEmpty()) 0F else f.getStringWidth(info).toFloat()
-        val gap = if (info.isEmpty()) 0F else f.getStringWidth("  ").toFloat()
-        val lineH = ((f as? GameFontRenderer)?.fontHeight ?: f.FONT_HEIGHT).toFloat()
+        // Opai 同款背景模糊：AABB 为屏幕坐标，遮罩在当前公告板局部矩阵下绘制
+        if (blurBox != null) {
+            HudBlur.blur(blurBox[0], blurBox[1], blurBox[2], blurBox[3]) {
+                if (moonRound) drawRoundedRect(-bgHalfW, -3F, bgHalfW, bgH, -1, 3F)
+                else quickDrawRect(-bgHalfW, -3F, bgHalfW, bgH, -1)
+            }
+        }
 
-        if (moonSeparateInfo && info.isNotEmpty()) {
+        if (twoLine) {
             // 信息独立成行：两行居中堆叠
-            val w = max(nameW, infoW)
-            val h = lineH * 2F + 3F
-            if (moonRound) drawRoundedRect(-w / 2F - 3F, -3F, w / 2F + 3F, h, MOON_BG_COLOR, 3F)
-            else quickDrawRect(-w / 2F - 3F, -3F, w / 2F + 3F, h, MOON_BG_COLOR)
+            val bg = moonBgColor.rgb
+            if (moonRound) drawRoundedRect(-bgHalfW, -3F, bgHalfW, bgH, bg, 3F)
+            else quickDrawRect(-bgHalfW, -3F, bgHalfW, bgH, bg)
             f.drawString(name, -nameW / 2F, 0F, 0xFFFFFF, true)
             f.drawString(info, -infoW / 2F, lineH + 2F, MOON_INFO_COLOR, true)
         } else {
             // 同行：名字 + 两个空格 + 灰色信息
-            val w = nameW + gap + infoW
-            if (moonRound) drawRoundedRect(-w / 2F - 3F, -3F, w / 2F + 3F, lineH + 3F, MOON_BG_COLOR, 3F)
-            else quickDrawRect(-w / 2F - 3F, -3F, w / 2F + 3F, lineH + 3F, MOON_BG_COLOR)
-            var tx = -w / 2F
+            val bg = moonBgColor.rgb
+            if (moonRound) drawRoundedRect(-bgHalfW, -3F, bgHalfW, bgH, bg, 3F)
+            else quickDrawRect(-bgHalfW, -3F, bgHalfW, bgH, bg)
+            var tx = -bgHalfW + 3F
             f.drawString(name, tx, 0F, 0xFFFFFF, true)
             tx += nameW + gap
             if (info.isNotEmpty()) f.drawString(info, tx, 0F, MOON_INFO_COLOR, true)
@@ -1096,5 +1142,585 @@ object NameTags : Module("NameTags", Category.RENDER) {
         glColor4f(1F, 1F, 1F, 1F)
 
         glPopMatrix()
+    }
+
+    /**
+     * Moon 名牌 Background Blur：按 glScalef(-scale,-scale,scale) 后的公告板矩形四角做
+     * 世界空间 → 屏幕空间投影（与 billboard 旋转顺序 RotY(playerViewY) → RotX(playerViewX) 一致），
+     * 返回缩放 GUI 坐标下的 AABB（x0, y0, x1, y1）；任一角被裁剪则放弃模糊。
+     */
+    private fun moonBlurBox(
+        tx: Double, ty: Double, tz: Double, halfW: Float, height: Float, scale: Float, rotateX: Float
+    ): FloatArray? {
+        val sr = ScaledResolution(mc)
+        val rm = mc.renderManager
+        val cosB = Math.cos(Math.toRadians(-rm.playerViewY.toDouble())).toFloat()
+        val sinB = Math.sin(Math.toRadians(-rm.playerViewY.toDouble())).toFloat()
+        val angleA = Math.toRadians(rm.playerViewX * rotateX.toDouble())
+        val cosA = Math.cos(angleA).toFloat()
+        val sinA = Math.sin(angleA).toFloat()
+
+        var x0 = Float.MAX_VALUE
+        var y0 = Float.MAX_VALUE
+        var x1 = -Float.MAX_VALUE
+        var y1 = -Float.MAX_VALUE
+        val lx = floatArrayOf(-halfW, halfW, halfW, -halfW)
+        val ly = floatArrayOf(-3F, -3F, height, height)
+        for (i in 0 until 4) {
+            // 与 glScalef(-scale, -scale, scale) 一致的局部缩放
+            val sx = -lx[i] * scale
+            val sy = -ly[i] * scale
+            val wx = tx + (sx * cosB + sy * sinA * sinB).toDouble()
+            val wy = ty + (sy * cosA).toDouble()
+            val wz = tz + (-sx * sinB + sy * sinA * cosB).toDouble()
+            val p = ESPUtil.projectOn2D(wx.toFloat(), wy.toFloat(), wz.toFloat(), sr.scaleFactor) ?: return null
+            if (p.z < 0f || p.z > 1f) return null
+            x0 = minOf(x0, p.x); x1 = maxOf(x1, p.x)
+            y0 = minOf(y0, p.y); y1 = maxOf(y1, p.y)
+        }
+        return floatArrayOf(x0, y0, x1, y1)
+    }
+
+    // ==================================================================
+    // Apple 样式：moonlight Apple 名牌（圆角面板 + 头像 + 血量弧 + 装备行）
+    //
+    // 移植说明：
+    // - moonlight 用 font(Fonts.interX, size, scale) 动态字号；airplus 字体固定尺寸，
+    //   故以 appleUnit = 字体 FONT_HEIGHT / 13（moonlight 基准字号）放大全部几何常量，
+    //   再把整个名牌块放入 glScale(appleScale) 的局部坐标系绘制（opai 同款手法），
+    //   字形随矩阵缩放，比例与 moonlight 一致。
+    // - moonlight 依赖 ItemDetector 的金苹果统计徽章：airplus 无对应模块，已移除。
+    // - 透过墙壁可见：按 moonlight 逻辑不做遮挡检测（纯投影渲染）。
+    // ==================================================================
+
+    // ---------------- Apple 字体 / 颜色 ----------------
+    private val appleNameFont get() = Fonts.fontSFApple35
+    private val appleValueFont get() = Fonts.fontSFApple35
+    private val appleInfoFont get() = Fonts.fontRegular30
+    private val appleBadgeFont get() = Fonts.fontUsans20
+
+    /** moonlight 基准 13px 字号 → airplus 字体的几何放大系数。 */
+    private val appleUnit get() = appleNameFont.FONT_HEIGHT / 13F
+
+    private val APPLE_IOS_GREEN = Color(52, 199, 89)
+    private val APPLE_IOS_ORANGE = Color(255, 159, 10)
+    private val APPLE_IOS_RED = Color(255, 69, 58)
+    private val APPLE_TEXT_SECONDARY = Color(255, 255, 255, 140).rgb
+    private val APPLE_RING_TRACK = Color(255, 255, 255, 40)
+    private val APPLE_BADGE_SHADOW = Color(0, 0, 0, 210).rgb
+
+    // ---------------- Apple 状态 ----------------
+    private class AppleTagState(initialHealth: Float) {
+        var health = initialHealth
+        var offset = 0F
+        var placed = false
+        var detail = true
+    }
+
+    private class AppleTag(val player: EntityPlayer, val state: AppleTagState) {
+        var target = false
+        var self = false
+        var distance = 0F
+        var name = ""
+        var hpText = ""
+        var infoText: String? = null
+        var nameW = 0F
+        var hpW = 0F
+        var infoW = 0F
+        var healthPct = 0F
+        var livePct = 1F
+        val items = ArrayList<ItemStack>(5)
+        var inset = 0F
+        var avatarSize = 0F
+        var nameX = 0F
+        var rightPad = 0F
+        var panelW = 0F
+        var panelH = 0F
+        var icon = 0F
+        var iconGap = 0F
+        var rowPad = 0F
+        var rowW = 0F
+        var rowH = 0F
+        var rowGap = 0F
+        var blockW = 0F
+        var blockH = 0F
+        var centerX = 0F
+        var naturalTop = 0F
+    }
+
+    private val appleEntityPosMap = HashMap<EntityPlayer, FloatArray>()
+    private val appleStateMap = HashMap<EntityPlayer, AppleTagState>()
+    private val appleLayout = ArrayList<AppleTag>()
+    private var appleLayoutDirty = true
+    private var appleScreenWidth = 0F
+    private var appleScreenHeight = 0F
+    private var applePixelScreen = 1F
+
+    private val appleWorldHandler = handler<WorldEvent> {
+        appleEntityPosMap.clear()
+        appleStateMap.clear()
+        appleLayout.clear()
+        appleLayoutDirty = true
+    }
+
+    /** 3D 阶段：8 点 AABB 投影（moonlight projectPlayers）。 */
+    private val appleRender3D = handler<Render3DEvent> {
+        if (mode != "Apple") return@handler
+        appleEntityPosMap.clear()
+        appleLayoutDirty = true
+
+        val world = mc.theWorld ?: return@handler
+        val sr = ScaledResolution(mc)
+        appleScreenWidth = sr.scaledWidth.toFloat()
+        appleScreenHeight = sr.scaledHeight.toFloat()
+        applePixelScreen = 1F / max(1, sr.scaleFactor)
+
+        val renderPos = mc.renderManager.renderPos
+        for (player in world.playerEntities) {
+            val (ix, iy, iz) = player.interpolatedPosition(player.lastTickPos) - renderPos
+            val hw = player.width / 2.0
+            val bb = AxisAlignedBB(
+                ix - hw, iy, iz - hw,
+                ix + hw, iy + player.height + (if (player.isSneaking) -0.2 else 0.1), iz + hw
+            ).expand(0.1, 0.1, 0.1)
+
+            var any = false
+            var minXf = Float.MAX_VALUE
+            var minYf = Float.MAX_VALUE
+            var maxXf = -1F
+            var maxYf = -1F
+            for (corner in appleCorners(bb)) {
+                val point = ESPUtil.projectOn2D(corner[0].toFloat(), corner[1].toFloat(), corner[2].toFloat(), sr.scaleFactor)
+                    ?: continue
+                if (point.z < 0F || point.z >= 1F) continue
+                any = true
+                minXf = minOf(minXf, point.x)
+                minYf = minOf(minYf, point.y)
+                maxXf = maxOf(maxXf, point.x)
+                maxYf = maxOf(maxYf, point.y)
+            }
+            if (!any) continue
+
+            appleEntityPosMap[player] = floatArrayOf(minXf, minYf, maxXf, maxYf)
+        }
+    }
+
+    private fun appleCorners(bb: AxisAlignedBB): Array<DoubleArray> = arrayOf(
+        doubleArrayOf(bb.minX, bb.minY, bb.minZ), doubleArrayOf(bb.minX, bb.maxY, bb.minZ),
+        doubleArrayOf(bb.minX, bb.maxY, bb.maxZ), doubleArrayOf(bb.minX, bb.minY, bb.maxZ),
+        doubleArrayOf(bb.maxX, bb.minY, bb.minZ), doubleArrayOf(bb.maxX, bb.maxY, bb.minZ),
+        doubleArrayOf(bb.maxX, bb.maxY, bb.maxZ), doubleArrayOf(bb.maxX, bb.minY, bb.maxZ)
+    )
+
+    private val appleRender2D = handler<Render2DEvent> {
+        if (mode != "Apple") return@handler
+        if (appleEntityPosMap.isEmpty()) return@handler
+        appleEnsureLayout()
+
+        for (index in appleLayout.indices.reversed()) {
+            appleRenderTag(appleLayout[index])
+        }
+
+        color(1F, 1F, 1F, 1F)
+        enableTexture2D()
+    }
+
+    /** 布局 + 碰撞避让 + 位移动画（moonlight ensureLayout）。 */
+    private fun appleEnsureLayout() {
+        if (!appleLayoutDirty) return
+        appleLayoutDirty = false
+        appleLayout.clear()
+        appleStateMap.keys.retainAll(appleEntityPosMap.keys)
+
+        val s = appleScale
+        val u = appleUnit
+        val killAuraTarget = if (KillAura.handleEvents()) KillAura.target else null
+        val tags = ArrayList<AppleTag>()
+        for ((player, pos) in appleEntityPosMap) {
+            if ((player !== mc.thePlayer || mc.gameSettings.thirdPersonView != 0) && player.isEntityAlive) {
+                val state = appleStateMap.getOrPut(player) { AppleTagState(player.health) }
+                tags += appleBuildTag(player, pos, state, player === killAuraTarget, s, u)
+            }
+        }
+
+        tags.sortWith { a, b ->
+            if (a.target != b.target) if (a.target) -1 else 1
+            else if (a.self != b.self) if (a.self) 1 else -1
+            else {
+                val byDist = (a.distance / 2F).toInt().compareTo((b.distance / 2F).toInt())
+                if (byDist != 0) byDist else a.player.entityId.compareTo(b.player.entityId)
+            }
+        }
+
+        val placed = ArrayList<FloatArray>()
+        val stackGap = 1.5F * u * s
+        for (tag in tags) {
+            val blockW = tag.blockW * s
+            val blockH = tag.blockH * s
+            val blockX = tag.centerX - blockW / 2F
+            var top = tag.naturalTop
+            var retry = true
+            var iter = 0
+            while (retry && iter++ < 64) {
+                retry = false
+                for (rect in placed) {
+                    if (blockX < rect[0] + rect[2] && blockX + blockW > rect[0] &&
+                        top < rect[1] + rect[3] && top + blockH > rect[1]
+                    ) {
+                        top = rect[1] - blockH - stackGap
+                        retry = true
+                    }
+                }
+            }
+
+            placed += floatArrayOf(blockX, top, blockW, blockH)
+            val target = top - tag.naturalTop
+            if (!tag.state.placed) {
+                tag.state.offset = target
+                tag.state.placed = true
+            } else {
+                tag.state.offset = appleAnimate(tag.state.offset, target, 14F)
+                if (abs(tag.state.offset - target) < 0.25F) tag.state.offset = target
+            }
+
+            val visTop = tag.naturalTop + tag.state.offset
+            if (blockX + blockW >= 0F && blockX <= appleScreenWidth && visTop + blockH >= 0F && visTop <= appleScreenHeight) {
+                appleLayout += tag
+            }
+        }
+    }
+
+    /** 构建单个名牌（moonlight buildTag）。 */
+    private fun appleBuildTag(player: EntityPlayer, pos: FloatArray, state: AppleTagState, isTarget: Boolean, s: Float, u: Float): AppleTag {
+        val tag = AppleTag(player, state)
+        tag.target = isTarget
+        tag.self = player === mc.thePlayer
+        tag.distance = if (tag.self) 0F else mc.thePlayer.getDistanceToEntity(player)
+
+        val formatted = player.displayName.formattedText
+        val name = if (appleTeamColors) formatted else ColorUtils.stripColor(formatted)
+        tag.name = name
+        tag.nameW = appleNameFont.getStringWidth(name).toFloat()
+
+        val maxHp = max(1F, player.maxHealth)
+        state.health = appleAnimate(state.health, player.health, 8F)
+        tag.healthPct = appleClamp01(state.health / maxHp)
+        tag.livePct = appleClamp01(player.health / maxHp)
+        tag.hpText = ceil(max(0F, player.health)).toInt().toString()
+        tag.hpW = appleValueFont.getStringWidth(tag.hpText).toFloat()
+
+        val absorption = ceil(player.absorptionAmount).toInt()
+        var info = if (absorption > 0) "+$absorption" else ""
+        if (appleDistance && !tag.self) {
+            info = if (info.isEmpty()) "${tag.distance.roundToInt()}m" else "$info  ${tag.distance.roundToInt()}m"
+        }
+        tag.infoText = info.ifEmpty { null }
+        tag.infoW = tag.infoText?.let { appleInfoFont.getStringWidth(it).toFloat() } ?: 0F
+
+        appleLayoutPanel(tag, u)
+        appleLayoutItemRow(tag, player, state, u)
+
+        tag.centerX = pos[0] + (pos[2] - pos[0]) / 2F
+        tag.blockW = max(tag.panelW, tag.rowW)
+        tag.blockH = tag.panelH + (if (tag.rowW > 0F) tag.rowH + tag.rowGap else 0F)
+        tag.naturalTop = pos[1] - 4F * u * s - tag.blockH * s
+        return tag
+    }
+
+    /** 面板布局（moonlight layoutPanel）。 */
+    private fun appleLayoutPanel(tag: AppleTag, u: Float) {
+        tag.panelH = 20F * u
+        tag.inset = 2F * u
+        val hasAvatar = appleAvatar || appleHealthRing
+        tag.avatarSize = if (hasAvatar) tag.panelH - tag.inset * 2F else 0F
+
+        val left = if (hasAvatar) tag.inset + tag.avatarSize + 5F * u else 8F * u
+        val right = 8F * u
+        val hpInfoW = tag.hpW + (tag.infoText?.let { 3F * u + tag.infoW } ?: 0F)
+        tag.nameX = left
+        tag.panelW = max(left + tag.nameW + 8F * u + hpInfoW + right, 56F * u)
+        tag.rightPad = right
+    }
+
+    /** 装备行布局（moonlight layoutItemRow，去掉金苹果统计）。 */
+    private fun appleLayoutItemRow(tag: AppleTag, player: EntityPlayer, state: AppleTagState, u: Float) {
+        val detail = tag.target || tag.self || tag.distance <= appleDetailRange + (if (state.detail) 2F else 0F)
+        state.detail = detail
+        if (!appleArmor || !detail) return
+
+        if (appleHeldItem) player.heldItem?.let { tag.items += it }
+        for (slot in 3 downTo 0) player.inventory.armorInventory[slot]?.let { tag.items += it }
+
+        val count = tag.items.size
+        if (count > 0) {
+            tag.icon = 14F * u
+            tag.iconGap = 3F * u
+            tag.rowPad = 6F * u
+            tag.rowH = tag.icon + 6F * u
+            tag.rowW = tag.rowPad * 2F + count * tag.icon + (count - 1) * tag.iconGap
+            tag.rowGap = 2.5F * u
+        }
+    }
+
+    /** 渲染名牌（moonlight renderApple）：局部坐标系原点 = 名牌块底部中心。 */
+    private fun appleRenderTag(tag: AppleTag) {
+        val s = appleScale
+        val u = appleUnit
+        val pixel = applePixelScreen / s
+
+        val bottomY = tag.naturalTop + tag.state.offset + tag.blockH * s
+        pushMatrix()
+        translate(tag.centerX, bottomY, 0F)
+        scale(s, s, 1F)
+
+        val bg = Color(0, 0, 0, appleBackgroundAlpha.roundToInt())
+        val panelTop = -tag.panelH
+        if (appleBackground) {
+            RoundedUtil.drawRound(-tag.panelW / 2F, panelTop, tag.panelW, tag.panelH, tag.panelH / 2F, bg)
+        }
+
+        if (tag.avatarSize > 0F) {
+            val ax = -tag.panelW / 2F + tag.inset + tag.avatarSize / 2F
+            val ay = panelTop + tag.inset + tag.avatarSize / 2F
+            val ringW = 1.6F * u
+            var faceSize = tag.avatarSize
+            if (appleHealthRing) {
+                val radius = (tag.avatarSize - ringW) / 2F
+                appleDrawArc(ax, ay, radius, ringW, 1F, APPLE_RING_TRACK, pixel)
+                if (tag.healthPct > 0.005F) {
+                    appleDrawArc(ax, ay, radius, ringW, tag.healthPct, appleRingColor(tag.livePct), pixel)
+                }
+                faceSize = tag.avatarSize - (ringW + 1.2F * u) * 2F
+            }
+            if (appleAvatar && faceSize > 2F) {
+                appleDrawFace(tag.player, ax - faceSize / 2F, ay - faceSize / 2F, faceSize, tag.player.hurtTime / 10F, pixel)
+            }
+        }
+
+        val nameY = panelTop + (tag.panelH - appleNameFont.FONT_HEIGHT) / 2F + 2F
+        var rightX = -tag.panelW / 2F + tag.panelW - tag.rightPad
+        appleNameFont.drawStringWithShadow(tag.name, -tag.panelW / 2F + tag.nameX, nameY, -1)
+
+        val infoText = tag.infoText
+        if (infoText != null) {
+            rightX -= tag.infoW
+            val infoY = panelTop + (tag.panelH - appleInfoFont.FONT_HEIGHT) / 2F + 2F
+            appleInfoFont.drawString(infoText, rightX, infoY, APPLE_TEXT_SECONDARY)
+            rightX -= 3F * u
+        }
+
+        val hpColor = if (tag.livePct <= 0.3F) APPLE_IOS_RED.rgb else -1
+        appleValueFont.drawStringWithShadow(tag.hpText, rightX - tag.hpW, nameY, hpColor)
+
+        if (tag.rowW > 0F) {
+            val rowTop = panelTop - tag.rowGap - tag.rowH
+            if (appleBackground) {
+                RoundedUtil.drawRound(-tag.rowW / 2F, rowTop, tag.rowW, tag.rowH, tag.rowH / 2F, bg)
+            }
+            appleRenderItemRow(tag, rowTop, u)
+        }
+
+        popMatrix()
+        color(1F, 1F, 1F, 1F)
+    }
+
+    /** 装备行绘制（moonlight renderItemRow）。 */
+    private fun appleRenderItemRow(tag: AppleTag, rowTop: Float, u: Float) {
+        val itemScale = tag.icon / 16F
+        val itemY = rowTop + (tag.rowH - tag.icon) / 2F
+        var x = -tag.rowW / 2F + tag.rowPad
+
+        for (stack in tag.items) {
+            appleRenderItemStack(stack, x, itemY, itemScale)
+            disableDepth()
+            disableLighting()
+
+            if (appleEnchantLevels) {
+                val enchantLevel = appleEnchantBadgeLevel(stack)
+                val badgeText = when {
+                    enchantLevel > 0 -> enchantLevel.toString()
+                    stack.stackSize > 1 -> stack.stackSize.toString()
+                    else -> null
+                }
+                if (badgeText != null) appleDrawBadge(appleBadgeFont, badgeText, x + tag.icon, itemY + tag.icon, u)
+            }
+
+            if (appleDurability && stack.isItemStackDamageable && stack.maxDamage > 0 && stack.itemDamage > 0) {
+                val frac = appleClamp01((stack.maxDamage - stack.itemDamage).toFloat() / stack.maxDamage)
+                val barW = tag.icon - 3F * u
+                val barX = x + 1.5F * u
+                val barY = itemY + tag.icon + 1F * u
+                val barH = max(1F, 1.2F * u)
+                RoundedUtil.drawRound(barX, barY, barW, barH, barH / 2F, Color(255, 255, 255, 40))
+                RoundedUtil.drawRound(barX, barY, max(barW * frac, barH), barH, barH / 2F, appleDurabilityColor(frac))
+            }
+
+            x += tag.icon + tag.iconGap
+        }
+    }
+
+    /** 物品渲染（moonlight RenderUtil.renderItemStack 的局部坐标等价实现）。 */
+    private fun appleRenderItemStack(stack: ItemStack, x: Float, y: Float, scale: Float) {
+        pushMatrix()
+        translate(x, y, 0F)
+        scale(scale, scale, 1F)
+        enableRescaleNormal()
+        enableBlend()
+        tryBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, 1, 0)
+        RenderHelper.enableGUIStandardItemLighting()
+        mc.renderItem.renderItemAndEffectIntoGUI(stack, 0, 0)
+        RenderHelper.disableStandardItemLighting()
+        disableRescaleNormal()
+        disableBlend()
+        popMatrix()
+    }
+
+    /** 角标：黑描边 + 白字（moonlight drawBadge）。 */
+    private fun appleDrawBadge(font: GameFontRenderer, text: String, xRight: Float, yBottom: Float, u: Float) {
+        val x = xRight - font.getStringWidth(text) + 1F * u
+        val y = yBottom - 0.5F * u - font.FONT_HEIGHT + 2F
+        font.drawString(text, x - 0.5F, y, APPLE_BADGE_SHADOW)
+        font.drawString(text, x + 0.5F, y, APPLE_BADGE_SHADOW)
+        font.drawString(text, x, y - 0.5F, APPLE_BADGE_SHADOW)
+        font.drawString(text, x, y + 0.5F, APPLE_BADGE_SHADOW)
+        font.drawString(text, x, y, -1)
+    }
+
+    /** 血量弧：渐变边缘的圆弧带 + 圆头端点（moonlight drawArc）。 */
+    private fun appleDrawArc(cx: Float, cy: Float, radius: Float, width: Float, pct: Float, color: Color, pixel: Float) {
+        val sweep = 360F * appleClamp01(pct)
+        val segments = max(8, ceil(sweep / 6F).toInt())
+        val half = width / 2F
+        val edge = pixel * 0.75F
+        val radii = floatArrayOf(radius - half - edge, radius - half, radius + half, radius + half + edge)
+        val alphas = floatArrayOf(0F, 1F, 1F, 0F)
+        val red = color.red / 255F
+        val green = color.green / 255F
+        val blue = color.blue / 255F
+        val alpha = color.alpha / 255F
+
+        enableBlend()
+        disableTexture2D()
+        disableCull()
+        tryBlendFuncSeparate(770, 771, 1, 0)
+        shadeModel(GL_SMOOTH)
+
+        for (band in 0..2) {
+            glBegin(GL_QUAD_STRIP)
+            for (i in 0..segments) {
+                val angle = Math.toRadians(-90.0 + sweep * i / segments)
+                val cos = Math.cos(angle).toFloat()
+                val sin = Math.sin(angle).toFloat()
+                glColor4f(red, green, blue, alpha * alphas[band])
+                glVertex2f(cx + cos * radii[band], cy + sin * radii[band])
+                glColor4f(red, green, blue, alpha * alphas[band + 1])
+                glVertex2f(cx + cos * radii[band + 1], cy + sin * radii[band + 1])
+            }
+            glEnd()
+        }
+
+        shadeModel(GL_FLAT)
+        enableTexture2D()
+        enableCull()
+        glColor4f(1F, 1F, 1F, 1F)
+        resetColor()
+
+        if (sweep < 359F) {
+            val start = Math.toRadians(-90.0)
+            val end = Math.toRadians((-90.0 + sweep).toDouble())
+            RoundedUtil.drawRound(
+                cx + Math.cos(start).toFloat() * radius - half, cy + Math.sin(start).toFloat() * radius - half,
+                width, width, half, color
+            )
+            RoundedUtil.drawRound(
+                cx + Math.cos(end).toFloat() * radius - half, cy + Math.sin(end).toFloat() * radius - half,
+                width, width, half, color
+            )
+        }
+    }
+
+    /** 圆形皮肤头像（受击变红），软边缘 + 帽子层（moonlight drawFace/drawFaceLayer）。 */
+    private fun appleDrawFace(player: EntityPlayer, x: Float, y: Float, size: Float, hurt: Float, pixel: Float) {
+        if (player !is AbstractClientPlayer) return
+        val brightness = 1F - 0.45F * appleClamp01(hurt)
+        enableTexture2D()
+        enableBlend()
+        disableCull()
+        disableAlpha()
+        OpenGlHelper.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, 1, 0)
+        shadeModel(GL_SMOOTH)
+        mc.textureManager.bindTexture(player.locationSkin)
+        appleDrawFaceLayer(x, y, size, 8F, brightness, pixel)
+        if (player.isWearing(EnumPlayerModelParts.HAT)) {
+            appleDrawFaceLayer(x, y, size, 40F, brightness, pixel)
+        }
+        shadeModel(GL_FLAT)
+        enableAlpha()
+        enableCull()
+        glColor4f(1F, 1F, 1F, 1F)
+        resetColor()
+    }
+
+    private fun appleDrawFaceLayer(x: Float, y: Float, size: Float, layer: Float, brightness: Float, pixel: Float) {
+        val segments = 40
+        val half = size / 2F
+        val cx = x + half
+        val cy = y + half
+        val edge = minOf(pixel, half * 0.25F)
+        val inner = half - edge
+        val u0 = layer / 64F
+        val v0 = 0.125F
+        val uSize = 0.125F
+        val ringRatio = inner / half
+
+        glBegin(GL_TRIANGLE_FAN)
+        glColor4f(1F, brightness, brightness, 1F)
+        glTexCoord2f(u0 + uSize * 0.5F, v0 + uSize * 0.5F)
+        glVertex2f(cx, cy)
+        for (i in 0..segments) {
+            val angle = (Math.PI * 2) * i / segments
+            val cos = Math.cos(angle).toFloat()
+            val sin = Math.sin(angle).toFloat()
+            glTexCoord2f(u0 + uSize * (0.5F + cos * 0.5F * ringRatio), v0 + uSize * (0.5F + sin * 0.5F * ringRatio))
+            glVertex2f(cx + cos * inner, cy + sin * inner)
+        }
+        glEnd()
+
+        glBegin(GL_QUAD_STRIP)
+        for (i in 0..segments) {
+            val angle = (Math.PI * 2) * i / segments
+            val cos = Math.cos(angle).toFloat()
+            val sin = Math.sin(angle).toFloat()
+            glColor4f(1F, brightness, brightness, 1F)
+            glTexCoord2f(u0 + uSize * (0.5F + cos * 0.5F * ringRatio), v0 + uSize * (0.5F + sin * 0.5F * ringRatio))
+            glVertex2f(cx + cos * inner, cy + sin * inner)
+            glColor4f(1F, brightness, brightness, 0F)
+            glTexCoord2f(u0 + uSize * (0.5F + cos * 0.5F), v0 + uSize * (0.5F + sin * 0.5F))
+            glVertex2f(cx + cos * half, cy + sin * half)
+        }
+        glEnd()
+    }
+
+    // ---------------- Apple 工具 ----------------
+
+    /** moonlight RenderUtil.animate（帧时间 lerp）：speed ≈ 每秒收敛次数。 */
+    private fun appleAnimate(current: Float, target: Float, speed: Float): Float {
+        val factor = (RenderUtils.deltaTime / 1000F * speed).coerceIn(0F, 1F)
+        return current + (target - current) * factor
+    }
+
+    private fun appleClamp01(value: Float) = value.coerceIn(0F, 1F)
+
+    private fun appleRingColor(pct: Float): Color =
+        if (pct > 0.5F) APPLE_IOS_GREEN else if (pct > 0.25F) APPLE_IOS_ORANGE else APPLE_IOS_RED
+
+    private fun appleDurabilityColor(pct: Float): Color =
+        if (pct > 0.5F) Color(255, 255, 255, 220) else if (pct > 0.25F) APPLE_IOS_ORANGE else APPLE_IOS_RED
+
+    private fun appleEnchantBadgeLevel(stack: ItemStack): Int = when (stack.item) {
+        is ItemArmor -> EnchantmentHelper.getEnchantmentLevel(Enchantment.protection.effectId, stack)
+        is ItemSword, is ItemAxe -> EnchantmentHelper.getEnchantmentLevel(Enchantment.sharpness.effectId, stack)
+        is ItemBow -> EnchantmentHelper.getEnchantmentLevel(Enchantment.power.effectId, stack)
+        else -> 0
     }
 }

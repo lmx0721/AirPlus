@@ -489,6 +489,14 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 
     // Target
     var target: EntityLivingBase? = null
+
+    /**
+     * 本 tick 全部可攻击目标（范围内通过 isSelected/距离/FOV 检查的实体，
+     * 对齐 moonlight KillAura.targets 的维护方式，供 Target2 多目标 HUD 使用）。
+     * 每次目标选择时先清空再重新填充；模块关闭时一并清空。
+     */
+    val targets = mutableListOf<EntityLivingBase>()
+
     private var lastTarget: EntityLivingBase? = null
     private var hittable = false
     private val prevTargetEntities = mutableListOf<Int>()
@@ -531,6 +539,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
      */
     override fun onToggle(state: Boolean) {
         target = null
+        targets.clear()
         // 清掉 Noise3 上下文，避免模块关闭后残留上下文劫持视角重置路径（审查 B1）
         options.noise3Context = null
         hittable = false
@@ -1009,6 +1018,9 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
      * Update current target
      */
     private fun updateTarget() {
+        // 多目标列表本 tick 起算清空，随后在扫描中重新填充
+        targets.clear()
+
         if (shouldPrioritize()) return
 
         // Reset fixed target to null
@@ -1039,6 +1051,9 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             val entityFov = rotationDifference(entity)
 
             if (distance > maxRange || fov != 180F && entityFov > fov) continue
+
+            // 记录为本 tick 的可攻击目标（不含 Switch 模式下的换目标排除项）
+            targets.add(entity)
 
             if (switchMode && !isLookingOnEntities(entity, maxSwitchFOV.toDouble())) continue
 

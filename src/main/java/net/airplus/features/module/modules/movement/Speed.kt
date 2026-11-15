@@ -20,6 +20,7 @@ import net.airplus.features.module.modules.movement.speedmodes.matrix.MatrixSlow
 import net.airplus.features.module.modules.movement.speedmodes.matrix.OldMatrixHop
 import net.airplus.features.module.modules.movement.speedmodes.ncp.*
 import net.airplus.features.module.modules.movement.speedmodes.other.*
+import net.airplus.features.module.modules.movement.speedmodes.rise.Rise as RiseSpeed
 import net.airplus.features.module.modules.movement.speedmodes.spartan.SpartanYPort
 import net.airplus.features.module.modules.movement.speedmodes.spectre.SpectreBHop
 import net.airplus.features.module.modules.movement.speedmodes.spectre.SpectreLowHop
@@ -32,6 +33,7 @@ import net.airplus.features.module.modules.movement.speedmodes.vulcan.VulcanGrou
 import net.airplus.features.module.modules.movement.speedmodes.vulcan.VulcanHop
 import net.airplus.features.module.modules.movement.speedmodes.vulcan.VulcanLowHop
 import net.airplus.utils.extensions.isMoving
+import net.airplus.utils.rotation.RotationSettings
 
 object Speed : Module("Speed", Category.MOVEMENT) {
 
@@ -94,7 +96,8 @@ object Speed : Module("Speed", Category.MOVEMENT) {
         Legit,
         OldGrim,
         CustomSpeed,
-        Grim2
+        Grim2,
+        RiseSpeed
     )
 
     /**
@@ -187,6 +190,14 @@ object Speed : Module("Speed", Category.MOVEMENT) {
     val grim2HighPingMode by boolean("Grim2-HighPingMode", false) { mode.get() == "Grim2" }
     val grim2Speed by float("Grim2-Speed", 1f, 0f..1f) { mode.get() == "Grim2" }
 
+    // Rise Speed（Ported from Rise GrimSpeed）
+    val riseOptions = RotationSettings(this) { mode.get() == "Rise" }
+    val riseFastFall by boolean("Rise-FastFall", true) { mode.get() == "Rise" }
+    val riseBoundingBoxSize by float("Rise-BoundingBoxSize", 0.4f, 0f..1f) { mode.get() == "Rise" }
+    val riseInPlayerSpeed by float("Rise-InPlayerSpeed", 0.08f, 0f..0.08f) { mode.get() == "Rise" }
+    val riseMoveFlyingIncrease by float("Rise-MoveFlyingIncrease", 0.0001f, 0f..0.001f)
+    { mode.get() == "Rise" }
+
     val onUpdate = handler<UpdateEvent> {
         val thePlayer = mc.thePlayer ?: return@handler
 
@@ -201,6 +212,10 @@ object Speed : Module("Speed", Category.MOVEMENT) {
 
     val onMotion = handler<MotionEvent> { event ->
         val thePlayer = mc.thePlayer ?: return@handler
+
+        // PRE：先转发给当前模式（Rise 等模式会改写 onGround 做 ground-spoof）
+        if (event.eventState == EventState.PRE)
+            modeModule.onMotion(event)
 
         // POST：紧随 C03/C04/C05/C06 位置包发送之后，供 Grim2 等模式补发包
         if (event.eventState == EventState.POST) {

@@ -3,7 +3,7 @@
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
  *
- * Ported from SilenceFix FastLadder.
+ * Ported from EdMoonlight FastLadder (Code By cubk).
  */
 package net.airplus.features.module.modules.movement
 
@@ -27,39 +27,40 @@ object FastLadder : Module("FastLadder", Category.MOVEMENT) {
 
     val onUpdate = handler<UpdateEvent> {
         val player = mc.thePlayer ?: return@handler
-        val world = mc.theWorld ?: return@handler
+        if (mc.netHandler == null) return@handler
 
         if (!player.isOnLadder) {
             normalClimb = false
             cancel = false
             blockLadder.clear()
         }
-        if (!player.isOnLadder && !cancel) {
-            return@handler
-        }
-        if (normalClimb && player.isOnLadder) {
-            return@handler
-        }
-        if (player.isOnLadder && mc.gameSettings.keyBindJump.isKeyDown) {
-            blockLadder.clear()
-            cancel = false
-            normalClimb = true
-            return@handler
-        }
-        for ((block, value) in searchBlocks(4)) {
-            if (value is BlockLadder && !blockLadder.contains(block)) {
-                blockLadder.add(block)
-            }
-        }
-        if (blockLadder.isNotEmpty()) {
-            for (block in blockLadder) {
-                sendPacket(
-                    C07PacketPlayerDigging(C07PacketPlayerDigging.Action.STOP_DESTROY_BLOCK, block, EnumFacing.DOWN),
-                    false
-                )
-            }
-            if (player.isOnLadder) {
-                cancel = true
+
+        if (player.isOnLadder || cancel) {
+            if (!normalClimb || !player.isOnLadder) {
+                if (player.isOnLadder && mc.gameSettings.keyBindJump.isKeyDown) {
+                    blockLadder.clear()
+                    cancel = false
+                    normalClimb = true
+                } else {
+                    for ((pos, block) in searchBlocks(4)) {
+                        if (block is BlockLadder && !blockLadder.contains(pos)) {
+                            blockLadder.add(pos)
+                        }
+                    }
+
+                    if (blockLadder.isNotEmpty()) {
+                        for (pos in blockLadder) {
+                            sendPacket(
+                                C07PacketPlayerDigging(C07PacketPlayerDigging.Action.STOP_DESTROY_BLOCK, pos, EnumFacing.DOWN),
+                                false
+                            )
+                        }
+
+                        if (player.isOnLadder) {
+                            cancel = true
+                        }
+                    }
+                }
             }
         }
     }
@@ -68,24 +69,18 @@ object FastLadder : Module("FastLadder", Category.MOVEMENT) {
         blockLadder.clear()
     }
 
-    private fun getBlock(blockPos: BlockPos): Block? {
-        val world = mc.theWorld ?: return null
-        return world.getBlockState(blockPos)?.block
-    }
-
     private fun searchBlocks(radius: Int): Map<BlockPos, Block> {
         val blocks = HashMap<BlockPos, Block>()
 
         val thePlayer = mc.thePlayer ?: return blocks
+        val world = mc.theWorld ?: return blocks
 
         for (x in radius downTo -radius + 1) {
             for (y in radius downTo -radius + 1) {
                 for (z in radius downTo -radius + 1) {
                     val blockPos = BlockPos(thePlayer.posX + x, thePlayer.posY + y, thePlayer.posZ + z)
-                    val block = getBlock(blockPos)
-                    if (block != null) {
-                        blocks[blockPos] = block
-                    }
+                    val block = world.getBlockState(blockPos)?.block ?: continue
+                    blocks[blockPos] = block
                 }
             }
         }

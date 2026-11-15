@@ -1,0 +1,64 @@
+name: Launcher CI
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ 'AirLauncher/**' ]
+  pull_request:
+    branches: [ main ]
+    paths: [ 'AirLauncher/**' ]
+
+defaults:
+  run:
+    working-directory: AirLauncher
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # Tauri / 前端依赖在 Windows runner 上的缓存
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            AirLauncher/src-tauri/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('AirLauncher/src-tauri/Cargo.lock') }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: AirLauncher/package-lock.json
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: rustfmt
+        run: cargo fmt --check
+        working-directory: AirLauncher/src-tauri
+
+      - name: clippy
+        run: cargo clippy -- -D warnings
+        working-directory: AirLauncher/src-tauri
+
+      - name: cargo test
+        run: cargo test
+        working-directory: AirLauncher/src-tauri
+
+      - name: svelte-check
+        run: npm run check
+
+      - name: vite build
+        run: npm run build

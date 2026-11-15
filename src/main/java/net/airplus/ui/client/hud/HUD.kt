@@ -9,7 +9,6 @@ import net.airplus.ui.client.hud.designer.GuiHudDesigner
 import net.airplus.ui.client.hud.element.Element
 import net.airplus.ui.client.hud.element.ElementInfo
 import net.airplus.ui.client.hud.element.elements.*
-import net.airplus.ui.client.hud.element.elements.Target
 import net.airplus.utils.client.ClientUtils.LOGGER
 import net.airplus.utils.client.MinecraftInstance
 import net.airplus.utils.extensions.component1
@@ -38,7 +37,6 @@ object HUD : MinecraftInstance {
         TabGUI::class.java,
         Text::class.java,
         ScoreboardElement::class.java,
-        Target::class.java,
         Target2::class.java,
         MusicLyric::class.java,
         Radar::class.java,

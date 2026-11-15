@@ -2,6 +2,7 @@
  * AirPlus Hacked Client
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
+ * skid edmoonlight
  */
 package net.airplus.ui.client.hud.element.elements
 
@@ -27,6 +28,7 @@ import net.airplus.utils.render.RenderUtils.deltaTime
 import net.airplus.utils.render.RenderUtils.drawRoundedBorder
 import net.airplus.utils.render.RenderUtils.drawRoundedRect
 import net.minecraft.client.Minecraft
+import net.minecraft.client.gui.ScaledResolution
 import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.client.gui.FontRenderer
 import net.minecraft.client.renderer.Tessellator
@@ -34,6 +36,8 @@ import net.minecraft.client.renderer.WorldRenderer
 import net.minecraft.client.renderer.vertex.DefaultVertexFormats
 import net.minecraft.util.ResourceLocation
 import java.awt.Color
+import kotlin.math.floor
+import kotlin.math.pow
 import kotlin.math.sin
 
 /**
@@ -44,7 +48,7 @@ class Notifications(
     x: Double = 0.0, y: Double = 30.0, scale: Float = 1F, side: Side = Side(Side.Horizontal.RIGHT, Side.Vertical.DOWN)
 ) : Element("Notifications", x, y, scale, side) {
 
-    val style by choices("Style", arrayOf("Classic", "Modern", "Compact", "Hanabi", "Flux", "Onyx", "Southside", "Default", "Type 2", "Type 3", "Type 4", "Type 5", "Test2", "Exhi"), "Modern")
+    val style by choices("Style", arrayOf("Classic", "Modern", "Compact", "Hanabi", "Flux", "Onyx", "Naven", "Southside", "Default", "Type 2", "Type 3", "Type 4", "Type 5", "Test2", "Exhi"), "Modern")
     val horizontalFade by choices("HorizontalFade", arrayOf("InOnly", "OutOnly", "Both", "None"), "OutOnly")
     val padding by int("Padding", 5, 1..20)
     val roundRadius by float("RoundRadius", 3f, 0f..10f)
@@ -93,10 +97,14 @@ class Notifications(
             notification.drawNotification(this).also { done ->
                 if (!done) {
                     // MoonLight 系列按原版卡片高度 + 原版堆叠偏移（Notification#getHeight 与
-                    // NotificationManager#publish 的 actualOffset）；其余样式沿用 MAX_HEIGHT + Padding
+                    // NotificationManager#publish 的 actualOffset）；Southside 卡片高度随
+                    // 描述换行行数变化（高 + 16）；其余样式沿用 MAX_HEIGHT + Padding
                     val moon = notification.moonMetrics(style)
-                    verticalOffset += (moon?.first?.toFloat() ?: Notification.MAX_HEIGHT.toFloat()) +
-                        (moon?.second?.toFloat() ?: padding.toFloat())
+                    verticalOffset += when {
+                        moon != null -> moon.first.toFloat() + moon.second.toFloat()
+                        style == "Southside" -> notification.moonSouthsideCardHeight() + 16F
+                        else -> Notification.MAX_HEIGHT.toFloat() + padding.toFloat()
+                    }
                 }
             }
         }
@@ -164,6 +172,7 @@ class Notification(
         "Type 3" -> 35 to 8
         "Type 4" -> 27 to 5
         "Type 5" -> 24 to 6
+        "Naven" -> 20 to 4
         else -> null
     }
 
@@ -173,6 +182,150 @@ class Notification(
      * 同视觉尺寸需要 2 倍 AWT 字号，由 Fonts.fontMoonlight 按需烘焙。
      */
     fun moonFont(size: Int): GameFontRenderer = Fonts.fontMoonlight(size)
+
+    /** 去除 § 颜色代码（Naven / Southside 的单行文案使用）。 */
+    private fun stripColor(text: String): String {
+        if (!text.contains('§')) return text
+        return buildString {
+            var i = 0
+            while (i < text.length) {
+                if (text[i] == '§' && i + 1 < text.length) i += 2 else {
+                    append(text[i]); i++
+                }
+            }
+        }
+    }
+
+    /** 模块开关通知判定（Module#toggle 的标题为状态词，描述为模块名）。 */
+    private val isToggleNotification: Boolean
+        get() {
+            val t = title.trim()
+            return t.equals("Enabled", true) || t.equals("Disabled", true) ||
+                t == "已启用" || t == "已禁用" || t == "已停用" || t == "已啟用"
+        }
+
+    /** 开关通知的开启状态（SouthsideNotification#icon 的 getToggleState 等价：标题即状态词）。 */
+    private val isToggleOn: Boolean
+        get() {
+            val t = title.trim()
+            return t.equals("Enabled", true) || t == "已启用" || t == "已啟用"
+        }
+
+    /** MoonLight 通知类型（NotificationType 枚举 1:1：OKAY/INFO/NOTIFY/WARNING）。 */
+    private enum class MoonType { OKAY, INFO, NOTIFY, WARNING }
+
+    /** AirPlus severity → MoonLight NotificationType（与 moonlightIcon 同一映射）。 */
+    private val moonlightNotificationType: MoonType = when (severityType) {
+        Notifications.SeverityType.SUCCESS -> MoonType.OKAY
+        Notifications.SeverityType.RED_SUCCESS -> MoonType.WARNING
+        Notifications.SeverityType.INFO -> MoonType.INFO
+        Notifications.SeverityType.WARNING -> MoonType.NOTIFY
+        Notifications.SeverityType.ERROR -> MoonType.WARNING
+    }
+
+    /** 原版 NotificationManager#typeTint（Default 字形图标颜色）：OKAY 绿 / INFO 蓝 / NOTIFY 黄 / WARNING 红。 */
+    private val moonlightTypeTint: Color = when (moonlightNotificationType) {
+        MoonType.OKAY -> Color(110, 220, 140)
+        MoonType.INFO -> Color(130, 180, 235)
+        MoonType.NOTIFY -> Color(235, 200, 100)
+        MoonType.WARNING -> Color(235, 105, 105)
+    }
+
+    /** MoonLight Southside 图标（SouthsideNotification#icon 1:1）：
+     *  开关通知按开关状态 enabled/disabled，其余按类型 enabled/info/warning/error。 */
+    private val southsideIcon: ResourceLocation
+        get() = when {
+            isToggleNotification -> if (isToggleOn) SOUTHSIDE_ENABLED_ICON else SOUTHSIDE_DISABLED_ICON
+            else -> when (moonlightNotificationType) {
+                MoonType.OKAY -> SOUTHSIDE_ENABLED_ICON
+                MoonType.INFO -> SOUTHSIDE_INFO_ICON
+                MoonType.NOTIFY -> SOUTHSIDE_WARNING_ICON
+                MoonType.WARNING -> SOUTHSIDE_ERROR_ICON
+            }
+        }
+
+    /**
+     * MoonLight 开关通知的完整文案（原版 Module#toggle 传入的 description 为
+     * "模块名 Enabled!/Disabled!"，Default 等只画 description 的样式因此显示状态词）：
+     * 英文按原版语序 "模块名 Enabled!"，中文按翻译语序 "已启用 模块名!"。
+     */
+    fun moonToggleMessage(): String {
+        val t = stripColor(title).trim()
+        val d = stripColor(description).trim()
+        val en = t.equals("Enabled", true) || t.equals("Disabled", true)
+        return if (en) "$d $t!" else "$t $d!"
+    }
+
+    /** Naven 单行文案：模块开关 → 状态词 + 模块名，其余 → 描述（对齐 NavenNotification 的 message）。 */
+    fun navenMessage(): String {
+        val t = stripColor(title).trim()
+        val d = stripColor(description).trim()
+        return when {
+            d.isEmpty() -> t
+            isToggleNotification -> "$t $d"
+            else -> d
+        }
+    }
+
+    /** MoonLight Southside 正文：模块开关 → "Toggled {name} on/off."，其余 → 描述。 */
+    fun moonSouthsideMessage(): String {
+        val t = stripColor(title).trim()
+        val d = stripColor(description).trim()
+        return when {
+            d.isEmpty() -> t
+            t.equals("Enabled", true) -> "Toggled $d on."
+            t.equals("Disabled", true) -> "Toggled $d off."
+            t == "已启用" || t == "已啟用" -> "Toggled $d on."
+            else -> "Toggled $d off."
+        }
+    }
+
+    /** MoonLight Southside unit（SouthsideNotification unit 计算 1:1）：量化到 0.05 并除以 GUI 缩放。 */
+    fun moonSouthsideUnit(): Float {
+        val mc = Minecraft.getMinecraft()
+        var unit = minOf(mc.displayWidth / 1920F, mc.displayHeight / 1080F)
+        if (unit < 1F) unit = minOf(minOf(1F, mc.displayWidth / 1280F), minOf(1F, mc.displayHeight / 800F))
+        unit = floor(unit / 0.05F) * 0.05F
+        return maxOf(0.05F, unit) / ScaledResolution(mc).scaleFactor
+    }
+
+    /** 文本按宽度换行（SouthsideNotification wrap 的 1:1 移植，按空格分词）。 */
+    fun moonWrap(font: FontRenderer, message: String, width: Float): List<String> {
+        val lines = ArrayList<String>()
+        var line = ""
+        for (word in message.split(" ")) {
+            if (word.isEmpty()) continue
+            val candidate = if (line.isEmpty()) word else "$line $word"
+            if (line.isNotEmpty() && font.getStringWidth(candidate) > width) {
+                lines.add(line)
+                line = word
+            } else {
+                line = candidate
+            }
+        }
+        if (line.isNotEmpty() || lines.isEmpty()) lines.add(line)
+        return lines
+    }
+
+    /** MoonLight Southside 卡片高度：设计高 68 + 14.5·换行行数 + 5，按 unit 缩放
+     *  （换行按原版字体在 220·unit 设计宽内测量，与绘制一致）。 */
+    fun moonSouthsideCardHeight(): Float {
+        val unit = moonSouthsideUnit()
+        val lines = moonWrap(Minecraft.getMinecraft().fontRendererObj, moonSouthsideMessage(), 220F * unit)
+        return (68F + 14.5F * lines.size + 5F) * unit
+    }
+
+    /** Naven 卡片色（NavenNotification 类型色映射）：OKAY 绿 / INFO 深 / NOTIFY 暗红 / WARNING 红。 */
+    private fun navenLevelColor(): Color = when (severityType) {
+        Notifications.SeverityType.SUCCESS -> Color(23, 150, 38)
+        Notifications.SeverityType.INFO -> Color(23, 22, 38)
+        Notifications.SeverityType.RED_SUCCESS -> Color(138, 90, 92)
+        Notifications.SeverityType.WARNING, Notifications.SeverityType.ERROR -> Color(148, 42, 43)
+    }
+
+    /** easeInOutQuad（SouthsideNotification slideIn 的缓动曲线）。 */
+    private fun easeInOutQuad(t: Float): Float =
+        if (t < 0.5F) 2F * t * t else 1F - (-2F * t + 2F).pow(2) / 2F
 
     private var stay = delay
     private var fadeStep = 0F
@@ -220,6 +373,13 @@ class Notification(
         private val MOONLIGHT_INFO_ICON = ResourceLocation("airplus/notifications/moonlight/info.png")
         private val MOONLIGHT_NOTIFY_ICON = ResourceLocation("airplus/notifications/moonlight/notify.png")
         private val MOONLIGHT_WARNING_ICON = ResourceLocation("airplus/notifications/moonlight/warning.png")
+
+        // MoonLight Southside 原版专用图标（Ported from moonlight/texture/southside/）
+        private val SOUTHSIDE_ENABLED_ICON = ResourceLocation("airplus/notifications/southside/enabled.png")
+        private val SOUTHSIDE_DISABLED_ICON = ResourceLocation("airplus/notifications/southside/disabled.png")
+        private val SOUTHSIDE_INFO_ICON = ResourceLocation("airplus/notifications/southside/info.png")
+        private val SOUTHSIDE_WARNING_ICON = ResourceLocation("airplus/notifications/southside/warning.png")
+        private val SOUTHSIDE_ERROR_ICON = ResourceLocation("airplus/notifications/southside/error.png")
         private val MODERN_BG = Color(16, 16, 20, 215)
         private val COMPACT_BG = Color(14, 14, 18, 200)
         private val HANABI_BG = Color(36, 36, 36, 217).rgb
@@ -246,8 +406,6 @@ class Notification(
         val flux = element.style == "Flux"
         // Onyx style: dynamic-island card, width clamped to 130..240
         val onyx = element.style == "Onyx"
-        // Southside style: dark card, width = max(140, text + 40)
-        val southside = element.style == "Southside"
         // MoonLight 系列样式（Ported from MoonLight NotificationManager，各样式宽度按原公式换算为本客户端字体）
         val moonDefault = element.style == "Default"
         val moonTest2 = element.style == "Test2"
@@ -256,7 +414,12 @@ class Notification(
         val moonType3 = element.style == "Type 3"
         val moonType4 = element.style == "Type 4"
         val moonType5 = element.style == "Type 5"
-        val moonStyle = moonDefault || moonTest2 || moonExhi || moonType2 || moonType3 || moonType4 || moonType5
+        // MoonLight Naven：20px 高彩色胶囊卡，单行文案右缘滑入
+        val naven = element.style == "Naven"
+        // MoonLight Southside：设计宽 314 的深灰圆角卡 + 底部进度条，按 unit 缩放右缘滑入
+        val moonSouthside = element.style == "Southside"
+        val moonStyle = moonDefault || moonTest2 || moonExhi || moonType2 || moonType3 || moonType4 || moonType5 ||
+            naven || moonSouthside
         val notificationWidth = if (hanabi) {
             val width = element.titleFontRenderer.getStringWidth("$title $description") + 45F
             textLength = width.toInt()
@@ -274,18 +437,9 @@ class Notification(
             ).coerceAtMost(240F)
             textLength = width.toInt()
             width
-        } else if (southside) {
-            // Southside 样式：宽度 = max(140, 最长文本 + 40)（对应原版 minWidth 140 / extraWidth 40）
-            val width = maxOf(
-                140F,
-                element.titleFontRenderer.getStringWidth(longestString(element.titleFontRenderer)) + 40F,
-                element.descFontRenderer.getStringWidth(longestString(element.descFontRenderer)) + 40F
-            )
-            textLength = width.toInt()
-            width
         } else if (moonDefault) {
-            // MoonLight Default（1:1）：interMedium(15) 描述宽 + 5
-            val width = moonFont(15).getStringWidth(description) + 5F
+            // MoonLight Default（1:1）：interMedium(15) 描述宽 + 5（开关通知的描述为完整文案，见 moonToggleMessage）
+            val width = moonFont(15).getStringWidth(moonToggleMessage()) + 5F
             textLength = width.toInt()
             width
         } else if (moonTest2) {
@@ -345,6 +499,16 @@ class Notification(
             ).toFloat() + 41F
             textLength = width.toInt()
             width
+        } else if (naven) {
+            // MoonLight Naven（1:1）：siyuan(18) 单行文案宽 + 12
+            val width = moonFont(18).getStringWidth(navenMessage()) + 12F
+            textLength = width.toInt()
+            width
+        } else if (moonSouthside) {
+            // MoonLight Southside（1:1）：设计宽 314 × unit
+            val width = 314F * moonSouthsideUnit()
+            textLength = width.toInt()
+            width
         } else {
             // 宽度按所选标题字体实时计算
             textLength = element.titleFontRenderer.getStringWidth(longestString(element.titleFontRenderer))
@@ -355,7 +519,8 @@ class Notification(
         val currentX = when (fadeState) {
             // Onyx 自带滑入动画（progress 由 x 映射），不受默认 HorizontalFade=OutOnly 影响
             // MoonLight Default 原版为透明度渐入（animation.getOutput 驱动），同样由 x 进度映射
-            FadeState.IN -> if (element.horizontalFade in arrayOf("InOnly", "Both") || onyx || moonDefault) x else notificationWidth
+            // Naven / Southside 原版同样右缘滑入，由 x 进度映射
+            FadeState.IN -> if (element.horizontalFade in arrayOf("InOnly", "Both") || onyx || moonDefault || naven || moonSouthside) x else notificationWidth
             FadeState.OUT -> if (element.horizontalFade in arrayOf("OutOnly", "Both")) x else notificationWidth
             else -> x
         }
@@ -366,7 +531,8 @@ class Notification(
             element.style == "Compact" -> drawCompact(element, currentX, extraSpace)
             element.style == "Flux" -> drawFlux(element, currentX, extraSpace)
             element.style == "Onyx" -> drawOnyx(element, currentX, notificationWidth)
-            element.style == "Southside" -> drawSouthside(element, currentX, notificationWidth)
+            naven -> drawNaven(element, currentX, notificationWidth)
+            moonSouthside -> drawMoonSouthside(element, currentX, notificationWidth)
             moonDefault -> drawMoonDefault(element, currentX, notificationWidth)
             moonTest2 -> drawMoonTest2(element, currentX, notificationWidth)
             moonExhi -> drawMoonExhi(element, currentX, notificationWidth)
@@ -522,51 +688,6 @@ class Notification(
             )
         }
     }
-
-    /**
-     * Southside 样式：迁移自 dev.diona.southside.module.modules.client.Notification。
-     * 深色圆角卡片（32,32,32）+ 左上标题 / 左下正文 + 底部随已流逝时间向右增长的类型色进度条
-     * （原版 percent = 1 - time/keepTime，scissor 裁出底边 3px 条带，此处直接按条带绘制）。
-     */
-    private fun drawSouthside(element: Notifications, currentX: Float, notificationWidth: Float) {
-        val height = MAX_HEIGHT.toFloat()
-        val cardLeft = -currentX - 5F
-        val cardTop = -y - height
-        val cardBottom = -y
-
-        // 深色卡片背景（Southside new Color(32, 32, 32)）
-        drawRoundedRect(cardLeft, cardTop, cardLeft + notificationWidth, cardBottom, Color(32, 32, 32).rgb, element.roundRadius)
-
-        // 底部进度条：随已流逝时间增长（Southside percent = 1 - clamp(time/keepTime)）
-        if (fadeState == FadeState.IN || fadeState == FadeState.STAY) {
-            val percent = (1F - stay / delay.toFloat()).coerceIn(0F, 1F)
-            drawRoundedRect(
-                cardLeft, cardBottom - 3F,
-                cardLeft + notificationWidth * percent, cardBottom,
-                southsideAccentColor.rgb, element.roundRadius
-            )
-        }
-
-        // 左上标题 + 左下正文（原版 title font 9 在 +4、message 在底部；按本客户端字体行高改为上下排布避免重叠）
-        val textX = cardLeft + 6F
-        element.titleFontRenderer.drawString(title, textX, cardTop + 4F, Color.WHITE.rgb)
-        element.descFontRenderer.drawString(
-            description, textX,
-            cardTop + 4F + element.titleFontRenderer.height + 1F, Color(200, 200, 200).rgb
-        )
-    }
-
-    /**
-     * Southside 类型色（原版取 ClientStyle 五色，此处映射为现有 severity 配色）。
-     */
-    private val southsideAccentColor: Color
-        get() = when (severityType) {
-            Notifications.SeverityType.SUCCESS -> Color(114, 181, 94)
-            Notifications.SeverityType.RED_SUCCESS -> Color(240, 71, 71)
-            Notifications.SeverityType.INFO -> ClientThemesUtils.getColor()
-            Notifications.SeverityType.WARNING -> Color(239, 188, 18)
-            Notifications.SeverityType.ERROR -> Color(240, 71, 71)
-        }
 
     private val accentColor: Color
         get() = when (severityType) {
@@ -843,6 +964,8 @@ class Notification(
         val h = moonMetrics(element.style)?.first?.toFloat() ?: 16F
         val cardLeft = -currentX - 4F
         val cardTop = -y - h
+        // MoonLight 开关通知的描述本身即 "模块名 Enabled!" 完整文案
+        val message = moonToggleMessage()
 
         moonBlurBehind(element, cardLeft, cardTop, notificationWidth + 2F, h, 4F)
         drawRoundedRect(
@@ -850,9 +973,27 @@ class Notification(
             moonOpacity(moonBgColor(element).rgb, progress), 4F
         )
         val font = moonFont(15)
+        // 原版左侧 15px 图标区：文本在剩余宽度内居中，图标区左侧 6px 处画 0.6px 灰色竖条 + 类型字形图标
+        val textCenterX = cardLeft + 15F + (notificationWidth - 15F) / 2F
+        val textLeft = textCenterX - font.getStringWidth(message) / 2F
+        drawRoundedRect(
+            textLeft - 6F, cardTop + 3.5F, textLeft - 5.4F, cardTop + h - 6F,
+            moonOpacity(Color(100, 100, 100, 150).rgb, progress), 0F
+        )
+        // 字形图标（原 Fonts.noti "B"/"A"、Fonts.Icon "q"/"X"，typedIcon 默认 true → typeTint 色）：
+        // 锚点 x = cardLeft + (15-8)/2, y = cardTop + (h-2)/2
+        val gx = cardLeft + 3.5F
+        val gy = cardTop + (h - 2F) / 2F
+        val tint = moonOpacity(moonlightTypeTint.rgb, progress)
+        when (moonlightNotificationType) {
+            Notification.MoonType.INFO -> Fonts.fontMoonNoti(20).drawString("B", gx + 2F, gy, tint)
+            Notification.MoonType.NOTIFY -> Fonts.fontMoonNoti(20).drawString("A", gx + 2F, gy, tint)
+            Notification.MoonType.WARNING -> Fonts.fontMoonGlyphIcon(20).drawString("q", gx - 0.5F, gy - 1F, tint)
+            Notification.MoonType.OKAY -> Fonts.fontMoonGlyphIcon(20).drawString("X", gx - 0.5F, gy - 1F, tint)
+        }
         font.drawString(
-            description,
-            cardLeft + notificationWidth / 2F - font.getStringWidth(description) / 2F,
+            message,
+            textCenterX - font.getStringWidth(message) / 2F,
             // 对应原版 yVal + getMiddleOfBox(height) + 2（getMiddleOfBox = h/2 - getHeight()/2），
             // MoonLight 的 getHeight() 对应 AirPlus 的 visualLineHeight
             cardTop + h / 2F - font.visualLineHeight / 2F + 2F,
@@ -927,7 +1068,13 @@ class Notification(
         // 白色圆 + 主题色圆环（原 filled circle + gradient circle，此处以主题色替代渐变）
         drawRoundedRect(cardLeft + 3F, cardTop + 2F, cardLeft + 29F, cardTop + 28F, Color.WHITE.rgb, 13F)
         drawRoundedBorder(cardLeft + 3F, cardTop + 2F, cardLeft + 29F, cardTop + 28F, 1F, ClientThemesUtils.getColor().rgb, 13F)
-        RenderUtils.drawImage(moonlightIcon, cardLeft + 8F, cardTop + 7F, 16, 16, radius = 3F)
+        // 原版字形图标（黑色，noti/noti2 字体 42）：OKAY "M" / INFO "B" / NOTIFY "A" / WARNING "L"
+        when (moonlightNotificationType) {
+            Notification.MoonType.OKAY -> Fonts.fontMoonNoti2(42).drawString("M", cardLeft + 8F, cardTop + 10F, Color.BLACK.rgb)
+            Notification.MoonType.INFO -> Fonts.fontMoonNoti(42).drawString("B", cardLeft + 11F, cardTop + 8F, Color.BLACK.rgb)
+            Notification.MoonType.NOTIFY -> Fonts.fontMoonNoti(42).drawString("A", cardLeft + 14F, cardTop + 8F, Color.BLACK.rgb)
+            Notification.MoonType.WARNING -> Fonts.fontMoonNoti2(42).drawString("L", cardLeft + 9F, cardTop + 10F, Color.BLACK.rgb)
+        }
         moonFont(20).drawString(title, cardLeft + 34F, cardTop + 4F, Color.WHITE.rgb)
         moonFont(17).drawString(description, cardLeft + 34F, cardTop + 17F, Color.WHITE.rgb)
 
@@ -947,7 +1094,9 @@ class Notification(
         moonBlurBehind(element, cardLeft, cardTop, notificationWidth, h, 4F)
         drawRoundedRect(cardLeft, cardTop, cardLeft + notificationWidth, cardTop + h, moonBgColor(element).rgb, 4F)
         drawRoundedRect(cardLeft + 3F, cardTop + 5F, cardLeft + 28F, cardTop + 30F, ClientThemesUtils.getColor().rgb, 4F)
-        RenderUtils.drawImage(moonlightIcon, cardLeft + 7.5F, cardTop + 9.5F, 16, 16, radius = 3F)
+        // 原版字形图标：noti2(50) "k"，颜色为主题色三次 darker
+        val glyphColor = ClientThemesUtils.getColor().darker().darker().darker()
+        Fonts.fontMoonNoti2(50).drawString("k", cardLeft + 9.5F, cardTop + 10F, glyphColor.rgb)
         moonFont(22).drawStringWithShadow(title, cardLeft + 32F, cardTop + 6F, Color.WHITE.rgb)
         moonFont(20).drawStringWithShadow(description, cardLeft + 32F, cardTop + 20F, Color.WHITE.rgb)
     }
@@ -969,9 +1118,9 @@ class Notification(
             cardLeft + 3F, cardTop + h - 3F, cardLeft + 3F + (notificationWidth * elapsed - 5F).coerceAtLeast(0F),
             cardTop + h - 2F, ClientThemesUtils.getColor().rgb, 0F
         )
+        // 原版绘制字体为 interSemiBold(20)/interSemiBold(16)（width() 的 10/6 仅影响卡片宽度，为原版自身怪癖）
         val titleFont = moonFont(20)
         titleFont.drawString(title, cardLeft + 6F, cardTop + 4F, Color.WHITE.rgb)
-        // 原版 y + height - interSemiBold.get(20).getHeight()，getHeight() 对应 visualLineHeight
         moonFont(16).drawString(description, cardLeft + 6F, cardTop + h - titleFont.visualLineHeight, Color.WHITE.rgb)
     }
 
@@ -996,6 +1145,80 @@ class Notification(
             cardLeft + notificationWidth * elapsed, cardTop + h - 1F, cardLeft + notificationWidth, cardTop + h,
             moonlightTypeColor.rgb, 0F
         )
+    }
+
+    /**
+     * MoonLight Naven（1:1，原 NavenNotification）：
+     * 20px 高彩色胶囊卡（圆角 10），单行 siyuan(18) 白字带阴影，右缘滑入/滑出；
+     * 卡片颜色按 severity 映射原版类型色（OKAY 绿 / INFO 深 / NOTIFY 暗红 / WARNING 红）。
+     */
+    private fun drawNaven(element: Notifications, currentX: Float, notificationWidth: Float) {
+        val h = moonMetrics(element.style)?.first?.toFloat() ?: 20F
+        // 原版胶囊会超出锚点 4px 导致右圆角被屏幕边缘截断，这里整体左移 4px 使圆角完整可见
+        val cardLeft = -currentX
+        val cardTop = -y - h
+
+        drawRoundedRect(cardLeft, cardTop, cardLeft + notificationWidth, cardTop + h, navenLevelColor().rgb, 10F)
+        moonFont(18).drawString(navenMessage(), cardLeft + 4F, cardTop + 3F, Color.WHITE.rgb, true)
+    }
+
+    /**
+     * MoonLight Southside（1:1，原 SouthsideNotification）：
+     * 设计宽 314 的深灰圆角卡（GRAY_800），底部 5px PRIMARY_800 进度条内嵌 PRIMARY_500
+     * 已流逝填充，白色 0.8 透明度 32px 图标 + 标题 + 描述换行（行高 14.5），
+     * 右缘滑入/滑出 330 设计像素。
+     * 背板/进度条/图标（矢量与贴图几何）在 glScaled(unit) 设计空间内绘制；文字对齐
+     * Type 5 的渲染管线 —— 原版 fontRendererObj 在 GUI 空间直绘（无缩放矩阵，
+     * 与 Type 5 文字观感一致）。
+     */
+    private fun drawMoonSouthside(element: Notifications, currentX: Float, notificationWidth: Float) {
+        val unit = moonSouthsideUnit()
+        val fontRenderer = Minecraft.getMinecraft().fontRendererObj
+        val descLines = moonWrap(fontRenderer, moonSouthsideMessage(), 220F * unit)
+        val designH = 68F + 14.5F * descLines.size + 5F
+        val cardH = designH * unit
+        val cardBottom = -y
+        val cardTop = cardBottom - cardH
+        // 原版 slideIn：从右缘外 330 设计像素滑到最终位置（右缘留 16px 边距）
+        val slide = 330F * unit * easeInOutQuad((currentX / notificationWidth).coerceIn(0F, 1F))
+        val cardLeft = -slide
+
+        GlStateManager.pushMatrix()
+        GlStateManager.translate(cardLeft, cardTop, 0F)
+        GlStateManager.scale(unit, unit, unit)
+
+        // 背板（GRAY_800）
+        drawRoundedRect(0F, 0F, 314F, designH, Color(21, 22, 23).rgb, 8F)
+
+        // 底部进度条：PRIMARY_800 底 + PRIMARY_500 已流逝填充（随停留时间增长）
+        val elapsed = (1F - stay / delay.toFloat()).coerceIn(0F, 1F)
+        drawRoundedRect(0F, designH - 5F, 314F, designH, Color(13, 51, 128).rgb, 8F)
+        drawRoundedRect(0F, designH - 5F, 314F * elapsed, designH, Color(25, 103, 255).rgb, 8F)
+
+        // 左侧图标（白色 0.8 透明度，32 设计像素）：原版在 glScaled(unit) 内按
+        // iconTop = cardTop + (cardH - 5)/2 - 16 定位（垂直居中于进度条上方区域），
+        // 图标为原版专用 southside/{enabled,disabled,info,warning,error}.png（SouthsideNotification#icon 1:1）
+        RenderUtils.drawImage(
+            southsideIcon, 16F, (designH - 5F - 32F) / 2F,
+            32, 32, Color(255, 255, 255, 204)
+        )
+
+        GlStateManager.popMatrix()
+
+        // 标题/描述：原版字体直绘（对齐 Type 5 管线），白色 0.8 / 0.6 透明度
+        val textX = cardLeft + 64F * unit
+        fontRenderer.drawString(
+            if (isToggleNotification) "Module" else stripColor(title),
+            textX, cardTop + (30F - fontRenderer.FONT_HEIGHT / 2F) * unit,
+            Color(255, 255, 255, 204).rgb, false
+        )
+
+        // 描述换行（白色 0.6 透明度，行高 14.5 设计像素）
+        var lineY = cardTop + (46F - fontRenderer.FONT_HEIGHT / 2F) * unit
+        for (line in descLines) {
+            fontRenderer.drawString(line, textX, lineY, Color(255, 255, 255, 153).rgb, false)
+            lineY += 14.5F * unit
+        }
     }
 
     /**

@@ -14,6 +14,7 @@ import net.airplus.features.module.modules.player.nofallmodes.aac.AAC3315
 import net.airplus.features.module.modules.player.nofallmodes.aac.LAAC
 import net.airplus.features.module.modules.player.nofallmodes.other.*
 import net.airplus.features.module.modules.player.nofallmodes.other.Blink
+import net.airplus.features.module.modules.player.nofallmodes.rise.Rise as RiseNoFall
 import net.airplus.utils.block.BlockUtils.collideBlock
 import net.airplus.utils.rotation.AlwaysRotationSettings
 import net.minecraft.block.BlockLiquid
@@ -49,6 +50,9 @@ object NoFall : Module("NoFall", Category.PLAYER) {
         // Other Server
         Spartan,
         CubeCraft,
+
+        // Rise
+        RiseNoFall,
     )
 
     private val modes = noFallModes.map { it.modeName }.toTypedArray()
@@ -85,6 +89,9 @@ object NoFall : Module("NoFall", Category.PLAYER) {
     val autoOff by boolean("AutoOff", true) { mode == "Blink" }
     val simulateDebug by boolean("SimulationDebug", false) { mode == "Blink" }.subjective()
     val fakePlayer by boolean("FakePlayer", true) { mode == "Blink" }.subjective()
+
+    // Rise（Ported from Rise GrimServer19NoFall）
+    val riseNewestGrim by boolean("Rise-NewestGrim", false) { mode == "Rise" }
 
     var currentMlgBlock: BlockPos? = null
     var retrievingPos: Vec3? = null
@@ -152,6 +159,10 @@ object NoFall : Module("NoFall", Category.PLAYER) {
 
     val onMotion = handler<MotionEvent> {
         modeModule.onMotion(it)
+    }
+
+    val onMovementInput = handler<MovementInputEvent> {
+        modeModule.onMovementInput(it)
     }
 
     val onMove = handler<MoveEvent> {

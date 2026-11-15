@@ -74,6 +74,13 @@ object Fonts : MinecraftInstance {
     private fun mainFontRenderer(size: Int): GameFontRenderer =
         getFontOrDefault(mainFontFile, styledSize(size)).asGameFontRenderer()
 
+    // Moonlight 移植：任意字号的主字体懒缓存（ItemESP moon 标签等动态字号场景）
+    private val dynamicMainFonts = HashMap<Int, GameFontRenderer>()
+
+    /** 按原始字号取客户端主字体（跟随 Client 模块字体选择），主字体/全局字号重建时自动失效。 */
+    fun mainFontDynamic(size: Int): GameFontRenderer =
+        synchronized(dynamicMainFonts) { dynamicMainFonts.getOrPut(size) { mainFontRenderer(size) } }
+
     // ===== 启动关键路径字体：HUD / 核心 GUI 需要，loadFonts 时立即烘焙 =====
     lateinit var fontSemibold35: GameFontRenderer
     lateinit var fontSemibold40: GameFontRenderer
@@ -215,6 +222,18 @@ object Fonts : MinecraftInstance {
         moonlightFonts.getOrPut(moonSize) {
             getFontOrDefault("usans.otf", moonSize * 2).asGameFontRenderer()
         }
+
+    // MoonLight 通知图标字形字体（noti/noti2/icon，Default 与 Type 2/3 卡片图形用，
+    // 字形 B/A/L/M/k/X/q）。同为 2 倍字号管线；不进注册表，按文件+字号懒缓存。
+    private val moonGlyphFonts = HashMap<String, HashMap<Int, GameFontRenderer>>()
+    private fun moonGlyphFont(file: String, moonSize: Int): GameFontRenderer =
+        moonGlyphFonts.getOrPut(file) { HashMap() }.getOrPut(moonSize) {
+            getFontOrDefault(file, moonSize * 2).asGameFontRenderer(styleable = false)
+        }
+
+    fun fontMoonNoti(moonSize: Int): GameFontRenderer = moonGlyphFont("noti.ttf", moonSize)
+    fun fontMoonNoti2(moonSize: Int): GameFontRenderer = moonGlyphFont("noti2.ttf", moonSize)
+    fun fontMoonGlyphIcon(moonSize: Int): GameFontRenderer = moonGlyphFont("icon.ttf", moonSize)
 
     // ExtraBold / Bold180 属于次级内部 GUI 字体，同样走懒加载委托，
     // 但不注册进 FONT_PROVIDERS（不可被 FontValue 字体循环选中）
@@ -623,6 +642,8 @@ object Fonts : MinecraftInstance {
         _fontRise35 = null
         _fontRise40 = null
         _fontRise50 = null
+        // Moonlight 移植的动态主字体缓存一并失效
+        dynamicMainFonts.clear()
     }
 
     /** 全局字号/粗细变化后重建核心文本字体（在渲染线程调用，见 AWTFontRenderer.onRender2D）。 */

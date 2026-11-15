@@ -70,8 +70,6 @@ object InventoryCleaner : Module("InventoryCleaner", Category.PLAYER) {
 
     private val noPotion by boolean("NoPotion", false).subjective()
 
-    private val saveTNT by boolean("SaveTNT", false).subjective()
-
     private val invOpen by +InventoryManager.invOpenValue
     private val simulateInventory by +InventoryManager.simulateInventoryValue
 
@@ -477,6 +475,10 @@ object InventoryCleaner : Module("InventoryCleaner", Category.PLAYER) {
     ): Boolean {
         val item = stack?.item ?: return false
 
+        // TNT 是独立类别：不算方块（不占 MaxBlockStacks / 不匹配 Block 排序），始终保留
+        if (isTNTStack(stack))
+            return true
+
         return when (item) {
             in ITEMS_WHITELIST -> true
 
@@ -818,10 +820,6 @@ object InventoryCleaner : Module("InventoryCleaner", Category.PLAYER) {
         stack: ItemStack?, stacks: List<ItemStack?>, entityStacksMap: Map<ItemStack, EntityItem>?,
         ignoreLimits: Boolean, strictlyBest: Boolean,
     ): Boolean {
-        // SaveTNT: keep TNT and exclude it from MaxBlockStacks counting
-        if (saveTNT && isTNTStack(stack))
-            return true
-
         if (!isSuitableBlock(stack)) return false
 
         // Skip checks if there is no stack limit set and when you are not strictly searching for best option
@@ -846,10 +844,7 @@ object InventoryCleaner : Module("InventoryCleaner", Category.PLAYER) {
         }
 
         val betterCount = stacksToIterate.withIndex().count { (otherIndex, otherStack) ->
-            if (otherStack == stack || !isSuitableBlock(otherStack)
-                // SaveTNT: TNT doesn't count towards the block stack limit
-                || (saveTNT && isTNTStack(otherStack))
-            )
+            if (otherStack == stack || !isSuitableBlock(otherStack))
                 return@count false
 
             // Items dropped on ground should have index -1
@@ -1155,7 +1150,7 @@ private val SORTING_TARGETS: Map<String, ((Item?) -> Boolean)?> = mapOf(
     "Axe" to { it is ItemAxe },
     "Shovel" to { it is ItemSpade },
     "Food" to { it is ItemFood },
-    "Block" to { it is ItemBlock },
+    "Block" to { it is ItemBlock && it != Item.getItemFromBlock(Blocks.tnt) },
     "Water" to { it == Items.water_bucket || it == Items.bucket },
     "Fire" to { it is ItemFlintAndSteel || it == Items.lava_bucket || it == Items.bucket },
     "Gapple" to { it is ItemAppleGold },
