@@ -33,27 +33,10 @@ public abstract class MixinGuiContainer extends MixinGuiScreen {
     @Unique
     final TickTimer tick2 = new TickTimer();
 
-    @Inject(method = "initGui", at = @At("RETURN"), cancellable = true)
-    private void init(CallbackInfo ci) {
-        if (ChestStealer.INSTANCE.handleEvents() && ChestStealer.INSTANCE.getSilentGUI()) {
-            if (mc.currentScreen instanceof GuiChest) {
-                ci.cancel();
-            }
-        }
-    }
-
-    @Inject(method = "drawScreen", at = @At("HEAD"), cancellable = true)
-    private void drawScreen(int mouseX, int mouseY, float partialTicks, CallbackInfo ci) {
-        if (ChestStealer.INSTANCE.handleEvents() && ChestStealer.INSTANCE.getSilentGUI()) {
-            if (mc.currentScreen instanceof GuiChest) {
-                ci.cancel();
-            }
-        }
-    }
-
     /**
      * GuiImage：容器类界面（箱子/背包等 GuiContainer 子类）drawScreen 尾部绘制自定义图片。
      * GuiImage 内部按白名单过滤（仅 GuiChest / GuiInventory）。
+     * ChestStealer SilentGUI 的静默箱子不再创建 GuiScreen，由此天然跳过本注入。
      */
     @Inject(method = "drawScreen", at = @At("TAIL"))
     private void airplus$guiImageDraw(int mouseX, int mouseY, float partialTicks, CallbackInfo ci) {

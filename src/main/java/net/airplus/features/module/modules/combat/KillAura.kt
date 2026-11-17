@@ -12,6 +12,7 @@ import net.airplus.features.module.Module
 import net.airplus.features.module.modules.combat.Backtrack.runWithSimulatedPosition
 import net.airplus.features.module.modules.misc.Teams
 import net.airplus.features.module.modules.player.Blink
+import net.airplus.features.module.modules.world.ChestStealer
 import net.airplus.features.module.modules.world.Fucker
 import net.airplus.features.module.modules.world.Nuker
 import net.airplus.features.module.modules.world.scaffolds.*
@@ -576,7 +577,9 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     }
 
     fun update() {
-        if (cancelRun || (noInventoryAttack && (mc.currentScreen is GuiContainer || System.currentTimeMillis() - containerOpen < noInventoryDelay))) return
+        if (cancelRun || ChestStealer.silentlyStealing
+            || (noInventoryAttack && (mc.currentScreen is GuiContainer || System.currentTimeMillis() - containerOpen < noInventoryDelay))
+        ) return
 
         // Check if last target died
         lastTarget?.let {
@@ -740,7 +743,8 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             }
         }
 
-        if (target != null) {
+        // ChestStealer 静默偷取期间暂停攻击（避免“开箱同时攻击”被检测），上面的 stopBlocking 清理不受影响
+        if (target != null && !ChestStealer.silentlyStealing) {
             if (player.getDistanceToEntityBox(target!!) > blockMaxRange && blockStatus) {
                 stopBlocking(true)
                 return@handler

@@ -6,8 +6,8 @@
  * Ported from Moonlight EdMoonlight NewArmorBreaker (wtf.moonlight.module.impl.combat).
  *
  * 移植适配说明（与 moonlight 原始实现的差异）：
- * - AutoGapple → AirPlus Gapple：仅保留 isEating 联动；attr 冻结/刷新、queueNextClick、
- *   shouldQueueWeaponSwap 等 API 不存在，attrFrozen() 恒为 false（相关分支保留但不会触发）。
+ * - AutoGapple → AirPlus Gapple：isEating 联动、attr 冻结/刷新（freezesAttr/attrRefreshMax/
+ *   refreshAttr）、shouldQueueWeaponSwap、queueNextClick 均已对接 Gapple 的 EdMoonlight 模式。
  * - KillAura：阻塞状态复用 KillAura.blockStatus；换武器后服务端格挡被打断时补发 C08。
  *   shouldBlock()/shouldAttack()/addons/Ray Cast/HYT rightClickDelayTimer 无对应 API，已精简。
  * - AttackEvent 不可取消：“对齐暴击”的 skip 只能放弃本次换武器（攻击仍会打出）。
@@ -499,8 +499,9 @@ object EdMoonlightMode : Listenable, MinecraftInstance {
     // ------------------------------------------------------------------
     private fun swapClick(windowSlot: Int) {
         // moonlight: autoToolDigging() 阻止挖掘时换武器 —— AirPlus AutoTool 无 wasDigging 状态，跳过
-        // moonlight: AutoGapple.queueNextClick —— AirPlus Gapple 无对应 API，跳过
         val player = mc.thePlayer ?: return
+        // 吃苹果期间放行本次 C0E 点击包（对齐 moonlight AutoGapple.queueNextClick）
+        Gapple.queueNextClick()
         mc.playerController.windowClick(player.inventoryContainer.windowId, windowSlot, player.inventory.currentItem, 2, player)
         markSwapped()
         ArmorBreakerServerModel.blockOwed = true
@@ -793,7 +794,7 @@ object EdMoonlightMode : Listenable, MinecraftInstance {
         val eating = Gapple.state && Gapple.isEating
         if (player.openContainer === player.inventoryContainer
             && !ownBlinkActive && !BlinkUtils.isBlinking
-            && (!eating || attrFrozen()) // moonlight: || self && shouldQueueWeaponSwap()，AirPlus 无对应 API
+            && (!eating || attrFrozen() || self && Gapple.shouldQueueWeaponSwap())
             && !Scaffold.state
         ) {
             val held = player.heldItem
@@ -804,8 +805,8 @@ object EdMoonlightMode : Listenable, MinecraftInstance {
     }
 
     private fun attrFrozen(): Boolean {
-        // moonlight: isEnabled(AutoGapple) && gapple.freezesAttr() —— AirPlus Gapple 无属性冻结，恒为 false
-        return false
+        // moonlight: isEnabled(AutoGapple) && gapple.freezesAttr()
+        return Gapple.state && Gapple.freezesAttr()
     }
 
     private fun gappleSwordOnly(): Boolean = abNoGapple && abOnlySwordWhenGapple && Gapple.state
@@ -1053,14 +1054,15 @@ object EdMoonlightMode : Listenable, MinecraftInstance {
 
         planner.allowSkip = !frozen && abCritForecast && abAlignCrits
         planner.frozen = frozen
-        // moonlight: AutoGapple.attrRefreshMax()/canRefreshAttr() —— AirPlus 无对应 API，恒为 0
-        planner.refreshMax = 0
+        // moonlight: AutoGapple.attrRefreshMax()/canRefreshAttr() —— 由 Gapple 的 Attr Refresh 设置驱动
+        val refreshMax = Gapple.attrRefreshMax()
+        planner.refreshMax = refreshMax
         if (refreshCycle != thFreshTick) {
             refreshCycle = thFreshTick
             refreshUsed = 0
         }
 
-        planner.refreshLeft = 0
+        planner.refreshLeft = if (Gapple.canRefreshAttr() && refreshUsed < refreshMax) refreshMax - refreshUsed else 0
         planner.blocking = target is EntityPlayer && target.isBlocking
         planner.prepare(attr, thLast)
     }
@@ -1145,7 +1147,7 @@ object EdMoonlightMode : Listenable, MinecraftInstance {
     private fun planStage(target: EntityLivingBase) {
         val player = mc.thePlayer ?: return
         if (attrFrozen()) {
-            // moonlight: planRefresh —— AirPlus Gapple 无 attr 冻结，此分支不可达，保留兜底
+            // moonlight: planRefresh —— Gapple 冻结 attr 期间不排武器计划，回退 axe 收刀流程
             tickHitAxeBack(target)
         } else if (player.openContainer === player.inventoryContainer && KillAura.state && KillAura.target === target) {
             val ladderArr = getSwordArr()
@@ -1167,6 +1169,10 @@ object EdMoonlightMode : Listenable, MinecraftInstance {
                 } else {
                     val held = player.heldItem
                     rotateClick(ladderArr.slots[pick])
+                    if (planner.refresh && Gapple.refreshAttr()) {
+                        refreshUsed++
+                    }
+
                     if (mc.thePlayer!!.heldItem !== held) {
                         spoofTicks = SPOOF_KEEP_TICKS
                         afterSwap(true, false)

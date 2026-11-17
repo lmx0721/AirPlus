@@ -1,9 +1,9 @@
-/*
+﻿/*
  * AirPlus Hacked Client
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
  */
-package net.airplus.features.module.modules.rise
+package net.airplus.utils.skid.rise
 
 import com.viaversion.viaversion.api.Via
 import com.viaversion.viaversion.api.minecraft.Position

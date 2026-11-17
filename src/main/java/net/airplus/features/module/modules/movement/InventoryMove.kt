@@ -27,7 +27,9 @@ import org.lwjgl.input.Mouse
 
 object InventoryMove : Module("InventoryMove", Category.MOVEMENT, gameDetecting = false) {
 
-    private val notInChests by boolean("NotInChests", false)
+    // 对 ChestStealer.SilentGUI 可见：静默开箱时无 GuiChest 界面，IM 自身检测不到箱子，
+    // 需由 ChestStealer 按这两个设置补上“开箱冻结移动”的行为
+    val notInChests by boolean("NotInChests", false)
     val aacAdditionPro by boolean("AACAdditionPro", false)
     private val intave by boolean("Intave", false)
     private val saveC0E by boolean("SaveC0E", false)
@@ -39,7 +41,7 @@ object InventoryMove : Module("InventoryMove", Category.MOVEMENT, gameDetecting 
     private val noMove by +InventoryManager.noMoveValue
     private val noMoveAir by +InventoryManager.noMoveAirValue
     private val noMoveGround by +InventoryManager.noMoveGroundValue
-    private val undetectable by +InventoryManager.undetectableValue
+    val undetectable by +InventoryManager.undetectableValue
 
     // If player violates nomove check and inventory is open, close inventory and reopen it when still
     private val silentlyCloseAndReopen by boolean(

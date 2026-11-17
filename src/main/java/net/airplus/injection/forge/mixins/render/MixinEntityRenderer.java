@@ -15,6 +15,7 @@ import net.airplus.features.module.modules.player.Reach;
 import net.airplus.features.module.modules.render.*;
 import net.airplus.utils.client.ClientUtils;
 import net.airplus.utils.render.LwjglCompat;
+import net.airplus.utils.render.MotionBlurRenderer;
 import net.airplus.utils.rotation.Rotation;
 import net.airplus.utils.rotation.RotationUtils;
 import net.airplus.viaversion.vialoadingbase.ViaLoadingBase;
@@ -101,6 +102,16 @@ public abstract class MixinEntityRenderer {
           For example, OrangeMarshall's 1.7 Animations mod.
          */
         if (ClientUtils.INSTANCE.getProfilerName().equals("hand")) {
+            // MotionBlur（BetterMyau 迁移）：世界已渲染完毕、手部/ESP 尚未渲染——
+            // 此刻 GL 矩阵仍是世界相机矩阵，把主帧缓冲沿相机帧间运动做逐像素
+            // 模糊后直接写回主帧缓冲。只模糊世界：ESP（Render3DEvent）、手部、HUD 保持清晰。
+            final MotionBlur airplus$motionBlur = MotionBlur.INSTANCE;
+            if (airplus$motionBlur.handleEvents() && this.mc.theWorld != null) {
+                MotionBlurRenderer.apply(airplus$motionBlur.samples(),
+                        (float) airplus$motionBlur.getShutter(),
+                        (float) airplus$motionBlur.getMaxLength(),
+                        airplus$motionBlur.getTranslation());
+            }
             FreeLook.INSTANCE.runWithoutSavingRotations(() -> {
                 FreeLook.INSTANCE.restoreOriginalRotation();
                 EventManager.INSTANCE.call(new Render3DEvent(partialTicks));

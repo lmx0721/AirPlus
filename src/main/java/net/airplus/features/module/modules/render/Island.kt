@@ -40,6 +40,7 @@ import net.minecraft.client.renderer.RenderHelper.enableGUIStandardItemLighting
 import net.minecraft.util.ResourceLocation
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.inventory.GuiChest
+import net.minecraft.inventory.ContainerChest
 import net.minecraft.inventory.Slot
 import net.minecraft.item.ItemBlock
 import net.minecraft.item.ItemStack
@@ -724,9 +725,12 @@ object Island : Module("Island", Category.RENDER) {
         val scaffoldModule = scaffoldModuleRef
         val scaffoldModule2 = scaffold2ModuleRef
 
-        val isChestOpen = mc.currentScreen is GuiChest && ChestTheme
-        val chestSlots = if (isChestOpen) {
-            (mc.currentScreen as GuiChest).inventorySlots?.inventorySlots?.filter { it.inventory != mc.thePlayer?.inventory } ?: emptyList()
+        // 静默箱子（ChestStealer SilentGUI）没有 GuiScreen，从 openContainer 取容器
+        val chestContainer = (mc.currentScreen as? GuiChest)?.inventorySlots
+            ?: (mc.thePlayer?.openContainer as? ContainerChest)?.takeIf { mc.currentScreen == null }
+        val isChestOpen = chestContainer != null && ChestTheme
+        val chestSlots = if (chestContainer != null) {
+            chestContainer.inventorySlots.filter { it.inventory != mc.thePlayer?.inventory }
         } else emptyList()
 
         if (!isChestOpen) {
@@ -734,7 +738,7 @@ object Island : Module("Island", Category.RENDER) {
             slotRipples.clear()
             lastChestContainerHash = 0
         } else {
-            val currentContainerId = (mc.currentScreen as GuiChest).inventorySlots.windowId
+            val currentContainerId = chestContainer?.windowId ?: 0
             if (currentContainerId != lastChestContainerHash) {
                 prevSlotItems.clear()
                 slotRipples.clear()
@@ -4039,7 +4043,9 @@ object Island : Module("Island", Category.RENDER) {
     }
 
     private fun opaiServerLabel(singleplayer: Boolean): String =
-        if (singleplayer) "singleplayer" else (mc.currentServerData?.serverIP ?: "multiplayer")
+        if (singleplayer) "singleplayer"
+        else if (customip && ip.isNotBlank()) ip
+        else (mc.currentServerData?.serverIP ?: "multiplayer")
 
     /** 进度面板宽度（对照 Samsara：SCAFFOLD_TEXT_X + max(标题, 详情) + SCAFFOLD_RIGHT_PADDING） */
     private fun calcOpaiPanelWidth(title: String, detail: String): Float {

@@ -18,8 +18,10 @@ import net.airplus.utils.client.PacketUtils.sendPacket
 import net.airplus.utils.extensions.eyes
 import net.airplus.utils.extensions.onPlayerRightClick
 import net.airplus.utils.extensions.rotation
+import net.airplus.utils.render.OnyxBlockAnimator
 import net.airplus.utils.render.RenderUtils.drawBlockBox
 import net.airplus.utils.render.RenderUtils.drawBlockDamageText
+import net.airplus.utils.render.drawOnyxFrame
 import net.airplus.utils.rotation.RotationSettings
 import net.airplus.utils.rotation.RotationUtils.currentRotation
 import net.airplus.utils.rotation.RotationUtils.faceBlock
@@ -34,6 +36,7 @@ import net.minecraft.network.play.client.C07PacketPlayerDigging
 import net.minecraft.network.play.client.C07PacketPlayerDigging.Action.*
 import net.minecraft.network.play.client.C0APacketAnimation
 import net.minecraft.network.play.server.S08PacketPlayerPosLook
+import net.minecraft.util.AxisAlignedBB
 import net.minecraft.util.BlockPos
 import net.minecraft.util.EnumFacing
 import net.minecraft.util.Vec3
@@ -68,6 +71,15 @@ object Fucker : Module("Fucker", Category.WORLD) {
 
     private val color by color("Color", Color(200, 100, 0)) { blockProgress }.subjective()
 
+    // Onyx 覆盖模式（共享 OnyxBlockAnimator）
+    private val overlayMode by choices("OverlayMode", arrayOf("Normal", "Onyx"), "Normal")
+    private val overlayColor by color("OverlayColor", Color(255, 60, 60, 90)) { overlayMode == "Onyx" }
+    private val overlayAppearance by choices("OverlayAppearance", arrayOf("Fade", "Pop", "Grow"), "Fade") { overlayMode == "Onyx" }
+    private val overlayAppear by float("OverlayAppear", 140F, 0F..600F, "ms") { overlayMode == "Onyx" }
+    private val overlayFade by float("OverlayFade", 180F, 0F..600F, "ms") { overlayMode == "Onyx" }
+    private val overlayMove by float("OverlayMove", 110F, 0F..600F, "ms") { overlayMode == "Onyx" }
+    private val overlayPadding by float("OverlayPadding", 0.6F, 0F..5F, "%") { overlayMode == "Onyx" }
+
     private val ignoreOwnBed by boolean("IgnoreOwnBed", true)
     private val ownBedDist by int("MaxBedDistance", 16, 1..32) { ignoreOwnBed }
 
@@ -87,6 +99,17 @@ object Fucker : Module("Fucker", Category.WORLD) {
     // Surroundings
     private var areSurroundings = false
 
+    // Onyx 覆盖动画器
+    private val overlayAnimator = OnyxBlockAnimator()
+
+    /** 目标方块的 SelectedBoundingBox（方块真实模型边界，如床）。 */
+    private fun overlayAABB(blockPos: BlockPos): AxisAlignedBB? {
+        val world = mc.theWorld ?: return null
+        val block = blockPos.block ?: return null
+        block.setBlockBoundsBasedOnState(world, blockPos)
+        return block.getSelectedBoundingBox(world, blockPos)
+    }
+
     override fun onToggle(state: Boolean) {
         if (pos != null && !mc.thePlayer.capabilities.isCreativeMode) {
             sendPacket(C07PacketPlayerDigging(ABORT_DESTROY_BLOCK, pos, EnumFacing.DOWN))
@@ -97,6 +120,11 @@ object Fucker : Module("Fucker", Category.WORLD) {
         obstructingPos = null
         areSurroundings = false
         isOwnBed = false
+        overlayAnimator.reset()
+    }
+
+    val onWorld = handler<WorldEvent> {
+        overlayAnimator.reset()
     }
 
     val onPacket = handler<PacketEvent> { event ->
@@ -310,7 +338,17 @@ object Fucker : Module("Fucker", Category.WORLD) {
             )
         }
 
-        drawBlockBox(posToDraw, Color.RED, true)
+        if (overlayMode == "Onyx") {
+            // Onyx 动画覆盖：目标在床与遮挡方块间切换时播放滑动/淡入淡出
+            val aabb = overlayAABB(posToDraw)
+            val settings = OnyxBlockAnimator.Settings(
+                overlayAppearance, overlayAppear, overlayFade, overlayMove, overlayPadding
+            )
+            val frame = overlayAnimator.update(posToDraw, aabb, settings)
+            if (frame != null) drawOnyxFrame(frame.box, frame.visibility, overlayColor)
+        } else {
+            drawBlockBox(posToDraw, Color.RED, true)
+        }
     }
 
     /**

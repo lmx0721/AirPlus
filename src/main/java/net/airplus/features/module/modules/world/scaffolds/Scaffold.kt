@@ -22,7 +22,9 @@ import net.airplus.utils.inventory.SilentHotbar
 import net.airplus.utils.inventory.hotBarSlot
 import net.airplus.utils.kotlin.RandomUtils
 import net.airplus.utils.movement.MovementUtils
+import net.airplus.utils.render.OnyxBlockAnimator
 import net.airplus.utils.render.RenderUtils
+import net.airplus.utils.render.drawOnyxFrame
 import net.airplus.utils.render.drawWithTessellatorWorldRenderer
 import net.airplus.utils.rotation.PlaceRotation
 import net.airplus.utils.rotation.Rotation
@@ -215,9 +217,16 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
     // Visuals
     private val mark by boolean("Mark", false).subjective()
-    private val markStyle by choices("MarkStyle", arrayOf("Box", "CornerFrame", "RingPulse"), "Box") { mark }
+    private val markStyle by choices("MarkStyle", arrayOf("Box", "CornerFrame", "RingPulse", "Onyx"), "Box") { mark }
     private val markColor = color("MarkColor", Color(68, 117, 255, 100)) { mark }
-    private val markAnimDuration by int("MarkAnimDuration", 250, 0..1000) { mark }
+    private val markAnimDuration by int("MarkAnimDuration", 250, 0..1000) { mark && markStyle != "Onyx" }
+
+    // Onyx 动画（迁移自 BlockOverlay 的 Onyx 实现，共享 OnyxBlockAnimator）
+    private val onyxAppearance by choices("OnyxAppearance", arrayOf("Fade", "Pop", "Grow"), "Fade") { mark && markStyle == "Onyx" }
+    private val onyxAppear by float("OnyxAppear", 140F, 0F..600F, "ms") { mark && markStyle == "Onyx" }
+    private val onyxFade by float("OnyxFade", 180F, 0F..600F, "ms") { mark && markStyle == "Onyx" }
+    private val onyxMove by float("OnyxMove", 110F, 0F..600F, "ms") { mark && markStyle == "Onyx" }
+    private val onyxPadding by float("OnyxPadding", 0.6F, 0F..5F, "%") { mark && markStyle == "Onyx" }
     private val trackCPS by boolean("TrackCPS", false).subjective()
 
     // Target placement
@@ -235,8 +244,20 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private var clutchSavedMotionZ = 0.0
     private var clutchSafeY = -999.0
 
+    // 最近一次实际放置方块的 tick（Gapple EdMoonlight 的 isBridging 数据源）
+    private var lastPlaceTick = -1000
+
     val shouldJumpOnInput
         get() = !jumpOnUserInput || !mc.gameSettings.keyBindJump.isKeyDown && mc.thePlayer.posY >= launchY && !mc.thePlayer.onGround
+
+    /** Gapple EdMoonlight 联动：Clutch 正在保命（已激活或冻结扣包中），对应 moonlight Clutch.isWorking()。 */
+    fun isClutchWorking(): Boolean = state && clutch && (clutchActive || clutchFrozen)
+
+    /** Gapple EdMoonlight 联动：最近 20 tick 内实际放过方块（正在搭路），对应 moonlight Scaffold.isBridging()。 */
+    fun isBridging(): Boolean {
+        val player = mc.thePlayer ?: return false
+        return state && player.ticksExisted - lastPlaceTick <= 20
+    }
 
     private val shouldKeepLaunchPosition
         get() = sameY && shouldJumpOnInput && scaffoldMode != "GodBridge"
@@ -965,6 +986,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         lastMarkPos = null
         fadingMarks.clear()
+        onyxAnimator.reset()
 
         SilentHotbar.resetSlot(this)
 
@@ -1005,6 +1027,10 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         clutchActive = false
         clutchFrozen = false
         clutchFrozenTicks = 0
+
+        lastMarkPos = null
+        fadingMarks.clear()
+        onyxAnimator.reset()
     }
 
     val jumpHandler = handler<JumpEvent> { event ->
@@ -1064,7 +1090,30 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             }
         }
 
-        updateMark(markPos)
+        if (markStyle == "Onyx") {
+            updateOnyxMark(markPos)
+        } else {
+            updateMark(markPos)
+        }
+    }
+
+    // Onyx 动画器（MarkStyle == "Onyx" 时使用）
+    private val onyxAnimator = OnyxBlockAnimator()
+
+    /** Mark 目标方块的 SelectedBoundingBox（方块真实模型边界，如台阶/楼梯）。 */
+    private fun markAABB(blockPos: BlockPos): AxisAlignedBB? {
+        val world = mc.theWorld ?: return null
+        val block = blockPos.block ?: return null
+        block.setBlockBoundsBasedOnState(world, blockPos)
+        return block.getSelectedBoundingBox(world, blockPos)
+    }
+
+    /** Onyx 样式：共享 OnyxBlockAnimator 播放出现/淡出/相邻方块滑动动画。 */
+    private fun updateOnyxMark(blockPos: BlockPos?) {
+        val aabb = blockPos?.let { markAABB(it) }
+        val settings = OnyxBlockAnimator.Settings(onyxAppearance, onyxAppear, onyxFade, onyxMove, onyxPadding)
+        val frame = onyxAnimator.update(blockPos, aabb, settings) ?: return
+        drawOnyxFrame(frame.box, frame.visibility, markBoxColor())
     }
 
     /** RingPulse 扩散环动画周期（毫秒） */
@@ -1498,6 +1547,8 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         val clickedSuccessfully = thePlayer.onPlayerRightClick(clickPos, side, hitVec, stack, defer = true)
 
         if (clickedSuccessfully) {
+            lastPlaceTick = thePlayer.ticksExisted
+
             if (!attempt) {
                 delayTimer.reset()
 

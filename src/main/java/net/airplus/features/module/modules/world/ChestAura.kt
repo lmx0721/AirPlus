@@ -20,6 +20,8 @@ import net.airplus.utils.client.realZ
 import net.airplus.utils.extensions.*
 import net.airplus.utils.inventory.InventoryUtils.serverOpenContainer
 import net.airplus.utils.kotlin.StringUtils.contains
+import net.airplus.utils.render.OnyxBlockAnimator
+import net.airplus.utils.render.drawOnyxFrame
 import net.airplus.utils.rotation.RotationSettings
 import net.airplus.utils.rotation.RotationUtils.currentRotation
 import net.airplus.utils.rotation.RotationUtils.getVectorForRotation
@@ -39,8 +41,10 @@ import net.minecraft.network.play.server.S45PacketTitle
 import net.minecraft.tileentity.TileEntity
 import net.minecraft.tileentity.TileEntityChest
 import net.minecraft.tileentity.TileEntityEnderChest
+import net.minecraft.util.AxisAlignedBB
 import net.minecraft.util.BlockPos
 import net.minecraft.util.Vec3
+import java.awt.Color
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.util.*
@@ -79,6 +83,15 @@ object ChestAura : Module("ChestAura", Category.WORLD) {
     private val options = RotationSettings(this).withoutKeepRotation()
 
     private val openInfo by choices("OpenInfo", arrayOf("Off", "Self", "Other", "Everyone"), "Off")
+
+    // 目标箱高亮（Onyx 动画，共享 OnyxBlockAnimator）
+    private val mark by boolean("Mark", true)
+    private val markColor by color("MarkColor", Color(68, 117, 255, 100)) { mark }
+    private val markAppearance by choices("MarkAppearance", arrayOf("Fade", "Pop", "Grow"), "Fade") { mark }
+    private val markAppear by float("MarkAppear", 140F, 0F..600F, "ms") { mark }
+    private val markFade by float("MarkFade", 180F, 0F..600F, "ms") { mark }
+    private val markMove by float("MarkMove", 110F, 0F..600F, "ms") { mark }
+    private val markPadding by float("MarkPadding", 0.6F, 0F..5F, "%") { mark }
 
     var tileTarget: TileTarget? = null
     private val timer = MSTimer()
@@ -165,6 +178,39 @@ object ChestAura : Module("ChestAura", Category.WORLD) {
     override fun onDisable() {
         clickedTileEntities.clear()
         chestOpenMap.clear()
+        markAnimator.reset()
+    }
+
+    // 目标箱高亮动画器
+    private val markAnimator = OnyxBlockAnimator()
+
+    /**
+     * 渲染当前目标箱子的 Onyx 动画高亮：箱子仍是可点击目标时显示，
+     * 被拿走/换目标/关闭时按淡出动画消失。
+     */
+    val onRender3D = handler<Render3DEvent> {
+        if (!mark) return@handler
+
+        val world = mc.theWorld ?: return@handler
+        val target = tileTarget
+
+        // 目标仍是可点击箱子时取其边界，否则传 null 让动画淡出
+        var pos: BlockPos? = null
+        var aabb: AxisAlignedBB? = null
+        if (target != null && shouldClickTileEntity(target.entity)) {
+            val blockPos = target.entity.pos
+            val block = blockPos.block
+            if (block != null) {
+                block.setBlockBoundsBasedOnState(world, blockPos)
+                pos = blockPos
+                aabb = block.getSelectedBoundingBox(world, blockPos)
+            }
+        }
+
+        val settings = OnyxBlockAnimator.Settings(markAppearance, markAppear, markFade, markMove, markPadding)
+        val frame = markAnimator.update(pos, aabb, settings) ?: return@handler
+
+        drawOnyxFrame(frame.box, frame.visibility, markColor)
     }
 
     val onPacket = handler<PacketEvent> { event ->

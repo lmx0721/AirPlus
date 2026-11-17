@@ -16,8 +16,10 @@ import net.airplus.utils.block.blockById
 import net.airplus.utils.block.center
 import net.airplus.utils.client.PacketUtils.sendPacket
 import net.airplus.utils.extensions.eyes
+import net.airplus.utils.render.OnyxBlockAnimator
 import net.airplus.utils.render.RenderUtils.drawBlockBox
 import net.airplus.utils.render.RenderUtils.drawBlockDamageText
+import net.airplus.utils.render.drawOnyxFrame
 import net.airplus.utils.rotation.RotationSettings
 import net.airplus.utils.rotation.RotationUtils.faceBlock
 import net.airplus.utils.rotation.RotationUtils.setTargetRotation
@@ -31,6 +33,7 @@ import net.minecraft.network.play.client.C07PacketPlayerDigging
 import net.minecraft.network.play.client.C07PacketPlayerDigging.Action.START_DESTROY_BLOCK
 import net.minecraft.network.play.client.C07PacketPlayerDigging.Action.STOP_DESTROY_BLOCK
 import net.minecraft.util.BlockPos
+import net.minecraft.util.AxisAlignedBB
 import net.minecraft.util.EnumFacing
 import java.awt.Color
 import kotlin.math.roundToInt
@@ -68,6 +71,15 @@ object Nuker : Module("Nuker", Category.WORLD, gameDetecting = false) {
 
     private val color by color("Color", Color(200, 100, 0)) { blockProgress }.subjective()
 
+    // Onyx 覆盖模式（共享 OnyxBlockAnimator）
+    private val overlayMode by choices("OverlayMode", arrayOf("Normal", "Onyx"), "Normal")
+    private val overlayColor by color("OverlayColor", Color(255, 60, 60, 90)) { overlayMode == "Onyx" }
+    private val overlayAppearance by choices("OverlayAppearance", arrayOf("Fade", "Pop", "Grow"), "Fade") { overlayMode == "Onyx" }
+    private val overlayAppear by float("OverlayAppear", 140F, 0F..600F, "ms") { overlayMode == "Onyx" }
+    private val overlayFade by float("OverlayFade", 180F, 0F..600F, "ms") { overlayMode == "Onyx" }
+    private val overlayMove by float("OverlayMove", 110F, 0F..600F, "ms") { overlayMode == "Onyx" }
+    private val overlayPadding by float("OverlayPadding", 0.6F, 0F..5F, "%") { overlayMode == "Onyx" }
+
     /**
      * VALUES
      */
@@ -80,6 +92,25 @@ object Nuker : Module("Nuker", Category.WORLD, gameDetecting = false) {
     private var nukedCount = 0
 
     var currentDamage = 0F
+
+    // Onyx 覆盖动画器
+    private val overlayAnimator = OnyxBlockAnimator()
+
+    /** 目标方块的 SelectedBoundingBox（方块真实模型边界）。 */
+    private fun overlayAABB(blockPos: BlockPos): AxisAlignedBB? {
+        val world = mc.theWorld ?: return null
+        val block = blockPos.block ?: return null
+        block.setBlockBoundsBasedOnState(world, blockPos)
+        return block.getSelectedBoundingBox(world, blockPos)
+    }
+
+    override fun onDisable() {
+        overlayAnimator.reset()
+    }
+
+    val onWorld = handler<WorldEvent> {
+        overlayAnimator.reset()
+    }
 
     val onUpdate = handler<UpdateEvent> {
         // Block hit delay
@@ -233,6 +264,18 @@ object Nuker : Module("Nuker", Category.WORLD, gameDetecting = false) {
 
         if (blocks.blockById == air) return@handler
 
+        val onyx = overlayMode == "Onyx"
+
+        if (onyx) {
+            // Onyx 动画覆盖：对当前挖掘目标播放出现/淡出/滑动动画
+            val aabb = currentBlock?.let { overlayAABB(it) }
+            val settings = OnyxBlockAnimator.Settings(
+                overlayAppearance, overlayAppear, overlayFade, overlayMove, overlayPadding
+            )
+            val frame = overlayAnimator.update(currentBlock, aabb, settings)
+            if (frame != null) drawOnyxFrame(frame.box, frame.visibility, overlayColor)
+        }
+
         for (pos in attackedBlocks) {
             if (blockProgress) {
                 pos.drawBlockDamageText(
@@ -244,7 +287,8 @@ object Nuker : Module("Nuker", Category.WORLD, gameDetecting = false) {
                 )
             }
 
-            // Just draw all blocks
+            // Onyx 模式下当前目标已由动画层绘制，其余被攻击方块仍用普通框
+            if (onyx && pos == currentBlock) continue
             drawBlockBox(pos, Color.RED, true)
         }
 

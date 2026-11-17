@@ -13,6 +13,7 @@ import net.airplus.features.module.modules.combat.ArmorBreak
 import net.airplus.features.module.modules.combat.KillAura
 import net.airplus.features.module.modules.player.gapple.GrimServerModel
 import net.airplus.features.module.modules.player.gapple.GrimState
+import net.airplus.features.module.modules.world.scaffolds.Scaffold
 import net.airplus.ui.font.Fonts
 import net.airplus.utils.GlowUtils
 import net.airplus.utils.client.PacketUtils.sendPacket
@@ -77,25 +78,25 @@ object Gapple : Module("Gapple", Category.PLAYER) {
     private var legacyPitch = 0f
 
     // ==================== EdMoonlight（moonlight AutoGapple）设置 ====================
-    private val delay by float("Delay", 50f, 0f..1000f)
-    private val health by float("Health", 15f, 0f..40f)
-    private val smartMode by boolean("Smart Mode", false)
-    private val count by int("Use Count", 5, 3..10) { !smartMode }
-    private val noMove by boolean("Stop Move When Eating", false)
-    val alwaysAttack by boolean("Always Attack", false)
-    private val autoClose by boolean("Close When No Golden Apple", true)
-    private val lagValue by boolean("Lag When In Air", false)
-    private val invalidC03 by boolean("Send Invalid C03", false)
-    val attrRefresh by boolean("ArmorBreaker Attr Refresh", false) { alwaysAttack }
-    private val attrRefreshCount by int("Attr Refresh Per Cycle", 2, 1..4) { alwaysAttack && attrRefresh }
-    private val critFreeze by boolean("Crit Freeze", true) { alwaysAttack }
-    private val critFreezeWait by int("Crit Freeze Max Wait", 10, 1..20) { alwaysAttack && critFreeze }
-    private val aimFreeze by boolean("Aim Freeze", true) { alwaysAttack }
-    private val aimFreezeWait by int("Aim Freeze Max Wait", 4, 1..10) { alwaysAttack && aimFreeze }
-    // moonlight 中该开关联动 Scaffold.isBridging()；AirPlus Scaffold 没有 isBridging 等效，
-    // 因此该开关保留设置但不会真正暂停（isBridging 视为恒 false）
-    private val pauseOnScaffold by boolean("Pause While Bridging", true)
-    private val debug by boolean("Debug", true)
+    private val delay by float("Delay", 50f, 0f..1000f) { mode == "EdMoonlight" }
+    private val health by float("Health", 15f, 0f..40f) { mode == "EdMoonlight" }
+    private val smartMode by boolean("Smart Mode", false) { mode == "EdMoonlight" }
+    private val count by int("Use Count", 5, 3..10) { mode == "EdMoonlight" && !smartMode }
+    private val noMove by boolean("Stop Move When Eating", false) { mode == "EdMoonlight" }
+    val alwaysAttack by boolean("Always Attack", false) { mode == "EdMoonlight" }
+    private val autoClose by boolean("Close When No Golden Apple", true) { mode == "EdMoonlight" }
+    private val lagValue by boolean("Lag When In Air", false) { mode == "EdMoonlight" }
+    private val invalidC03 by boolean("Send Invalid C03", false) { mode == "EdMoonlight" }
+    val attrRefresh by boolean("ArmorBreaker Attr Refresh", false) { mode == "EdMoonlight" && alwaysAttack }
+    private val attrRefreshCount by int("Attr Refresh Per Cycle", 2, 1..4) { mode == "EdMoonlight" && alwaysAttack && attrRefresh }
+    private val critFreeze by boolean("Crit Freeze", true) { mode == "EdMoonlight" && alwaysAttack }
+    private val critFreezeWait by int("Crit Freeze Max Wait", 10, 1..20) { mode == "EdMoonlight" && alwaysAttack && critFreeze }
+    private val aimFreeze by boolean("Aim Freeze", true) { mode == "EdMoonlight" && alwaysAttack }
+    private val aimFreezeWait by int("Aim Freeze Max Wait", 4, 1..10) { mode == "EdMoonlight" && alwaysAttack && aimFreeze }
+    // moonlight 中该开关联动 Scaffold.isBridging()；
+    // AirPlus 对应为 Scaffold.isBridging()（最近放过方块即视为搭路中）
+    private val pauseOnScaffold by boolean("Pause While Bridging", true) { mode == "EdMoonlight" }
+    private val debug by boolean("Debug", true) { mode == "EdMoonlight" }
 
     // ==================== EdMoonlight 状态 ====================
     private val timer = MSTimer()
@@ -127,11 +128,18 @@ object Gapple : Module("Gapple", Category.PLAYER) {
     private const val CRIT_FREEZE_URGENT_HP = 8.0f
 
     // moonlight 的 public static queueNextClick 由其破甲点击器设置以放行一次 C0E 点击包；
-    // AirPlus 没有对应设置方，固定为 false
-    private const val QUEUE_NEXT_CLICK = false
+    // AirPlus 由 ArmorBreaker EdMoonlight 的 swapClick 通过 queueNextClick() 设置
+    private var queueNextClick = false
 
     var isEating = false
         private set
+
+    /** 单次放行：放行一条 C0E 后立即复位标记。 */
+    private fun consumeNextClick(): Boolean {
+        val allowed = queueNextClick
+        queueNextClick = false
+        return allowed
+    }
 
     private val edMoonlight get() = mode == "EdMoonlight"
 
@@ -160,6 +168,7 @@ object Gapple : Module("Gapple", Category.PLAYER) {
         attackedCheck = false
         endCheck = false
         eatFinishTicks = 0
+        queueNextClick = false
         reachBuffer = 0.0
         reachBufferTick = -1
         GrimServerModel.reset()
@@ -177,6 +186,14 @@ object Gapple : Module("Gapple", Category.PLAYER) {
 
     /** 对齐 moonlight shouldQueueWeaponSwap：供换武器模块判断是否该排队。 */
     fun shouldQueueWeaponSwap(): Boolean = state && isEating && !alwaysAttack
+
+    /**
+     * 放行下一条 C0E 点击包（对齐 moonlight AutoGapple.queueNextClick）。
+     * ArmorBreaker EdMoonlight 换武器 windowClick 前调用，避免点击包被吃苹果队列缓存延迟。
+     */
+    fun queueNextClick() {
+        queueNextClick = true
+    }
 
     fun attrRefreshMax(): Int =
         if (freezesAttr() && attrRefresh) attrRefreshCount else 0
@@ -426,11 +443,11 @@ object Gapple : Module("Gapple", Category.PLAYER) {
                 val shouldEat =
                     hp < health || (isEating && movingPackets > 0 && hp < player.maxHealth)
 
-                // moonlight：Clutch.isWorking() —— AirPlus 没有 Clutch 模块，视为恒 false；
-                // Scaffold.isBridging() —— AirPlus Scaffold 没有 isBridging 等效，视为恒 false，
-                // 因此 (!pauseOnScaffold || !isBridging) 恒为 true，条件退化为 !shouldEat || !clutchWorking
-                val clutchWorking = false
-                if (!shouldEat || !clutchWorking) {
+                // moonlight：Clutch.isWorking() → AirPlus Scaffold 的 Clutch 保命中（激活或冻结扣包）；
+                // Scaffold.isBridging() → 正在搭路（最近放过方块），由 Pause While Bridging 开关控制
+                val clutchWorking = Scaffold.isClutchWorking()
+                val bridging = pauseOnScaffold && Scaffold.isBridging()
+                if (!shouldEat || (!clutchWorking && !bridging)) {
                     if (!shouldEat) {
                         critWaitTicks = 0
                         aimWaitTicks = 0
@@ -576,7 +593,7 @@ object Gapple : Module("Gapple", Category.PLAYER) {
             }
 
             val excluded = packet is C09PacketHeldItemChange
-                || (packet is C0EPacketClickWindow && QUEUE_NEXT_CLICK)
+                || (packet is C0EPacketClickWindow && consumeNextClick())
                 || packet is C16PacketClientStatus
                 || packet is C0DPacketCloseWindow
 

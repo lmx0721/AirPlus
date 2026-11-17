@@ -14,7 +14,10 @@ import net.airplus.features.module.Module
 import net.airplus.ui.font.Fonts
 import net.airplus.utils.block.block
 import net.airplus.utils.extensions.*
+import net.airplus.utils.render.OnyxBlockAnimator
+import net.airplus.utils.render.ONYX_LINEAR_EASE
 import net.airplus.utils.render.RenderUtils.drawBorderedRect
+import net.airplus.utils.render.Tween
 import net.airplus.utils.render.RenderUtils.drawFilledBox
 import net.airplus.utils.render.RenderUtils.drawSelectionBoundingBox
 import net.airplus.utils.render.RenderUtils.glColor
@@ -78,42 +81,25 @@ object BlockOverlay : Module("BlockOverlay", Category.RENDER, gameDetecting = fa
         }
 
     // ---- Onyx 同款缓动（Util.IFACE2 / IFACE7 / IFACE）：Move 用 (0.2,0,0,1)，出现用 (0.05,0.7,0.1,1)，淡出用 (0.3,0,0.8,0.15) ----
-    private val MOVE_EASE = bezier(0.2, 0.0, 0.0, 1.0)
-    private val APPEAR_EASE = bezier(0.05, 0.7, 0.1, 1.0)
-    private val DISAPPEAR_EASE = bezier(0.3, 0.0, 0.8, 0.15)
-    private val LINEAR_EASE: (Double) -> Double = { it }
+    // 出现/滑动/淡出缓动已移入共享动画器 OnyxBlockAnimator
 
-    // ---- 动画状态（世界坐标，对应 Onyx 的 anim.Cls 补间器）----
-    // 正在渲染（含淡出中）的方块；renderBlock == null 表示完全隐藏
-    private var renderBlock: BlockPos? = null
-    // 是否处于"注视中"（用于区分出现/淡出阶段）
-    private var rendering = false
-    // 插值盒的基准最小角（滑动时固定，边界偏移向新盒补间）
-    private var baseMinX = 0.0
-    private var baseMinY = 0.0
-    private var baseMinZ = 0.0
-    // 6 个 AABB 边界偏移补间（相对 base：minX, minY, minZ, maxX, maxY, maxZ）
-    private val edges = Array(6) { Tween(0F, MOVE_EASE) }
-    // 出现/消失透明系数 0..1
-    private val visibility = Tween(0F, APPEAR_EASE)
-    // Pop/Grow 的尺寸系数（appearance 起点值 → 1）
-    private val appearScale = Tween(1F, APPEAR_EASE)
+    // 共享 Onyx 动画状态机（世界坐标，对应 Onyx 的 anim.Cls 补间器）
+    private val animator = OnyxBlockAnimator()
+
     // 挖掘进度（朝当前 damage 平滑）
-    private val progressTween = Tween(0F, LINEAR_EASE)
-
-    private val appearanceStart: Float
-        get() = when (appearance) {
-            "Pop" -> 0.62F
-            "Grow" -> 0F
-            else -> 1F
-        }
+    private val progressTween = Tween(0F, ONYX_LINEAR_EASE)
+    // 挖掘进度对应的注视目标（换目标时进度归零）
+    private var lastProgressTarget: BlockPos? = null
 
     private val tessellator = Tessellator.getInstance()
     private val worldRenderer = tessellator.worldRenderer
 
+    // 共享动画器的设置（每次渲染从模块设置构建）
+    private val animatorSettings
+        get() = OnyxBlockAnimator.Settings(appearance, appearTime, fadeTime, moveTime, padding)
+
     val onRender3D = handler<Render3DEvent> {
         val targetPos = currentBlock
-        val targetAABB = targetPos?.let { getSelectedAABB(it) }
 
         if (!animation) {
             // 关闭动画：保持原有即时渲染行为，并每帧重置动画状态（便于重新开启时从头出现）
@@ -131,104 +117,20 @@ object BlockOverlay : Module("BlockOverlay", Category.RENDER, gameDetecting = fa
         }
 
         // ---- Onyx 动画路径 ----
-        if (targetAABB == null || targetPos == null) {
-            // 注视离开：按 Fade 时长反向淡出（期间继续渲染最后一个盒子）
-            if (rendering) {
-                rendering = false
-                visibility.tweenTo(0F, fadeTime.toLong(), DISAPPEAR_EASE)
-                appearScale.tweenTo(appearanceStart, fadeTime.toLong(), DISAPPEAR_EASE)
-                progressTween.snap(0F)
-            }
-        } else {
-            handleTarget(targetPos, targetAABB)
-            // 挖掘进度朝当前 damage 平滑（Onyx 用 70ms 线性）
-            progressTween.tweenTo(curBlockDamage(), 70L)
-        }
+        val targetAABB = targetPos?.let { getSelectedAABB(it) }
+        val frame = animator.update(targetPos, targetAABB, animatorSettings)
+        if (frame == null) return@handler
 
-        edges.forEach { it.update() }
-        visibility.update()
-        appearScale.update()
+        // 挖掘进度朝当前 damage 平滑（Onyx 用 70ms 线性）；换目标/离开目标时归零
+        if (targetPos != lastProgressTarget) progressTween.snap(0F)
+        lastProgressTarget = targetPos
+        if (targetPos != null) progressTween.tweenTo(curBlockDamage(), 70L)
         progressTween.update()
 
-        val vis = visibility.value
-        if (!rendering && vis <= 0.004F) {
-            // 淡出完成，停止渲染
-            renderBlock = null
-            return@handler
-        }
         val thePlayer = mc.thePlayer ?: return@handler
         val pos = thePlayer.interpolatedPosition(thePlayer.lastTickPos)
 
-        render(buildInterpolatedBox(), pos, vis, progressTween.value)
-    }
-
-    /**
-     * 注视目标处理：首次出现/瞬移（距离 > 4 格）直接对齐；相邻方块则让 6 个边界
-     * 用 Move 时长平滑滑向新 AABB（同 Onyx handleBlockPos）。
-     */
-    private fun handleTarget(pos: BlockPos, aabb: AxisAlignedBB) {
-        val first = renderBlock == null
-        val teleport = !first && pos.distanceSq(
-            renderBlock!!.x.toDouble(), renderBlock!!.y.toDouble(), renderBlock!!.z.toDouble()
-        ) > 16.0
-
-        if (pos != renderBlock) {
-            // 换目标：挖掘进度归零
-            progressTween.snap(0F)
-        }
-
-        renderBlock = pos
-        rendering = true
-
-        if (!first && !teleport) {
-            edges[0].tweenTo((aabb.minX - baseMinX).toFloat(), moveTime.toLong())
-            edges[1].tweenTo((aabb.minY - baseMinY).toFloat(), moveTime.toLong())
-            edges[2].tweenTo((aabb.minZ - baseMinZ).toFloat(), moveTime.toLong())
-            edges[3].tweenTo((aabb.maxX - baseMinX).toFloat(), moveTime.toLong())
-            edges[4].tweenTo((aabb.maxY - baseMinY).toFloat(), moveTime.toLong())
-            edges[5].tweenTo((aabb.maxZ - baseMinZ).toFloat(), moveTime.toLong())
-        } else {
-            baseMinX = aabb.minX
-            baseMinY = aabb.minY
-            baseMinZ = aabb.minZ
-            edges[0].snap(0F)
-            edges[1].snap(0F)
-            edges[2].snap(0F)
-            edges[3].snap((aabb.maxX - aabb.minX).toFloat())
-            edges[4].snap((aabb.maxY - aabb.minY).toFloat())
-            edges[5].snap((aabb.maxZ - aabb.minZ).toFloat())
-        }
-
-        if (first) {
-            visibility.snap(0F)
-            appearScale.snap(appearanceStart)
-        }
-        // 出现动画：透明系数与尺寸系数向 1 补间
-        visibility.tweenTo(1F, appearTime.toLong())
-        appearScale.tweenTo(1F, appearTime.toLong())
-    }
-
-    // 由基准角 + 补间边界重建盒子，再按 appearScale 向中心缩放（Grow/Pop）、按 Padding 外扩（同 Onyx getAxisAlignedBB4）
-    private fun buildInterpolatedBox(): AxisAlignedBB {
-        val minX = baseMinX + edges[0].value
-        val minY = baseMinY + edges[1].value
-        val minZ = baseMinZ + edges[2].value
-        val maxX = baseMinX + edges[3].value
-        val maxY = baseMinY + edges[4].value
-        val maxZ = baseMinZ + edges[5].value
-        val cx = (minX + maxX) / 2.0
-        val cy = (minY + maxY) / 2.0
-        val cz = (minZ + maxZ) / 2.0
-        val scale = appearScale.value.toDouble()
-        val pad = (padding / 100F).toDouble()
-        return AxisAlignedBB(
-            cx + (minX - cx) * scale - pad,
-            cy + (minY - cy) * scale - pad,
-            cz + (minZ - cz) * scale - pad,
-            cx + (maxX - cx) * scale + pad,
-            cy + (maxY - cy) * scale + pad,
-            cz + (maxZ - cz) * scale + pad
-        )
+        render(frame.box, pos, frame.visibility, progressTween.value)
     }
 
     private fun getSelectedAABB(blockPos: BlockPos): AxisAlignedBB? {
@@ -356,12 +258,9 @@ object BlockOverlay : Module("BlockOverlay", Category.RENDER, gameDetecting = fa
     }
 
     private fun resetAnimationState() {
-        renderBlock = null
-        rendering = false
-        visibility.snap(0F)
-        appearScale.snap(1F)
+        animator.reset()
         progressTween.snap(0F)
-        edges.forEach { it.snap(0F) }
+        lastProgressTarget = null
     }
 
     val onRender2D = handler<Render2DEvent> {
@@ -391,72 +290,5 @@ object BlockOverlay : Module("BlockOverlay", Category.RENDER, gameDetecting = fa
 
     val onWorld = handler<WorldEvent> {
         resetAnimationState()
-    }
-
-    /**
-     * 标量补间器（对应 Onyx 的 anim.Cls）：记录起点/终点/起始时间/时长，按给定缓动插值。
-     */
-    private class Tween(initial: Float, private var ease: (Double) -> Double) {
-        var value = initial
-            private set
-        private var start = initial
-        private var target = initial
-        private var startTime = 0L
-        private var duration = 0L
-
-        // 立即对齐到目标值
-        fun snap(v: Float) {
-            value = v
-            start = v
-            target = v
-            duration = 0L
-        }
-
-        // 目标没变时不重启动画（同 Onyx getCls2 的行为）；可替换缓动（淡出用另一条曲线）
-        fun tweenTo(v: Float, ms: Long, newEase: (Double) -> Double = ease) {
-            if (target == v) return
-            ease = newEase
-            start = value
-            target = v
-            startTime = System.currentTimeMillis()
-            duration = ms.coerceAtLeast(0L)
-        }
-
-        fun update() {
-            value = if (duration > 0L) {
-                val progress = ((System.currentTimeMillis() - startTime).toDouble() / duration).coerceIn(0.0, 1.0)
-                (start + (target - start) * ease(progress)).toFloat()
-            } else {
-                target
-            }
-        }
-    }
-
-    /**
-     * 三次贝塞尔缓动工厂（同 Onyx Util.getIfaceForDouble）：进度 0..1 → 缓动值 0..1。
-     */
-    private fun bezier(x1: Double, y1: Double, x2: Double, y2: Double): (Double) -> Double {
-        fun sample(t: Double, p1: Double, p2: Double) =
-            3.0 * (1 - t) * (1 - t) * t * p1 + 3.0 * (1 - t) * t * t * p2 + t * t * t
-
-        return { progress ->
-            val p = progress.coerceIn(0.0, 1.0)
-            when {
-                p <= 0.0 -> 0.0
-                p >= 1.0 -> 1.0
-                else -> {
-                    // 二分求 Bx(t) = p（CSS 三次贝塞尔保证 x 单调）
-                    var low = 0.0
-                    var high = 1.0
-                    var t = p
-                    repeat(20) {
-                        val x = sample(t, x1, x2)
-                        if (x < p) low = t else high = t
-                        t = (low + high) / 2.0
-                    }
-                    sample(t, y1, y2)
-                }
-            }
-        }
     }
 }

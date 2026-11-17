@@ -7,6 +7,7 @@ package net.airplus.injection.forge.mixins.render;
 
 import net.airplus.features.module.modules.combat.KillAura;
 import net.airplus.features.module.modules.movement.NoSlow;
+import net.airplus.features.module.modules.render.ModelChanger;
 import net.airplus.features.module.modules.render.SilentHotbarModule;
 import net.airplus.utils.inventory.SilentHotbar;
 import net.minecraft.block.Block;
@@ -47,6 +48,11 @@ public class MixinLayerHeldItem {
      */
     @Overwrite
     public void doRenderLayer(EntityLivingBase entity, float p_177141_2_, float p_177141_3_, float partialTicks, float p_177141_5_, float p_177141_6_, float p_177141_7_, float scale) {
+        // ModelChanger：Pig 模式下隐藏手持物品（猪拿不了东西）
+        if (ModelChanger.INSTANCE.hideHeldItem(entity)) {
+            return;
+        }
+
         SilentHotbarModule module = SilentHotbarModule.INSTANCE;
 
         int slot = SilentHotbar.INSTANCE.renderSlot(module.handleEvents() && module.getKeepItemInHandInThirdPerson());

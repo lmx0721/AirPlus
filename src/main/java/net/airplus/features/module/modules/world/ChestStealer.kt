@@ -11,9 +11,11 @@ import kotlinx.coroutines.delay
 import net.airplus.AirPlus.hud
 import net.airplus.event.PacketEvent
 import net.airplus.event.Render2DEvent
+import net.airplus.event.UpdateEvent
 import net.airplus.event.handler
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
+import net.airplus.features.module.modules.movement.InventoryMove
 import net.airplus.features.module.modules.player.AutoArmor
 import net.airplus.features.module.modules.player.InventoryCleaner
 import net.airplus.features.module.modules.player.InventoryCleaner.canBeSortedTo
@@ -36,11 +38,15 @@ import net.airplus.utils.timing.TickedActions.isTicked
 import net.airplus.utils.timing.TickedActions.nextTick
 import net.airplus.utils.timing.TimeUtils.randomDelay
 import net.minecraft.client.gui.ScaledResolution
-import net.minecraft.client.gui.inventory.GuiChest
+import net.minecraft.inventory.ContainerChest
 import net.minecraft.entity.EntityLiving.getArmorPosition
 import net.minecraft.init.Blocks
 import net.minecraft.item.ItemArmor
 import net.minecraft.item.ItemStack
+import net.minecraft.network.play.client.C02PacketUseEntity
+import net.minecraft.network.play.client.C07PacketPlayerDigging
+import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement
+import net.minecraft.network.play.client.C0APacketAnimation
 import net.minecraft.network.play.client.C0DPacketCloseWindow
 import net.minecraft.network.play.server.S2DPacketOpenWindow
 import net.minecraft.network.play.server.S2EPacketCloseWindow
@@ -71,6 +77,17 @@ object ChestStealer : Module("ChestStealer", Category.WORLD) {
     private val progressBar by boolean("ProgressBar", true).subjective()
 
     val silentGUI by boolean("SilentGUI", false).subjective()
+
+    // SilentGUI 静默偷取期间拦截与偷取无关的交互数据包：挖掘（C07）、右键使用/放置/格挡（C08）、
+    // 攻击（C02）、挥手（C0A）。偷取自身的窗口点击（C0E）、静默换手持（C09）、关容器（C0D）不受影响
+    private val stopActions by boolean("StopActions", true) { silentGUI }
+
+    /**
+     * 静默偷取进行中（无界面箱子容器已挂载、ChestStealer 正在操作）。
+     * KillAura 在此期间暂停攻击，其他模块可用它规避“开箱同时攻击/移动”的检测异常。
+     */
+    var silentlyStealing = false
+        private set
 
     val highlightSlot by boolean("Highlight-Slot", false) { !silentGUI }.subjective()
     val backgroundColor =
@@ -104,7 +121,7 @@ object ChestStealer : Module("ChestStealer", Category.WORLD) {
             if (mc.playerController?.currentGameType?.isSurvivalOrAdventure != true)
                 return false
 
-            if (mc.currentScreen !is GuiChest)
+            if (mc.thePlayer?.openContainer !is ContainerChest)
                 return false
 
             if (mc.thePlayer?.openContainer?.windowId != receivedId)
@@ -126,126 +143,208 @@ object ChestStealer : Module("ChestStealer", Category.WORLD) {
 
         val thePlayer = mc.thePlayer ?: return
 
-        val screen = mc.currentScreen ?: return
+        val container = thePlayer.openContainer as? ContainerChest ?: return
 
-        if (screen !is GuiChest || !shouldOperate())
+        if (!shouldOperate())
             return
 
         // Check if chest isn't a custom gui
-        if (chestTitle && Blocks.chest.localizedName !in (screen.lowerChestInventory ?: return).name)
+        if (chestTitle && Blocks.chest.localizedName !in container.lowerChestInventory.name)
             return
 
-        progress = 0f
+        val silentSteal = silentGUI
+        if (silentSteal)
+            silentlyStealing = true
 
-        delay(startDelay.random().toLong())
+        try {
+            progress = 0f
 
-        debug("Stealing items..")
+            delay(startDelay.random().toLong())
 
-        // Go through the chest multiple times, till there are no useful items anymore
-        while (true) {
+            debug("Stealing items..")
+
+            // Go through the chest multiple times, till there are no useful items anymore
+            while (true) {
+                if (!shouldOperate())
+                    return
+
+                // 背包满：IC 开启时按其判定逻辑在箱子容器内直接丢弃背包垃圾，腾出空间继续偷；
+                // IC 未开启则关箱并通过通知提醒用户
+                if (!hasSpaceInInventory()) {
+                    if (InventoryCleaner.handleEvents()) {
+                        dropGarbageInChest()
+
+                        // 刷新窗口物品快照，让后续偷取/排序判定基于清理后的背包状态
+                        stacks = thePlayer.openContainer.inventory
+
+                        // 清理后仍无可用空间（剩余物品按 IC 判定全部有用）→ 停止偷取并关箱
+                        if (!hasSpaceInInventory()) {
+                            progress = 1f
+                            delay(closeDelay.random().toLong())
+
+                            nextTick { SilentHotbar.resetSlot() }
+                            break
+                        }
+                    } else {
+                        hud.addNotification(
+                            Notification.informative(this, "背包已满，ChestStealer 无法继续工作", 5000L)
+                        )
+
+                        progress = 1f
+                        delay(closeDelay.random().toLong())
+
+                        nextTick { SilentHotbar.resetSlot() }
+                        break
+                    }
+                }
+
+                var hasTaken = false
+                var inventoryFull = false
+
+                val itemsToSteal = getItemsToSteal()
+
+                run scheduler@{
+                    itemsToSteal.forEachIndexed { index, (slot, stack, sortableTo) ->
+                        // Wait for NoMove or cancel click
+                        if (!shouldOperate()) {
+                            nextTick { SilentHotbar.resetSlot() }
+                            chestStealerCurrentSlot = -1
+                            chestStealerLastSlot = -1
+                            return
+                        }
+
+                        if (!hasSpaceInInventory()) {
+                            chestStealerCurrentSlot = -1
+                            chestStealerLastSlot = -1
+                            inventoryFull = true
+                            return@scheduler
+                        }
+
+                        hasTaken = true
+
+                        // Set current slot being stolen for highlighting
+                        chestStealerCurrentSlot = slot
+
+                        val stealingDelay = if (smartDelay && index + 1 < itemsToSteal.size) {
+                            val dist = squaredDistanceOfSlots(slot, itemsToSteal[index + 1].index)
+                            val trueDelay = sqrt(dist.toDouble()) * multiplier
+                            randomDelay(trueDelay.toInt(), trueDelay.toInt() + 20)
+                        } else {
+                            delay.random()
+                        }
+
+                        if (itemStolenDebug) debug("item: ${stack.displayName.lowercase()} | slot: $slot | delay: ${stealingDelay}ms")
+
+                        // If target is sortable to a hotbar slot, steal and sort it at the same time, else shift + left-click
+                        clickNextTick(slot, sortableTo ?: 0, if (sortableTo != null) 2 else 1) {
+                            progress = (index + 1) / itemsToSteal.size.toFloat()
+
+                            if (!AutoArmor.canEquipFromChest())
+                                return@clickNextTick
+
+                            val item = stack.item
+
+                            if (item !is ItemArmor || thePlayer.inventory.armorInventory[getArmorPosition(stack) - 1] != null)
+                                return@clickNextTick
+
+                            // TODO: should the stealing be suspended until the armor gets equipped and some delay on top of that, maybe toggleable?
+                            // Try to equip armor piece from hotbar 1 tick after stealing it
+                            nextTick {
+                                val hotbarStacks = thePlayer.inventory.mainInventory.take(9)
+
+                                // Can't get index of stack instance, because it is different even from the one returned from windowClick()
+                                val newIndex = hotbarStacks.indexOfFirst { it?.getIsItemStackEqual(stack) == true }
+
+                                if (newIndex != -1)
+                                    AutoArmor.equipFromHotbarInChest(newIndex, stack)
+                            }
+                        }
+
+                        delay(stealingDelay.toLong())
+
+                        if (simulateShortStop && Math.random() > 0.75) {
+                            val minDelays = randomDelay(150, 300)
+                            val maxDelays = randomDelay(minDelays, 500)
+                            val randomDelay = randomDelay(minDelays, maxDelays).toLong()
+
+                            delay(randomDelay)
+                        }
+                    }
+                }
+
+                // Wait till all scheduled clicks were sent
+                awaitTicked()
+
+                // 背包在偷取中途被填满：跳回外层，先按 IC 逻辑清理背包（或关箱）再继续偷
+                if (inventoryFull) {
+                    stacks = thePlayer.openContainer.inventory
+                    continue
+                }
+
+                // If no clicks were sent in the last loop stop searching
+                if (!hasTaken) {
+                    progress = 1f
+                    delay(closeDelay.random().toLong())
+
+                    nextTick { SilentHotbar.resetSlot() }
+                    break
+                }
+
+                // Before closing the chest, check all items once more, whether server hadn't cancelled some of the actions.
+                stacks = thePlayer.openContainer.inventory
+            }
+
+            // Wait before the chest gets closed (if it gets closed out of tick loop it could throw npe)
+            nextTick {
+                chestStealerCurrentSlot = -1
+                chestStealerLastSlot = -1
+                thePlayer.closeScreen()
+                progress = null
+
+                debug("Chest closed")
+            }
+
+            awaitTicked()
+        } finally {
+            if (silentSteal)
+                silentlyStealing = false
+        }
+    }
+
+    /**
+     * 背包满时借用 InventoryCleaner 的判定逻辑，在箱子容器内直接丢弃背包中的垃圾。
+     * 箱子容器槽位布局：前 [ContainerChest.lowerChestInventory.sizeInventory] 格为箱子，
+     * 之后 36 格为玩家背包。mode 4 + button 1 = 丢弃整组，全程无需关箱。
+     */
+    private suspend fun dropGarbageInChest() {
+        val thePlayer = mc.thePlayer ?: return
+
+        val container = thePlayer.openContainer as? ContainerChest ?: return
+
+        val chestSize = container.lowerChestInventory.sizeInventory
+
+        debug("Inventory is full, dropping garbage..")
+
+        for (index in chestSize until chestSize + 36) {
             if (!shouldOperate())
                 return
 
-            if (!hasSpaceInInventory())
-                return
+            val stacks = thePlayer.openContainer.inventory
+            val stack = stacks.getOrNull(index) ?: continue
 
-            var hasTaken = false
+            // 与 InventoryCleaner.dropGarbage 一致：只丢弃判定为无用的物品
+            if (isStackUseful(stack, stacks))
+                continue
 
-            val itemsToSteal = getItemsToSteal()
+            chestStealerCurrentSlot = index
 
-            run scheduler@{
-                itemsToSteal.forEachIndexed { index, (slot, stack, sortableTo) ->
-                    // Wait for NoMove or cancel click
-                    if (!shouldOperate()) {
-                        nextTick { SilentHotbar.resetSlot() }
-                        chestStealerCurrentSlot = -1
-                        chestStealerLastSlot = -1
-                        return
-                    }
+            clickNextTick(index, 1, 4)
 
-                    if (!hasSpaceInInventory()) {
-                        chestStealerCurrentSlot = -1
-                        chestStealerLastSlot = -1
-                        return@scheduler
-                    }
-
-                    hasTaken = true
-
-                    // Set current slot being stolen for highlighting
-                    chestStealerCurrentSlot = slot
-
-                    val stealingDelay = if (smartDelay && index + 1 < itemsToSteal.size) {
-                        val dist = squaredDistanceOfSlots(slot, itemsToSteal[index + 1].index)
-                        val trueDelay = sqrt(dist.toDouble()) * multiplier
-                        randomDelay(trueDelay.toInt(), trueDelay.toInt() + 20)
-                    } else {
-                        delay.random()
-                    }
-
-                    if (itemStolenDebug) debug("item: ${stack.displayName.lowercase()} | slot: $slot | delay: ${stealingDelay}ms")
-
-                    // If target is sortable to a hotbar slot, steal and sort it at the same time, else shift + left-click
-                    clickNextTick(slot, sortableTo ?: 0, if (sortableTo != null) 2 else 1) {
-                        progress = (index + 1) / itemsToSteal.size.toFloat()
-
-                        if (!AutoArmor.canEquipFromChest())
-                            return@clickNextTick
-
-                        val item = stack.item
-
-                        if (item !is ItemArmor || thePlayer.inventory.armorInventory[getArmorPosition(stack) - 1] != null)
-                            return@clickNextTick
-
-                        // TODO: should the stealing be suspended until the armor gets equipped and some delay on top of that, maybe toggleable?
-                        // Try to equip armor piece from hotbar 1 tick after stealing it
-                        nextTick {
-                            val hotbarStacks = thePlayer.inventory.mainInventory.take(9)
-
-                            // Can't get index of stack instance, because it is different even from the one returned from windowClick()
-                            val newIndex = hotbarStacks.indexOfFirst { it?.getIsItemStackEqual(stack) == true }
-
-                            if (newIndex != -1)
-                                AutoArmor.equipFromHotbarInChest(newIndex, stack)
-                        }
-                    }
-
-                    delay(stealingDelay.toLong())
-
-                    if (simulateShortStop && Math.random() > 0.75) {
-                        val minDelays = randomDelay(150, 300)
-                        val maxDelays = randomDelay(minDelays, 500)
-                        val randomDelay = randomDelay(minDelays, maxDelays).toLong()
-
-                        delay(randomDelay)
-                    }
-                }
-            }
-
-            // If no clicks were sent in the last loop stop searching
-            if (!hasTaken) {
-                progress = 1f
-                delay(closeDelay.random().toLong())
-
-                nextTick { SilentHotbar.resetSlot() }
-                break
-            }
-
-            // Wait till all scheduled clicks were sent
-            awaitTicked()
-
-            // Before closing the chest, check all items once more, whether server hadn't cancelled some of the actions.
-            stacks = thePlayer.openContainer.inventory
+            delay(delay.random().toLong())
         }
 
-        // Wait before the chest gets closed (if it gets closed out of tick loop it could throw npe)
-        nextTick {
-            chestStealerCurrentSlot = -1
-            chestStealerLastSlot = -1
-            thePlayer.closeScreen()
-            progress = null
-
-            debug("Chest closed")
-        }
+        chestStealerCurrentSlot = -1
+        chestStealerLastSlot = -1
 
         awaitTicked()
     }
@@ -374,7 +473,7 @@ object ChestStealer : Module("ChestStealer", Category.WORLD) {
 
     // Progress bar
     val onRender2D = handler<Render2DEvent> { event ->
-        if (!progressBar || mc.currentScreen !is GuiChest)
+        if (!progressBar || mc.thePlayer?.openContainer !is ContainerChest)
             return@handler
 
         val progress = progress ?: return@handler
@@ -399,11 +498,58 @@ object ChestStealer : Module("ChestStealer", Category.WORLD) {
         )
     }
 
+    // 静默偷取期间冻结移动输入（模拟真实开箱：开箱时不能移动），视角不受影响。
+    // InventoryMove 开启时：其 NotInChests / Undetectable 在真实开箱时会冻结输入，
+    // 但静默开箱没有 GuiScreen，IM 自身检测不到箱子 → 由这里按 IM 的设置补上同样的冻结；
+    // 若两项都未开启，则由 IM 的逻辑决定是否允许移动。
+    private val silentMovementKeys = arrayOf(
+        mc.gameSettings.keyBindForward,
+        mc.gameSettings.keyBindBack,
+        mc.gameSettings.keyBindRight,
+        mc.gameSettings.keyBindLeft,
+        mc.gameSettings.keyBindJump,
+        mc.gameSettings.keyBindSprint,
+        mc.gameSettings.keyBindSneak
+    )
+
+    private val onUpdate = handler<UpdateEvent>(priority = Byte.MIN_VALUE) {
+        val thePlayer = mc.thePlayer ?: return@handler
+
+        if (!handleEvents() || !silentGUI || mc.currentScreen != null)
+            return@handler
+
+        if (thePlayer.openContainer !is ContainerChest)
+            return@handler
+
+        if (InventoryMove.handleEvents()) {
+            if (InventoryMove.notInChests || InventoryMove.undetectable)
+                silentMovementKeys.forEach { it.pressed = false }
+
+            return@handler
+        }
+
+        silentMovementKeys.forEach { it.pressed = false }
+    }
+
     val onPacket = handler<PacketEvent> { event ->
         when (val packet = event.packet) {
-            is C0DPacketCloseWindow, is S2DPacketOpenWindow, is S2EPacketCloseWindow -> {
+            is C0DPacketCloseWindow, is S2EPacketCloseWindow -> {
                 receivedId = null
                 progress = null
+            }
+
+            is S2DPacketOpenWindow -> {
+                receivedId = null
+                progress = null
+
+                // SilentGUI 会在无界面情况下打开任意 chest 类容器（含服务器自定义界面）。
+                // 若开启了 ChestTitle 且不是真箱子，容器会静默挂着且没有任何途径关闭，
+                // 在容器于主线程挂载完成后的下一 tick 直接关闭它。
+                if (silentGUI && chestTitle && packet.getWindowId() != 0
+                    && Blocks.chest.localizedName !in packet.getWindowTitle().unformattedText
+                ) {
+                    nextTick { mc.thePlayer?.closeScreen() }
+                }
             }
 
             is S30PacketWindowItems -> {
@@ -421,6 +567,12 @@ object ChestStealer : Module("ChestStealer", Category.WORLD) {
 
                 stacks = packet.itemStacks.toList()
             }
+
+            // 静默偷取期间不发送与偷取无关的交互数据包：挖掘、右键使用/放置/格挡、攻击、挥手
+            is C02PacketUseEntity, is C07PacketPlayerDigging,
+            is C08PacketPlayerBlockPlacement, is C0APacketAnimation ->
+                if (stopActions && silentlyStealing)
+                    event.cancelEvent()
         }
     }
 

@@ -11,6 +11,7 @@ import net.airplus.features.module.modules.render.*;
 import net.airplus.utils.client.ClientUtils;
 import net.airplus.utils.render.RenderUtils;
 import net.minecraft.client.model.ModelBase;
+import net.minecraft.client.renderer.OpenGlHelper;
 import net.minecraft.client.renderer.entity.RendererLivingEntity;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraftforge.fml.relauncher.Side;
@@ -72,16 +73,32 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
      */
     @Inject(method = "renderModel", at = @At("HEAD"), cancellable = true)
     private <T extends EntityLivingBase> void renderModel(T p_renderModel_1_, float p_renderModel_2_, float p_renderModel_3_, float p_renderModel_4_, float p_renderModel_5_, float p_renderModel_6_, float p_renderModel_7_, CallbackInfo ci) {
-        // ModelChanger（moon ModelModifierModule 移植）：按标志覆写 isChild / isRiding。
-        // vanilla doRender 在本注入前已按实体真实状态赋值；这里在渲染前强制覆写，
-        // finally 恢复原值，避免污染后续实体渲染。
+        // ModelChanger：按模型类型换模型（Pig 用猪模型 + 猪贴图，Baby 强制 isChild），
+        // 并按宽/高/长设置对整段渲染 pushMatrix/scale；finally 恢复矩阵与原值，
+        // 避免污染后续实体渲染。
+        final ModelChanger.ModelType airplus$type = ModelChanger.INSTANCE.modelType(p_renderModel_1_);
+        final boolean airplus$baby = airplus$type == ModelChanger.ModelType.BABY;
+        final boolean airplus$pig = airplus$type == ModelChanger.ModelType.PIG;
+
+        final float airplus$scaleX = ModelChanger.INSTANCE.scaleX(p_renderModel_1_);
+        final float airplus$scaleY = ModelChanger.INSTANCE.scaleY(p_renderModel_1_);
+        final float airplus$scaleZ = ModelChanger.INSTANCE.scaleZ(p_renderModel_1_);
+        final boolean airplus$scaled = Math.abs(airplus$scaleX - 1f) > 0.001f
+            || Math.abs(airplus$scaleY - 1f) > 0.001f
+            || Math.abs(airplus$scaleZ - 1f) > 0.001f;
+
         final boolean airplus$prevChild = mainModel.isChild;
         final boolean airplus$prevRiding = mainModel.isRiding;
-        if (ModelChanger.INSTANCE.flag(p_renderModel_1_, ModelChanger.Flag.BABY)) {
+        if (airplus$baby) {
             mainModel.isChild = true;
         }
-        if (ModelChanger.INSTANCE.flag(p_renderModel_1_, ModelChanger.Flag.RIDING)) {
-            mainModel.isRiding = true;
+        final ModelBase airplus$model = airplus$pig ? ModelChanger.INSTANCE.getPigModel() : mainModel;
+        if (airplus$pig) {
+            airplus$model.isChild = false;
+        }
+        if (airplus$scaled) {
+            pushMatrix();
+            scale(airplus$scaleX, airplus$scaleY, airplus$scaleZ);
         }
         try {
         boolean visible = !p_renderModel_1_.isInvisible();
@@ -95,7 +112,22 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
             boolean shouldRenderGaussianESP = shouldRenderESP && "Gaussian".equals(esp.getMode());
 
             if (!shouldRenderGaussianESP) {
-                if (!bindEntityTexture(p_renderModel_1_)) {
+                if (airplus$pig) {
+                    // 猪模式：绑定原版猪贴图而不是玩家皮肤。
+                    // 两步法强制真实绑定：GlStateManager 的 activeTexture / bindTexture /
+                    // texture2D / color 全是缓存守卫，本项目多次因缓存失步被静默跳过，
+                    // 猪模型采样到残留贴图 → 渲染成紫黑。先把活动单元与缓存收敛一致，
+                    // 再用「脏值 1 → 目标」保证 pig 贴图必然真实绑定到 unit 0，
+                    // 并把 TEXTURE_2D 与当前颜色两步法归位。
+                    OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
+                    setActiveTexture(OpenGlHelper.defaultTexUnit);
+                    bindTexture(1);
+                    mc.getTextureManager().bindTexture(ModelChanger.INSTANCE.getPIG_TEXTURE());
+                    disableTexture2D();
+                    enableTexture2D();
+                    color(0f, 0f, 0f, 0f);
+                    color(1f, 1f, 1f, 1f);
+                } else if (!bindEntityTexture(p_renderModel_1_)) {
                     return;
                 }
             } else {
@@ -133,7 +165,7 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
                     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
                     RenderUtils.INSTANCE.glColor(esp.getColor(p_renderModel_1_));
                     glLineWidth(esp.getWireframeWidth());
-                    mainModel.render(p_renderModel_1_, p_renderModel_2_, p_renderModel_3_, p_renderModel_4_, p_renderModel_5_, p_renderModel_6_, p_renderModel_7_);
+                    airplus$model.render(p_renderModel_1_, p_renderModel_2_, p_renderModel_3_, p_renderModel_4_, p_renderModel_5_, p_renderModel_6_, p_renderModel_7_);
                     glPopAttrib();
                     glPopMatrix();
                 } else if ("outline".equalsIgnoreCase(espMode)) {
@@ -143,16 +175,16 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
                     final Color color = esp.getColor(p_renderModel_1_);
                     OutlineUtils.setColor(color);
                     OutlineUtils.renderOne(esp.getOutlineWidth());
-                    mainModel.render(p_renderModel_1_, p_renderModel_2_, p_renderModel_3_, p_renderModel_4_, p_renderModel_5_, p_renderModel_6_, p_renderModel_7_);
+                    airplus$model.render(p_renderModel_1_, p_renderModel_2_, p_renderModel_3_, p_renderModel_4_, p_renderModel_5_, p_renderModel_6_, p_renderModel_7_);
                     OutlineUtils.setColor(color);
                     OutlineUtils.renderTwo();
-                    mainModel.render(p_renderModel_1_, p_renderModel_2_, p_renderModel_3_, p_renderModel_4_, p_renderModel_5_, p_renderModel_6_, p_renderModel_7_);
+                    airplus$model.render(p_renderModel_1_, p_renderModel_2_, p_renderModel_3_, p_renderModel_4_, p_renderModel_5_, p_renderModel_6_, p_renderModel_7_);
                     OutlineUtils.setColor(color);
                     OutlineUtils.renderThree();
-                    mainModel.render(p_renderModel_1_, p_renderModel_2_, p_renderModel_3_, p_renderModel_4_, p_renderModel_5_, p_renderModel_6_, p_renderModel_7_);
+                    airplus$model.render(p_renderModel_1_, p_renderModel_2_, p_renderModel_3_, p_renderModel_4_, p_renderModel_5_, p_renderModel_6_, p_renderModel_7_);
                     OutlineUtils.setColor(color);
                     OutlineUtils.renderFour(color);
-                    mainModel.render(p_renderModel_1_, p_renderModel_2_, p_renderModel_3_, p_renderModel_4_, p_renderModel_5_, p_renderModel_6_, p_renderModel_7_);
+                    airplus$model.render(p_renderModel_1_, p_renderModel_2_, p_renderModel_3_, p_renderModel_4_, p_renderModel_5_, p_renderModel_6_, p_renderModel_7_);
                     OutlineUtils.setColor(color);
                     OutlineUtils.renderFive();
                     OutlineUtils.setColor(Color.WHITE);
@@ -161,7 +193,7 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
                 mc.gameSettings.gammaSetting = gamma;
             }
 
-            mainModel.render(p_renderModel_1_, p_renderModel_2_, p_renderModel_3_, p_renderModel_4_, p_renderModel_5_, p_renderModel_6_, p_renderModel_7_);
+            airplus$model.render(p_renderModel_1_, p_renderModel_2_, p_renderModel_3_, p_renderModel_4_, p_renderModel_5_, p_renderModel_6_, p_renderModel_7_);
 
             if (shouldRenderGaussianESP) {
                 resetColor();
@@ -175,6 +207,9 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
             }
         }
         } finally {
+            if (airplus$scaled) {
+                popMatrix();
+            }
             mainModel.isChild = airplus$prevChild;
             mainModel.isRiding = airplus$prevRiding;
         }

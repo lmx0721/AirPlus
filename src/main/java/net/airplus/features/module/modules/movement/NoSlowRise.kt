@@ -1,4 +1,4 @@
-/*
+﻿/*
  * AirPlus Hacked Client
  * A free open source mixin-based injection hacked client for Minecraft using Minecraft Forge.
  * https://github.com/lmx0721/AirPlus
@@ -12,11 +12,11 @@ import net.airplus.event.PacketEvent
 import net.airplus.event.SlowDownEvent
 import net.airplus.event.UpdateEvent
 import net.airplus.event.handler
-import net.airplus.features.module.modules.rise.RiseGrimUtils
-import net.airplus.features.module.modules.rise.RiseGrimUtils.moveFlying
-import net.airplus.features.module.modules.rise.RiseGrimUtils.sendSlotSwap
-import net.airplus.features.module.modules.rise.RiseGrimUtils.sendViaUseItem
-import net.airplus.features.module.modules.rise.RiseGrimUtils.strafe
+import net.airplus.utils.skid.rise.RiseGrimUtils
+import net.airplus.utils.skid.rise.RiseGrimUtils.moveFlying
+import net.airplus.utils.skid.rise.RiseGrimUtils.sendSlotSwap
+import net.airplus.utils.skid.rise.RiseGrimUtils.sendViaUseItem
+import net.airplus.utils.skid.rise.RiseGrimUtils.strafe
 import net.airplus.utils.client.MinecraftInstance
 import net.airplus.utils.client.chat
 import net.airplus.utils.inventory.SilentHotbar

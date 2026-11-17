@@ -110,7 +110,20 @@ public abstract class MixinItemRenderer {
         rotateWithPlayerRotations(abstractclientplayer, partialTicks);
         enableRescaleNormal();
         pushMatrix();
+        airplus$renderHandPass(killAura, noSlow, animations, abstractclientplayer, f, f1, f2, partialTicks);
+        popMatrix();
 
+        disableRescaleNormal();
+        RenderHelper.disableStandardItemLighting();
+    }
+
+    /**
+     * 单趟手部渲染（变换 + 物品/手臂绘制）。
+     * 注意：Animations 位移放在此方法内部（原版位于 pushMatrix 内），保证矩阵起点一致。
+     */
+    private void airplus$renderHandPass(KillAura killAura, NoSlow noSlow, Animations animations,
+                                        EntityPlayerSP abstractclientplayer,
+                                        float equipProgress, float swingProgress, float pitch, float partialTicks) {
         if (animations.handleEvents()) {
             float scale = animations.getHandItemScale();
             float x = animations.getHandX();
@@ -131,20 +144,20 @@ public abstract class MixinItemRenderer {
                     || noSlow.isUNCPBlocking());
 
             if (itemToRender.getItem() instanceof ItemMap) {
-                renderItemMap(abstractclientplayer, f2, f, f1);
+                renderItemMap(abstractclientplayer, pitch, equipProgress, swingProgress);
             } else if (abstractclientplayer.getItemInUseCount() > 0 || isForceBlocking) {
                 EnumAction enumaction = isForceBlocking ? EnumAction.BLOCK : itemToRender.getItemUseAction();
 
                 switch (enumaction) {
                     case NONE:
-                        transformMainHand(f, 0f);
+                        transformMainHand(equipProgress, 0f);
                         break;
                     case EAT:
                     case DRINK:
                         performDrinking(abstractclientplayer, partialTicks);
-                        transformMainHand(f, f1);
+                        transformMainHand(equipProgress, swingProgress);
                         break;
-                    case BLOCK:
+                    case BLOCK: {
                         final Animation animation;
 
                         if (animations.handleEvents()) {
@@ -154,30 +167,27 @@ public abstract class MixinItemRenderer {
                         }
 
                         if (animation != null) {
-                            animation.transform(f1, f, abstractclientplayer);
+                            animation.transform(swingProgress, equipProgress, abstractclientplayer);
                         }
                         break;
+                    }
                     case BOW:
-                        transformMainHand(f, f1);
+                        transformMainHand(equipProgress, swingProgress);
                         doBowTransformations(partialTicks, abstractclientplayer);
                         break;
                 }
             } else {
                 if (!animations.handleEvents() || !animations.getOddSwing()) {
-                    doItemUsedTransformations(f1);
+                    doItemUsedTransformations(swingProgress);
                 }
 
-                transformMainHand(f, f1);
+                transformMainHand(equipProgress, swingProgress);
             }
 
             renderItem(abstractclientplayer, itemToRender, ItemCameraTransforms.TransformType.FIRST_PERSON);
         } else if (!abstractclientplayer.isInvisible()) {
-            renderPlayerArm(abstractclientplayer, f, f1);
+            renderPlayerArm(abstractclientplayer, equipProgress, swingProgress);
         }
-
-        popMatrix();
-        disableRescaleNormal();
-        RenderHelper.disableStandardItemLighting();
     }
 
     /**

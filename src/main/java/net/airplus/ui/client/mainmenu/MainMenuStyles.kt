@@ -30,7 +30,7 @@ import java.awt.Color
 /**
  * 主菜单风格统一管理（迁移自 AirClient MainMenuStyles）。
  *
- * 循环顺序：Flux -> Hanabi -> Minimal -> Sidebar -> Dock -> Split -> Grid -> Orbit -> Header -> Diagonal -> Setsuna -> EdMoonlight -> Flux
+ * 循环顺序：Flux -> Hanabi -> Minimal -> Sidebar -> Dock -> Split -> Grid -> Orbit -> Header -> Diagonal -> Setsuna -> Flux
  *
  * 背景：索引 0 为 Flux 动态气泡着色器背景（可选择），其余为内置图片背景。
  * 所有主菜单与设置界面统一通过 [drawMenuBackground] 绘制背景。
@@ -50,14 +50,13 @@ object MainMenuStyles {
     val STYLE_HEADER = "Header"
     val STYLE_DIAGONAL = "Diagonal"
     val STYLE_SETSUNA = "Setsuna"
-    val STYLE_EDMOONLIGHT = "EdMoonlight"
 
     // 旧版本配置值迁移（Default -> Flux, Custom -> Hanabi）
     private val LEGACY_NAMES = mapOf("Default" to STYLE_FLUX, "Custom" to STYLE_HANABI)
 
     val STYLES = listOf(
         STYLE_FLUX, STYLE_HANABI, STYLE_HANABI2, STYLE_MINIMAL, STYLE_SIDEBAR, STYLE_DOCK, STYLE_SPLIT,
-        STYLE_GRID, STYLE_ORBIT, STYLE_HEADER, STYLE_DIAGONAL, STYLE_XINXIN, STYLE_SETSUNA, STYLE_EDMOONLIGHT
+        STYLE_GRID, STYLE_ORBIT, STYLE_HEADER, STYLE_DIAGONAL, STYLE_XINXIN, STYLE_SETSUNA
     )
 
     /** 迁移旧配置里的风格名，保证读取到的总是新名字。 */
@@ -269,7 +268,6 @@ object MainMenuStyles {
         STYLE_DIAGONAL -> DiagonalMainMenu()
         STYLE_XINXIN -> XinxinMainMenu()
         STYLE_SETSUNA -> SetsunaMainMenu()
-        STYLE_EDMOONLIGHT -> MoonlightMainMenu()
         else -> GuiMainMenu()
     }
 

@@ -12,7 +12,6 @@ import net.airplus.features.module.modules.combat.TickBase;
 import net.airplus.features.module.modules.misc.AbortBreaking;
 import net.airplus.features.module.modules.misc.MultiActions;
 import net.airplus.features.module.modules.render.BetterFPS;
-import net.airplus.features.module.modules.render.MotionBlur;
 import net.airplus.features.module.modules.world.FastPlace;
 import net.airplus.file.configs.models.ClientConfiguration;
 import net.airplus.injection.implementations.IMinecraft;
@@ -206,27 +205,9 @@ public abstract class MixinMinecraft implements IMinecraft {
         PlayerExtensionKt.flushDeferredPlacements();
     }
 
-    @Inject(method = "runTick", at = @At("TAIL"))
-    private void injectMotionBlur(CallbackInfo ci) {
-        try {
-            if (mc.thePlayer != null && mc.theWorld != null && mc.thePlayer.ticksExisted > 10) {
-                final MotionBlur motionBlur = MotionBlur.INSTANCE;
-                if (motionBlur.handleEvents()) {
-                    if (entityRenderer.getShaderGroup() == null)
-                        entityRenderer.loadShader(new ResourceLocation("minecraft", "shaders/post/motion_blur.json"));
-                    final float uniform = 1F - Math.min(motionBlur.getBlurAmount() / 10F, 0.9f);
-                    if (entityRenderer.getShaderGroup() != null) {
-                        entityRenderer.getShaderGroup().listShaders.get(0).getShaderManager().getShaderUniform("Phosphor").set(uniform, 0F, 0F);
-                    }
-                } else {
-                    if (entityRenderer.isShaderActive())
-                        entityRenderer.stopUseShader();
-                }
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
+    // MotionBlur 改为 BetterMyau 式逐像素速度缓冲渲染器（MotionBlurRenderer），
+    // 由 MixinEntityRenderer 在世界渲染完成后直接调用，不再加载 vanilla post 链
+    // （shaders/post/motion_blur.json），故此处 loadShader/stopUseShader 逻辑整体移除。
 
     @Inject(method = "runTick", at = @At(value = "FIELD", target = "Lnet/minecraft/client/Minecraft;joinPlayerCounter:I", ordinal = 0))
     private void onTick(final CallbackInfo callbackInfo) {

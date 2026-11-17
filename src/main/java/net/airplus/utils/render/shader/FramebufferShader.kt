@@ -43,23 +43,33 @@ abstract class FramebufferShader(fragmentShader: String) : Shader(fragmentShader
 
     fun startDraw(partialTicks: Float, renderScale: Float) {
         // 着色器不可用时（如 Android GLES）直接跳过整段离屏渲染
-        if (!isUsable || !ShaderSupport.isSupported) return
+        if (!prepareDraw(renderScale)) return
+
+        mc.entityRenderer.setupCameraTransform(partialTicks, 0)
+    }
+
+    /**
+     * 公共准备：绑定离屏帧缓冲、关闭实体阴影。返回是否真正开始。
+     */
+    private fun prepareDraw(renderScale: Float): Boolean {
+        // 着色器不可用时（如 Android GLES）直接跳过整段离屏渲染
+        if (!isUsable || !ShaderSupport.isSupported) return false
 
         this.renderScale = renderScale
-        
+
         pushMatrix()
         enableAlpha()
         pushAttrib()
-        
+
         framebuffer = setupFrameBuffer(framebuffer, renderScale)
         framebuffer!!.framebufferClear()
         framebuffer!!.bindFramebuffer(true)
-        
+
         entityShadows = mc.gameSettings.entityShadows
         mc.gameSettings.entityShadows = false
-        mc.entityRenderer.setupCameraTransform(partialTicks, 0)
 
         drawStarted = true
+        return true
     }
 
     fun stopDraw(color: Color, radius: Int, fade: Int, targetAlpha: Float) {

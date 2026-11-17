@@ -12,6 +12,10 @@ import net.airplus.features.module.modules.misc.Disabler;
 import net.airplus.features.module.modules.misc.PortalMenu;
 import net.airplus.features.module.modules.player.Derp;
 import net.airplus.features.module.modules.movement.InventoryMove;
+import net.airplus.features.module.modules.world.ChestStealer;
+import net.minecraft.inventory.ContainerChest;
+import net.minecraft.inventory.IInventory;
+import net.minecraft.world.IInteractionObject;
 import net.airplus.features.module.modules.movement.NoSlow;
 import net.airplus.features.module.modules.movement.Sneak;
 import net.airplus.features.module.modules.movement.Sprint;
@@ -247,6 +251,41 @@ public abstract class MixinEntityPlayerSP extends MixinAbstractClientPlayer {
 
         EventManager.INSTANCE.call(RotationUpdateEvent.INSTANCE);
 
+        ci.cancel();
+    }
+
+    /**
+     * ChestStealer SilentGUI：静默模式下箱子容器不创建任何 GuiScreen，
+     * 仅挂载 ContainerChest 到 openContainer，玩家保持正常视角转动 / 移动 / 攻击。
+     * handleOpenWindow 会在 displayGUIChest 之后继续把 windowId 写入新容器。
+     */
+    @Inject(method = "displayGUIChest", at = @At("HEAD"), cancellable = true)
+    private void airplus$silentChestGui(IInventory chestInventory, CallbackInfo ci) {
+        final ChestStealer chestStealer = ChestStealer.INSTANCE;
+
+        if (!chestStealer.handleEvents() || !chestStealer.getSilentGUI())
+            return;
+
+        // Mirror the vanilla branch logic: GuiChest is used for "minecraft:chest"
+        // and for any container type that is not explicitly routed to another GUI
+        final String guiId = chestInventory instanceof IInteractionObject
+                ? ((IInteractionObject) chestInventory).getGuiID() : "minecraft:container";
+
+        final boolean wouldOpenGuiChest = "minecraft:chest".equals(guiId)
+                || !("minecraft:hopper".equals(guiId)
+                || "minecraft:furnace".equals(guiId)
+                || "minecraft:brewing_stand".equals(guiId)
+                || "minecraft:beacon".equals(guiId)
+                || "minecraft:dispenser".equals(guiId)
+                || "minecraft:dropper".equals(guiId));
+
+        if (!wouldOpenGuiChest)
+            return;
+
+        final EntityPlayerSP player = (EntityPlayerSP) (Object) this;
+
+        // Same container setup as GuiChest's constructor, just without opening a screen
+        player.openContainer = new ContainerChest(player.inventory, chestInventory, player);
         ci.cancel();
     }
 

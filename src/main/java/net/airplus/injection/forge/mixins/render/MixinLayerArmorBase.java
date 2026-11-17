@@ -16,8 +16,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * ModelChanger（moon ModelModifierModule 移植）：HideArmor 标志生效时，
- * 在盔甲层入口直接取消整层渲染（头盔/胸甲/护腿/靴子一次性隐藏）。
+ * ModelChanger：Pig 模式（hideArmor）时在盔甲层入口直接取消整层渲染
+ * （盔甲按人形骨架挂点渲染，猪模型上会错位）。
  */
 @SideOnly(Side.CLIENT)
 @Mixin(LayerArmorBase.class)
@@ -25,7 +25,7 @@ public class MixinLayerArmorBase {
 
     @Inject(method = "renderLayer", at = @At("HEAD"), cancellable = true)
     private <T extends EntityLivingBase> void airplus$hideArmor(T entity, float limbSwing, float limbSwingAmount, float partialTicks, float ageInTicks, float netHeadYaw, float headPitch, float scaleFactor, int armorSlot, CallbackInfo ci) {
-        if (ModelChanger.INSTANCE.flag(entity, ModelChanger.Flag.HIDE_ARMOR)) {
+        if (ModelChanger.INSTANCE.hideArmor(entity)) {
             ci.cancel();
         }
     }

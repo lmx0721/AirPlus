@@ -10,6 +10,7 @@ import net.airplus.cape.CapeInfo;
 import net.airplus.features.module.modules.misc.NameProtect;
 import net.airplus.features.module.modules.render.Camera;
 import net.airplus.features.module.modules.render.CustomSkin;
+import net.airplus.features.module.modules.render.ModelChanger;
 import net.minecraft.client.entity.AbstractClientPlayer;
 import net.minecraft.client.resources.DefaultPlayerSkin;
 import net.minecraft.init.Items;
@@ -33,6 +34,12 @@ public abstract class MixinAbstractClientPlayer extends MixinEntityPlayer {
 
     @Inject(method = "getLocationCape", at = @At("HEAD"), cancellable = true)
     private void getCape(CallbackInfoReturnable<ResourceLocation> callbackInfoReturnable) {
+        // ModelChanger：Baby / Pig 模式下隐藏披风
+        if (ModelChanger.INSTANCE.hideCape((net.minecraft.entity.Entity) (Object) this)) {
+            callbackInfoReturnable.setReturnValue(null);
+            return;
+        }
+
         // 首先检查Cape模块是否提供了自定义披风
         ResourceLocation customCape = CapeAPI.INSTANCE.getCustomCape(getUniqueID());
         if (customCape != null) {
