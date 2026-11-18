@@ -33,7 +33,7 @@ jobs:
       - name: Package artifact
         run: |
           mkdir -p zip
-          JAR=$(find build/libs -regex '.*airplus-b[0-9|.]*\.jar' | head -n 1)
+          JAR=$(find build/libs -iregex '.*airplus-b[0-9|.]*\.jar' | head -n 1)
           echo "Jar: $JAR"
           cp "$JAR" zip/airplus.jar
           cd zip
