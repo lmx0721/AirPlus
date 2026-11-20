@@ -87,6 +87,8 @@
 
         "module.criticals.description": "Automatically deals critical hits.",
 
+        "module.customGui.description": "Glass container interfaces (BetterMyau port): replaces the vanilla inventory, chest, crafting table, furnace, dispenser, hopper and brewing stand textures with a frosted glass panel, lightened labels and glass potion-effect cards.",
+
         "module.customSkin.description": "Custom player skins: load a local skin file (skins folder) or a premium player's skin by name, for yourself or all players.",
 
         "module.modelChanger.description": "Changes the rendered player model (Pig / Piglet / Small / Normal) and pose (Sit / Lie), for yourself or all players.",

@@ -576,15 +576,25 @@ object Backtrack : Module("Backtrack", Category.COMBAT) {
             return f()
         }
 
-        var backtrackDataArray = getBacktrackData(entity.uniqueID)?.toMutableList() ?: return f()
+        val backtrackDataArray = getBacktrackData(entity.uniqueID) ?: return f()
 
-        backtrackDataArray = backtrackDataArray.sortedBy { (x, y, z, _) ->
-            runWithSimulatedPosition(entity, Vec3(x, y, z)) {
+        // 只需要距玩家最近的一条记录：线性求 min（O(n)），
+        // 替代原来的「全量拷贝 + 每条再全量模拟求距离 + 排序」的 O(n²) 路径
+        var nearest: Triple<Double, Double, Double>? = null
+        var nearestDistance = Double.MAX_VALUE
+
+        for ((x, y, z, _) in backtrackDataArray) {
+            val distance = runWithSimulatedPosition(entity, Vec3(x, y, z)) {
                 mc.thePlayer.getDistanceToBox(entity.hitBox)
-            }
-        }.toMutableList()
+            } ?: continue
 
-        val (x, y, z, _) = backtrackDataArray.first()
+            if (distance < nearestDistance) {
+                nearestDistance = distance
+                nearest = Triple(x, y, z)
+            }
+        }
+
+        val (x, y, z) = nearest ?: return f()
 
         return runWithSimulatedPosition(entity, Vec3(x, y, z)) { f() } ?: f() // Edge case
     }

@@ -54,6 +54,14 @@ private class ImageBackground(backgroundFile: File) : Background(backgroundFile)
         color(1f, 1f, 1f, 1f)
         Gui.drawScaledCustomSizeModalRect(0, 0, 0f, 0f, width, height, width, height, width.toFloat(), height.toFloat())
     }
+
+    override fun dispose() {
+        // 1080p 背景约 8MB / 4K 约 33MB 显存，替换前必须删除旧纹理
+        try {
+            mc.textureManager.deleteTexture(resourceLocation)
+        } catch (ignored: Exception) {
+        }
+    }
 }
 
 private class FragBackground(backgroundFile: File) : Background(backgroundFile) {

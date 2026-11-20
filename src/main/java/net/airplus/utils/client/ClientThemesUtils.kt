@@ -223,9 +223,26 @@ object ClientThemesUtils {
     /** Animated gradient color of the current theme. [index] shifts the phase. */
     @JvmStatic
     fun getColor(index: Int = 0): Color {
+        // 帧内缓存：一帧内会调用数十次 getColor，resolvePair + mixColors 为纯计算，
+        // 时间源是毫秒级 —— 同毫秒同 index 直接复用，动画精度不受影响
+        val now = System.currentTimeMillis()
+        val cached = cachedCurrentColor
+        if (cached != null && cachedCurrentColorTime == now && cachedCurrentColorIndex == index) {
+            return cached
+        }
+
         val pair = resolvePair(ClientColorMode)
-        return mixColors(pair.first, pair.second, fadeValue(), index)
+        val color = mixColors(pair.first, pair.second, fadeValue(), index)
+
+        cachedCurrentColorTime = now
+        cachedCurrentColorIndex = index
+        cachedCurrentColor = color
+        return color
     }
+
+    private var cachedCurrentColorTime = Long.MIN_VALUE
+    private var cachedCurrentColorIndex = Int.MIN_VALUE
+    private var cachedCurrentColor: Color? = null
 
     /** Animated gradient color with a custom alpha. */
     @JvmStatic
@@ -248,13 +265,32 @@ object ClientThemesUtils {
         if (mode.startsWith("#")) {
             return parseHexColor(mode)
         }
-        when (normalize(mode)) {
-            "astolfo" -> return ColorUtils.skyRainbow(index, 0.6f, 1f, 20000f / ThemeFadeSpeed)
-            "rainbow" -> return ColorUtils.skyRainbow(index, 1f, 1f, 20000f / ThemeFadeSpeed)
+
+        // 与 getColor 相同的毫秒级帧内缓存
+        val now = System.currentTimeMillis()
+        val cached = cachedModeColor
+        if (cached != null && cachedModeColorTime == now && cachedModeColorKey == mode to index) {
+            return cached
         }
-        val pair = resolvePair(mode)
-        return mixColors(pair.first, pair.second, fadeValue(), index)
+
+        val color = when (normalize(mode)) {
+            "astolfo" -> ColorUtils.skyRainbow(index, 0.6f, 1f, 20000f / ThemeFadeSpeed)
+            "rainbow" -> ColorUtils.skyRainbow(index, 1f, 1f, 20000f / ThemeFadeSpeed)
+            else -> {
+                val pair = resolvePair(mode)
+                mixColors(pair.first, pair.second, fadeValue(), index)
+            }
+        }
+
+        cachedModeColorTime = now
+        cachedModeColorKey = mode to index
+        cachedModeColor = color
+        return color
     }
+
+    private var cachedModeColorTime = Long.MIN_VALUE
+    private var cachedModeColorKey: Pair<String, Int>? = null
+    private var cachedModeColor: Color? = null
 
     /** Static (non animated) color pair of a theme, for previews and dots. */
     fun getThemeColorPair(mode: String): Pair<Color, Color> = resolvePair(mode)

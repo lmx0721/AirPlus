@@ -11,7 +11,6 @@ import net.airplus.event.handler
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
 import net.airplus.utils.extensions.*
-import net.airplus.utils.kotlin.removeEach
 import net.airplus.utils.render.ColorSettingsInteger
 import net.airplus.utils.render.ColorUtils.withAlpha
 import net.airplus.utils.render.RenderUtils.glColor
@@ -34,10 +33,10 @@ object Breadcrumbs : Module("Breadcrumbs", Category.RENDER) {
             return@handler
         }
 
-        val currentTime = System.currentTimeMillis()
+        val now = System.currentTimeMillis()
         val fadeSeconds = lifeTime * 1000L
 
-        glPushAttrib(GL_ALL_ATTRIB_BITS)
+        glPushAttrib(GL_ENABLE_BIT or GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT or GL_CURRENT_BIT or GL_LINE_BIT or GL_LIGHTING_BIT or GL_TEXTURE_BIT)
         glPushMatrix()
 
         glDisable(GL_TEXTURE_2D)
@@ -50,7 +49,7 @@ object Breadcrumbs : Module("Breadcrumbs", Category.RENDER) {
         glAlphaFunc(GL_GREATER, 0.0f)
 
         player.interpolatedPosition(player.prevPos).let { pos ->
-            val data = PositionData(pos.toDoubleArray(), currentTime)
+            val data = PositionData(pos.toDoubleArray(), now)
 
             val lastData = positions.lastOrNull()?.array
 
@@ -59,30 +58,42 @@ object Breadcrumbs : Module("Breadcrumbs", Category.RENDER) {
 
         mc.entityRenderer.disableLightmap()
 
+        // 过期段全部位于队首（按时间淘汰），线性弹出替代原先 removeEach + indexOf 的 O(n²)
+        if (temporary) {
+            while (positions.isNotEmpty()) {
+                val head = positions.first()
+                if (now - head.time <= fadeSeconds) break
+                positions.removeFirst()
+            }
+        }
+
+        val baseColor = colors.color()
+        if (!fade) glColor(baseColor.withAlpha(150))
+
         glBegin(GL_QUADS)
 
         val renderPosX = mc.renderManager.viewerPosX
         val renderPosY = mc.renderManager.viewerPosY
         val renderPosZ = mc.renderManager.viewerPosZ
 
-        positions.removeEach {
-            val timestamp = System.currentTimeMillis() - it.time
-            val transparency = if (fade) {
-                (0f..150f).lerpWith(1 - (timestamp / fadeSeconds).coerceAtMost(1.0F))
-            } else 150f
+        var prev: DoubleArray? = null
+        for (data in positions) {
+            if (fade) {
+                val timestamp = now - data.time
+                val transparency = (0f..150f).lerpWith(1 - (timestamp / fadeSeconds).coerceAtMost(1.0F))
+                glColor(baseColor.withAlpha(transparency.toInt()))
+            }
 
-            val startPos = it.array
-            val endPos = positions.getOrNull(positions.indexOf(it) + 1)?.array
-                ?: return@removeEach temporary && timestamp > fadeSeconds
+            val startPos = prev
+            if (startPos != null) {
+                val endPos = data.array
 
-            glColor(colors.color().withAlpha(transparency.toInt()))
-
-            glVertex3d(startPos[0] - renderPosX, startPos[1] - renderPosY, startPos[2] - renderPosZ)
-            glVertex3d(startPos[0] - renderPosX, startPos[1] - renderPosY + lineHeight, startPos[2] - renderPosZ)
-            glVertex3d(endPos[0] - renderPosX, endPos[1] - renderPosY + lineHeight, endPos[2] - renderPosZ)
-            glVertex3d(endPos[0] - renderPosX, endPos[1] - renderPosY, endPos[2] - renderPosZ)
-
-            temporary && timestamp > fadeSeconds
+                glVertex3d(startPos[0] - renderPosX, startPos[1] - renderPosY, startPos[2] - renderPosZ)
+                glVertex3d(startPos[0] - renderPosX, startPos[1] - renderPosY + lineHeight, startPos[2] - renderPosZ)
+                glVertex3d(endPos[0] - renderPosX, endPos[1] - renderPosY + lineHeight, endPos[2] - renderPosZ)
+                glVertex3d(endPos[0] - renderPosX, endPos[1] - renderPosY, endPos[2] - renderPosZ)
+            }
+            prev = data.array
         }
 
         glEnd()

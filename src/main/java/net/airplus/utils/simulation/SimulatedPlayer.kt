@@ -156,21 +156,24 @@ class SimulatedPlayer(
             )
         }
 
+        // 复用的 NBT 暂存对象：fromClientPlayer 在瞄准热路径上每 tick 被调用，
+        // 原实现每次分配 2 个 NBTTagCompound，改为复用同一实例。
+        // writeNBT / writeCapabilitiesToNBT 每次都会完整覆写全部键，无需清空。
+        private val capabilitiesScratch = NBTTagCompound()
+        private val foodStatsScratch = NBTTagCompound()
+
         private fun createFoodStatsCopy(player: EntityPlayerSP): FoodStats {
-            val foodStatsNBT = NBTTagCompound()
             val foodStats = FoodStats()
 
-            player.foodStats.writeNBT(foodStatsNBT)
-            foodStats.readNBT(foodStatsNBT)
+            player.foodStats.writeNBT(foodStatsScratch)
+            foodStats.readNBT(foodStatsScratch)
             return foodStats
         }
-
         private fun createCapabilitiesCopy(player: EntityPlayerSP): PlayerCapabilities {
-            val capabilitiesNBT = NBTTagCompound()
             val capabilities = PlayerCapabilities()
 
-            player.capabilities.writeCapabilitiesToNBT(capabilitiesNBT)
-            capabilities.readCapabilitiesFromNBT(capabilitiesNBT)
+            player.capabilities.writeCapabilitiesToNBT(capabilitiesScratch)
+            capabilities.readCapabilitiesFromNBT(capabilitiesScratch)
 
             return capabilities
         }

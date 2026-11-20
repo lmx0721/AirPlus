@@ -19,11 +19,25 @@ object GLErrorProbe {
     private val lastMsgLog = HashMap<String, Long>()
     private val sb = StringBuilder(64)
 
+    /**
+     * 生产环境默认关闭（每次 drain 都是同步 glGetError 循环 + 潜在 debug 回调，
+     * 每帧累积 0.5-2ms 开销）。需要诊断 GL 错误时以 JVM 参数
+     * `-Dairplus.glProbe=true` 显式开启。
+     */
+    @JvmStatic
+    private val enabled: Boolean =
+        try {
+            System.getProperty("airplus.glProbe", "false").toBoolean()
+        } catch (t: Throwable) {
+            false
+        }
+
     @Volatile
     private var installed = false
 
     @JvmStatic
     fun drain(tag: String) {
+        if (!enabled) return
         install()
         sb.setLength(0)
         var n = 0

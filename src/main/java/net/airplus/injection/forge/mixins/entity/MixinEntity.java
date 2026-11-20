@@ -14,6 +14,7 @@ import net.airplus.features.module.modules.movement.NoFluid;
 import net.airplus.features.module.modules.render.FreeCam;
 import net.airplus.injection.implementations.IMixinEntity;
 import net.airplus.viaversion.vialoadingbase.ViaLoadingBase;
+import net.airplus.viaversion.viamcp.ViaMCP;
 import net.minecraft.block.Block;
 import net.minecraft.block.material.Material;
 import net.minecraft.crash.CrashReportCategory;
@@ -237,7 +238,7 @@ public abstract class MixinEntity implements IMixinEntity {
     @Inject(method = "getCollisionBorderSize", at = @At("HEAD"), cancellable = true)
     private void getCollisionBorderSize(final CallbackInfoReturnable<Float> callbackInfoReturnable) {
         // PacketFix：跨版本（目标协议 >= 1.12.2）时实体拾取碰撞箱扩展归零（README PacketFixMCP）
-        final boolean packetFix = ViaLoadingBase.getInstance().getTargetVersion().isNewerThanOrEqualTo(ProtocolVersion.v1_12_2);
+        final boolean packetFix = ViaMCP.isReady() && ViaLoadingBase.getInstance().getTargetVersion().isNewerThanOrEqualTo(ProtocolVersion.v1_12_2);
 
         final HitBox hitBox = HitBox.INSTANCE;
 

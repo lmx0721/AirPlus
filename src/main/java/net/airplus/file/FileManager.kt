@@ -187,6 +187,8 @@ object FileManager : MinecraftInstance, Iterable<FileConfig> by FILE_CONFIGS {
      */
     fun loadBackground() {
         val file = existingBackgroundFile() ?: return
+        // 替换前释放旧背景的 GL 资源（纹理/着色器），防止重复加载时泄漏显存
+        background?.dispose()
         background = try {
             Background.fromFile(file)
         } catch (t: Throwable) {

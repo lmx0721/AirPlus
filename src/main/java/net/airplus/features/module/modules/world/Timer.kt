@@ -33,8 +33,11 @@ object Timer : Module("Timer", Category.WORLD, gameDetecting = false) {
     override fun onDisable() {
         pauseTicksLeft = 0
 
-        if (mc.thePlayer == null)
+        // 无玩家时也要恢复 timerSpeed，否则开局 timer 卡在上次设置的倍速
+        if (mc.thePlayer == null) {
+            mc.timer.timerSpeed = 1F
             return
+        }
 
         mc.timer.timerSpeed = 1F
     }

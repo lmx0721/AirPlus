@@ -24,6 +24,7 @@ import net.airplus.utils.rotation.RotationSettings;
 import net.airplus.utils.rotation.RotationUtils;
 import net.airplus.utils.extensions.MathExtensionsKt;
 import net.airplus.viaversion.vialoadingbase.ViaLoadingBase;
+import net.airplus.viaversion.viamcp.ViaMCP;
 import net.minecraft.block.Block;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
@@ -217,6 +218,6 @@ public abstract class MixinEntityLivingBase extends MixinEntity {
      */
     @ModifyConstant(method = "onLivingUpdate", constant = @Constant(doubleValue = 0.005D), allow = 3)
     private double packetFix$minimumMotion(double constant) {
-        return ViaLoadingBase.getInstance().getTargetVersion().isNewerThanOrEqualTo(ProtocolVersion.v1_12_2) ? 0.003D : constant;
+        return ViaMCP.isReady() && ViaLoadingBase.getInstance().getTargetVersion().isNewerThanOrEqualTo(ProtocolVersion.v1_12_2) ? 0.003D : constant;
     }
 }

@@ -12,8 +12,11 @@ import net.airplus.utils.client.MinecraftInstance
 import com.formdev.flatlaf.themes.FlatMacLightLaf
 import java.awt.Desktop
 import java.awt.Font
+import java.awt.SystemTray
 import java.awt.Toolkit
+import java.awt.TrayIcon
 import java.awt.datatransfer.StringSelection
+import java.awt.image.BufferedImage
 import java.io.File
 import java.io.IOException
 import java.net.URI
@@ -28,6 +31,34 @@ object MiscUtils : MinecraftInstance {
 
     @Volatile
     private var swingThemeInitialized = false
+
+    // 系统托盘通知图标：首次使用时惰性创建并常驻托盘（气泡通知要求图标保持在托盘中）
+    @Volatile
+    private var trayIcon: TrayIcon? = null
+
+    private val trayLock = Any()
+
+    /**
+     * 发送系统托盘通知（Windows 下显示为气泡/Toast 通知）。
+     * 无头环境或系统不支持托盘时静默跳过，任何异常仅记录日志，不影响调用方。
+     */
+    @JvmStatic
+    fun showWindowsNotification(title: String, message: String) {
+        runCatching {
+            if (!SystemTray.isSupported()) return
+
+            val icon = synchronized(trayLock) {
+                trayIcon ?: TrayIcon(BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB), AirPlus.CLIENT_NAME).also {
+                    SystemTray.getSystemTray().add(it)
+                    trayIcon = it
+                }
+            }
+
+            icon.displayMessage(title, message, TrayIcon.MessageType.INFO)
+        }.onFailure {
+            LOGGER.error("Failed to show system tray notification.", it)
+        }
+    }
 
     /**
      * Swing 主题延迟初始化：FlatLaf 只在真正需要弹 Swing 对话框（错误弹窗 / 文件选择器）

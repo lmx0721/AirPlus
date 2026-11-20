@@ -896,7 +896,7 @@ class MusicScreen : GuiScreen() {
         // 封面阴影（外扩近似）
         RenderUtils.drawRoundedRect(cover.x - 3f, cover.y - 3f, cover.x + cover.width + 3f,
             cover.y + cover.height + 3f, 0x98000000.toInt(), 4f)
-        drawCover("music-large:" + current.id, current.getCoverUrl(1024), cover, 2f)
+        drawCover("music-large:" + current.id, current.getCoverUrl(512), cover, 2f)
         RenderUtils.drawRect(cover.x, cover.y + cover.height - 19, cover.x + cover.width,
             cover.y + cover.height, 0xC4080D0E.toInt())
         drawTextAt("SETSUNA RECORDS", cover.x + 6, cover.y + cover.height - 13, 10f, 0xBFFFFFFF.toInt(), 5f)
@@ -1319,22 +1319,23 @@ class MusicScreen : GuiScreen() {
             return
         }
         loadingCovers.add(key)
-        CompletableFuture.supplyAsync { downloadCover(url) }.whenComplete { bytes, error ->
+        // 解码与缩放放在后台线程完成（大图 ImageIO.read 可达 10-50ms，此前在渲染线程做），
+        // 主线程只负责 DynamicTexture 上传
+        CompletableFuture.supplyAsync {
+            val bytes = downloadCover(url)
+            if (bytes == null || bytes.isEmpty()) null else decodeScaledCover(bytes)
+        }.whenComplete { decoded, error ->
             mc.addScheduledTask {
                 loadingCovers.remove(key)
                 if (disposed) {
                     return@addScheduledTask
                 }
-                if (error != null || bytes == null || bytes.isEmpty()) {
+                if (error != null || decoded == null) {
                     synchronized(coverRetryAt) { coverRetryAt[key] = System.currentTimeMillis() + 30_000L }
                     return@addScheduledTask
                 }
                 try {
-                    val image = ImageIO.read(ByteArrayInputStream(bytes))
-                    if (image == null) {
-                        synchronized(coverRetryAt) { coverRetryAt[key] = System.currentTimeMillis() + 30_000L }
-                        return@addScheduledTask
-                    }
+                    val image = decoded
                     val texture = DynamicTexture(image)
                     val loc = mc.textureManager.getDynamicTextureLocation("cover_$key", texture)
                     synchronized(coverImages) {
@@ -1367,6 +1368,24 @@ class MusicScreen : GuiScreen() {
         } catch (ignored: Exception) {
             null
         }
+    }
+
+    /** 解码封面并限制最长边 ≤512px（UI 显示仅几十像素，全分辨率 3000×3000 ≈ 34MB 显存/张）。 */
+    private fun decodeScaledCover(bytes: ByteArray): BufferedImage? {
+        val image = ImageIO.read(ByteArrayInputStream(bytes)) ?: return null
+        val maxSide = maxOf(image.width, image.height)
+        if (maxSide <= 512) return image
+        val scale = 512f / maxSide
+        val w = (image.width * scale).toInt().coerceAtLeast(1)
+        val h = (image.height * scale).toInt().coerceAtLeast(1)
+        val scaled = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
+        val g = scaled.createGraphics()
+        try {
+            g.drawImage(image, 0, 0, w, h, null)
+        } finally {
+            g.dispose()
+        }
+        return scaled
     }
 
     private fun trimCoverCache() {

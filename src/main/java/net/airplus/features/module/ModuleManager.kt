@@ -99,6 +99,7 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             ComponentOnHover,
             ConsoleSpammer,
             Criticals,
+            CustomGui,
             CustomSkin,
             Damage,
             DamageParticle,
@@ -232,7 +233,8 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             FreeLook,
             SilentHotbarModule,
             MusicPlayer,
-            NetEaseMusic
+            NetEaseMusic,
+            NewMusicPlayer
         )
 
         registerModules(modules = modules)
@@ -259,6 +261,10 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
      */
     fun unregisterModule(module: Module) {
         MODULE_REGISTRY.remove(module)
+        // 同步注销 registerModule 时自动生成的 ModuleCommand，防止脚本重载时命令表泄漏
+        generatedCommands.remove(module)?.let { generatedCommand ->
+            net.airplus.AirPlus.commandManager.unregisterCommand(generatedCommand)
+        }
         module.onUnregister()
     }
 
@@ -271,8 +277,13 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
         if (values.isEmpty())
             return
 
-        registerCommand(ModuleCommand(module, values))
+        val command = ModuleCommand(module, values)
+        generatedCommands[module] = command
+        registerCommand(command)
     }
+
+    /** 模块 → 自动生成命令 的映射（unregisterModule 时同步注销） */
+    private val generatedCommands = HashMap<Module, ModuleCommand>()
 
     /**
      * Get module by [moduleClass]

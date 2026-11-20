@@ -8,8 +8,8 @@ package net.airplus.features.module
 import net.airplus.AirPlus.isStarting
 import net.airplus.config.Configurable
 import net.airplus.event.Listenable
+import net.airplus.features.module.modules.client.Sound
 import net.airplus.features.module.modules.misc.GameDetector
-import net.airplus.features.module.modules.misc.Sound
 import net.airplus.file.FileManager.modulesConfig
 import net.airplus.file.FileManager.saveConfig
 import net.airplus.file.FileManager.valuesConfig

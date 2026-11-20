@@ -23,7 +23,6 @@ import net.airplus.ui.font.Fonts;
 import net.airplus.utils.client.ClientUtils;
 import net.airplus.utils.render.HudBlur;
 import net.airplus.utils.render.RenderUtils;
-import net.airplus.utils.render.RenderUtils.RoundedCorners;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.client.gui.ScaledResolution;
@@ -248,16 +247,23 @@ public class AugustusClickGui extends GuiScreen {
 
     private void drawMainWindow(int mouseX, int mouseY, int mouseButton, GuiEvent event) {
         if (event == GuiEvent.DRAW) {
-            // 背景模糊 (HudBlur，类型/强度由 Client 模块的全局 Blur 设置统一控制；半透明背景会让模糊透出)
+            // 背景模糊（面板独立玻璃模糊：GlassBlur 原位采样，不走全屏 blur + stencil 裁剪；
+            // 模糊类型/强度由 Client 模块的全局 Blur 设置统一控制，半透明背景会让模糊透出）
+            boolean glassSurface = false;
             if (ClickGUI.INSTANCE.getAugBlur()) {
-                HudBlur.INSTANCE.blur(posX, posY, posX + width, posY + height, 12F, RoundedCorners.ALL, 1F, null, true, null);
+                // 玻璃系模式（Glass / FrostedLight / Midnight / Solid / Amoled / LiquidGlass）走 GlassTheme 全管线，
+                // 面板表面 = 玻璃本体（liquid glass/磨砂 + 染色 + sheen + rim + hairline + 阴影），
+                // 此时应跳过自绘的半透明底色，否则会把玻璃染色与透镜折射全部盖住
+                glassSurface = HudBlur.INSTANCE.blurPanel(posX, posY, posX + width, posY + height, 12F);
             } else if (!augBlurSkipLogged) {
                 augBlurSkipLogged = true;
                 ClientUtils.INSTANCE.getLOGGER().warn("[AugustusClickGui] AugBlur 开关为关，模糊被跳过（如需模糊请在 ClickGUI 模块设置中开启 AugBlur）");
             }
-            // 原有背景与分隔线
-            drawRounded(posX, posY, width, height, 12F, new Color(25, 25, 25, 190).getRGB());
-            drawRect(posX, posY, width, 18F, new Color(34, 34, 34, 230).getRGB());
+            if (!glassSurface) {
+                // 原有背景与分隔线
+                drawRounded(posX, posY, width, height, 12F, new Color(25, 25, 25, 190).getRGB());
+                drawRect(posX, posY, width, 18F, new Color(34, 34, 34, 230).getRGB());
+            }
             drawTitle("CLICKGUI", posX + 6F, posY + 6F, new Color(220, 220, 220).getRGB());
             drawRect(posX + 90F, posY, 2F, height, new Color(34, 34, 34, 230).getRGB());
             drawRect(posX + 90F, posY + 40F, width - 90F, 2F, new Color(34, 34, 34, 230).getRGB());

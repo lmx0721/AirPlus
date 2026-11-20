@@ -46,12 +46,29 @@ object EventManager : CoroutineScope by CoroutineScope(SupervisorJob() + SharedS
      */
     private val registry = createEventMap { CopyOnWriteArrayList<EventHook<in Event>>() }
 
+    /**
+     * Per-listener index for O(1) targeted dispatch ([call] with a listener),
+     * avoids scanning the whole registry on hot paths like FakeLag packet replay.
+     */
+    private val listenerIndex =
+        IdentityHashMap<Listenable, MutableList<Pair<Class<out Event>, EventHook<in Event>>>>()
+
     init {
         TickScheduler
     }
 
-    fun <T : Event> unregisterEventHook(eventClass: Class<out T>, eventHook: EventHook<in T>): Boolean =
-        registry[eventClass]!!.remove(eventHook)
+    fun <T : Event> unregisterEventHook(eventClass: Class<out T>, eventHook: EventHook<in T>): Boolean {
+        val removed = registry[eventClass]!!.remove(eventHook)
+
+        listenerIndex[eventHook.owner]?.let { list ->
+            list.removeAll { it.second === eventHook }
+            if (list.isEmpty()) {
+                listenerIndex.remove(eventHook.owner)
+            }
+        }
+
+        return removed
+    }
 
     // Only called from main thread
     fun <T : Event> registerEventHook(eventClass: Class<out T>, eventHook: EventHook<T>): EventHook<T> {
@@ -68,6 +85,8 @@ object EventManager : CoroutineScope by CoroutineScope(SupervisorJob() + SharedS
         }
         container.add(insertIndex, eventHook)
 
+        listenerIndex.getOrPut(eventHook.owner) { ArrayList(2) }.add(eventClass to eventHook)
+
         return eventHook
     }
 
@@ -76,8 +95,15 @@ object EventManager : CoroutineScope by CoroutineScope(SupervisorJob() + SharedS
 
         val hooks = registry[eventClass]!!
 
-        hooks.forEach {
-            it.processEvent(event)
+        val cancellable = event as? CancellableEvent
+
+        for (hook in hooks) {
+            hook.processEvent(event)
+
+            // Once the event is cancelled, skip all remaining hooks
+            if (cancellable != null && cancellable.isCancelled) {
+                break
+            }
         }
 
         return event
@@ -88,9 +114,21 @@ object EventManager : CoroutineScope by CoroutineScope(SupervisorJob() + SharedS
 
         val hooks = registry[eventClass]!!
 
-        hooks.forEach {
-            if (it.owner === listener) {
-                it.processEvent(event)
+        // Fast path: look up only the hooks owned by this listener instead of scanning
+        // the entire (possibly 70+ entries) registry list for every targeted dispatch
+        val ownedHooks = listenerIndex[listener]
+
+        if (ownedHooks != null) {
+            for (hook in ownedHooks) {
+                if (hook.first === eventClass) {
+                    hook.second.processEvent(event)
+                }
+            }
+        } else {
+            for (hook in hooks) {
+                if (hook.owner === listener) {
+                    hook.processEvent(event)
+                }
             }
         }
 

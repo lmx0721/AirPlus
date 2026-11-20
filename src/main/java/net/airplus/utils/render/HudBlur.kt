@@ -5,6 +5,8 @@ import net.airplus.event.Render2DEvent
 import net.airplus.event.handler
 import net.airplus.features.module.modules.client.Client
 import net.airplus.features.module.modules.render.HUD
+import net.airplus.ui.glass.Draw
+import net.airplus.ui.glass.GlassBlur
 import net.airplus.utils.client.ClientUtils
 import net.airplus.utils.client.MinecraftInstance
 import net.airplus.utils.render.RenderUtils.RoundedCorners
@@ -19,21 +21,21 @@ import org.lwjgl.opengl.GL13
 import org.lwjgl.opengl.GL11.*
 
 /**
- * 统一的客户端模糊入口（全屏单次模糊 + 组件遮罩裁剪架构）。
+ * 统一的客户端模糊入口（全屏单次模糊 + 组件遮罩裁剪）。
  *
- * 逻辑：
- * 1. 同一帧内第一次调用 [blur] 时，按全局设置（[Client.blurMode] / [Client.blurStrength]）
- *    对整个屏幕（主 framebuffer）做一次全屏模糊，结果保存在离屏纹理中；同帧后续调用直接复用，
- *    因此每帧最多一次全屏模糊管线（N 个 HUD 组件零额外模糊 pass）。
- * 2. 每个需要模糊背景的组件按自己的 AABB/遮罩形状（EmbeddedStencil）从预模糊纹理上裁剪贴回，
- *    视觉效果与旧的逐区域模糊一致，但性能从「每个组件一次多 pass 模糊」降为「每帧一次」。
+ * 逻辑（按 [Client.blurMode] 分派）：同一帧内第一次调用 [blur] 时，按全局设置
+ * （[Client.blurMode] / [Client.blurStrength]）对整个屏幕（主 framebuffer）做一次全屏模糊，
+ * 结果保存在离屏纹理中；同帧后续调用直接复用，因此每帧最多一次全屏模糊管线
+ * （N 个 HUD 组件零额外模糊 pass）。每个需要模糊背景的组件按自己的 AABB/遮罩形状
+ * （EmbeddedStencil）从预模糊纹理上裁剪贴回，视觉效果与旧的逐区域模糊一致，
+ * 但性能从「每个组件一次多 pass 模糊」降为「每帧一次」。
  *
  * [blur] 的 x1/y1/x2/y2 为缩放 GUI 坐标系（ScaledResolution 空间）下的屏幕绝对坐标；
  * [mask] 在调用方当前 GL 矩阵下绘制模糊遮罩形状（可传局部坐标的圆角矩形等自定义形状），
  * 为 null 时按绝对坐标绘制圆角矩形（要求调用方当前矩阵为单位阵）；mask 是最后一个参数，
  * 便于调用方直接使用尾随 lambda 传遮罩。
  *
- * 模糊范围始终由 x1..y2（AABB）决定，形状由 [mask]（配合 stencil）决定。
+ * 模糊范围始终由 x1..y2（AABB）决定；形状由 [mask]（配合 stencil）决定。
  */
 object HudBlur : MinecraftInstance, Listenable {
 
@@ -235,25 +237,28 @@ object HudBlur : MinecraftInstance, Listenable {
             return
         }
 
+        // 关键修复：外层 stencil 作用域检测（提前到管线入口，blur 与面板模糊共用）。
+        // 调用方（Island / 歌词气泡等 EmbeddedStencil 使用者）常在自己的 erase(true)
+        // （GL_EQUAL）作用域内调用 blur —— 检测到活动的外层 GL_EQUAL 作用域时复用其
+        // 遮罩贴回：不清缓冲、不改 func/op、不关测试（Island 的模糊区域与外层岛体形状
+        // 一致，复用语义完全正确；自定义 mask 在该路径下被外层形状取代）。
+        val outerStencilActive = glIsEnabled(GL_STENCIL_TEST)
+        val outerStencilFunc = glGetInteger(GL11.GL_STENCIL_FUNC)
+        val reuseOuterMask = outerStencilActive && outerStencilFunc == GL11.GL_EQUAL
+
         // 全屏模糊（基准快照每帧只算一次；带 strengthScale 时以基准快照为源再模糊派生，
         // 源内容与标准强度完全一致，不会拍到前序组件已绘制/已贴入的内容）
         val effectiveStrength = (Client.blurStrength * strengthScale).coerceAtLeast(0.01F)
         if (!ensureFullScreenBlur(mode, effectiveStrength)) return
 
-        // 全屏模糊管线可能停在离屏 FBO（Kawase 链尾），切回主 framebuffer，
+        // 全屏模糊管线可能停在离屏 FBO，切回主 framebuffer，
         // 保证后续 EmbeddedStencil 形状与裁剪贴回都作用在主 framebuffer 上
         mc.framebuffer.bindFramebuffer(true)
 
-        // 关键修复：外层 stencil 作用域保护。调用方（Island / 歌词气泡等 EmbeddedStencil
-        // 使用者）常在自己的 erase(true)（GL_EQUAL）作用域内调用 blur —— 此前无条件走
-        // write() 会 glClear 整个 stencil 缓冲并重写遮罩（外层形状被抹掉），dispose() 又
-        // 会关闭外层还需要的 stencil 测试 → 只有管线真正执行的模式（Kawase）下外层
-        // 元素的背景/内容消失。检测到活动的外层 GL_EQUAL 作用域时直接复用其遮罩贴回：
-        // 不清缓冲、不改 func/op、不关测试（Island 的模糊区域与外层岛体形状一致，
-        // 复用语义完全正确；自定义 mask 在该路径下被外层形状取代）。
-        val outerStencilActive = glIsEnabled(GL_STENCIL_TEST)
-        val outerStencilFunc = glGetInteger(GL11.GL_STENCIL_FUNC)
-        val reuseOuterMask = outerStencilActive && outerStencilFunc == GL11.GL_EQUAL
+        // 关键修复：外层 stencil 作用域保护（reuseOuterMask 在玻璃路由前已检测，见上）。
+        // 检测到活动的外层 GL_EQUAL 作用域时直接复用其遮罩贴回：不清缓冲、不改 func/op、
+        // 不关测试（Island 的模糊区域与外层岛体形状一致，复用语义完全正确；自定义 mask
+        // 在该路径下被外层形状取代）。
 
         // 入口 scissor 硬化：stencil 清屏（EmbeddedStencil.write 内 glClear）与遮罩绘制
         // 定义了模糊区域本身，绝不能被调用方（或上游泄漏的）scissor 裁剪——清屏不完整
@@ -292,7 +297,7 @@ object HudBlur : MinecraftInstance, Listenable {
                     EmbeddedStencil.erase(true)
                 }
             }
-            drawClippedResult(left, top, right, bottom)
+            drawClippedResult(left, top, right, bottom, mode)
         } finally {
             // dispose 先行（裸写 colorMask ON 兜底异常路径），再按入口快照恢复，
             // 保证退出时 真实 == 缓存 == 进入前，不留持久失步
@@ -311,6 +316,77 @@ object HudBlur : MinecraftInstance, Listenable {
             if (entryScissorEnabled) glEnable(GL_SCISSOR_TEST)
             GLErrorProbe.drain("K-blurcall-out")
         }
+    }
+
+    // ===== ClickGui 面板独立模糊（不走全屏 blur + stencil 裁剪）=====
+
+    /** 全屏玻璃模糊强度（Client.blurStrength 1..50）映射到 GlassBlur 的 0..1 金字塔深度 */
+    private fun glassStrength(strength: Float): Float = (strength / 25F).coerceIn(0.02F, 1F)
+
+    /** 玻璃模糊的帧 key（与 session 同一 timer 去重源）：帧内首个面板调用拍一次 GlassBlur 金字塔 */
+    private var glassFrameKey = -1.0
+
+    /** 玻璃帧 key 对应的强度；同帧强度变化（strengthScale 动画）时仅更新 stageBlur */
+    private var glassFrameStrength = -1f
+
+    /**
+     * 面板模糊的帧内去重 + 预拍（blurPanel 使用）：
+     * 新渲染帧（timer frameKey 变化）时 GlassBlur.invalidate + Draw.stageBlur + 从当前
+     * framebuffer 预拍对应强度的金字塔（GlassBlur.texture 内部触发渲染），即 BetterMyau
+     * ClickGuiBase 的 prime 语义 —— 拍摄发生在本帧首个玻璃面板自绘阴影之前，面板阴影
+     * 不会烙进模糊里。同帧后续调用按帧 key + 强度复用缓存金字塔；强度不同（strengthScale
+     * 动画）时只更新 Draw.stageBlur，由 GlassBlur 的 part 金字塔按量化强度自行重拍，
+     * 不作废已缓存的 full 金字塔。
+     *
+     * @return false 表示 GlassBlur 不可用（着色器失败等），调用方走各自的兜底
+     */
+    private fun ensureGlassFrame(strength: Float): Boolean {
+        if (!GlassBlur.available()) return false
+        val timer = mc.timer
+        val frameKey = timer.elapsedTicks + timer.elapsedPartialTicks.toDouble()
+        if (frameKey != glassFrameKey) {
+            glassFrameKey = frameKey
+            glassFrameStrength = strength
+            GlassBlur.invalidate()
+            Draw.stageBlur(strength)
+            Draw.syncGuiScale()
+            return GlassBlur.texture(strength) > 0
+        }
+        if (strength != glassFrameStrength) {
+            glassFrameStrength = strength
+            Draw.stageBlur(strength)
+        }
+        return true
+    }
+
+    /**
+     * 单个面板的独立模糊（供 Augustus / Neverlose 等 ClickGui 使用）：
+     * 帧内第一块面板触发一次 [GlassBlur]（Dual Kawase 金字塔，半分辨率缓存，[ensureGlassFrame]
+     * 去重），之后每块面板用 glass shape 着色器在自己的圆角矩形内**原位采样**模糊纹理 ——
+     * 不写 stencil、不裁剪全屏快照，面板本身即在位模糊表面，坐标直接用调用方的 GUI 单位。
+     * 模糊不可用（着色器失败 / BlurMode = None）时返回 false，由调用方的背景绘制兜底。
+     *
+     * @return false 表示调用方需自绘面板底色（本函数只画了模糊层）
+     */
+    fun blurPanel(x1: Float, y1: Float, x2: Float, y2: Float, radius: Float = 12F): Boolean {
+        val mode = Client.blurMode
+        if (mode == "None") return false
+        val left = minOf(x1, x2)
+        val right = maxOf(x1, x2)
+        val top = minOf(y1, y2)
+        val bottom = maxOf(y1, y2)
+        val width = right - left
+        val height = bottom - top
+        if (width <= 0F || height <= 0F) return false
+
+        // 新渲染帧才重拍模糊：同一帧内的多块面板直接复用 GlassBlur 的缓存金字塔。
+        // 模糊强度映射到 GlassBlur 的金字塔深度（0..1），随全局 BlurStrength 滑条变化
+        if (!ensureGlassFrame(glassStrength(Client.blurStrength))) return false
+
+        if (!Draw.blurred(left, top, width, height, radius, 1F)) return false
+        // 解绑 shape 程序并还原 2D 状态，保证后续调用方的旧式 GL 绘制不受影响
+        Draw.flush()
+        return false
     }
 
     /** 释放 Dual 模式的离屏 GPU 资源（应在 GL 上下文销毁前调用）。 */
@@ -436,7 +512,7 @@ object HudBlur : MinecraftInstance, Listenable {
 
             // Dual = 两轮 H/V 分离高斯（per-round σ = radius/2，两轮净 σ ≈ radius/√2）。
             // 传 2×strength 使净模糊幅度与旧版 Dual（两轮 r/1.5 配 1.5× 采样偏移，净 σ=r）
-            // 一致 —— 此前直接把 strength 当 radius，同样强度下 Dual 明显弱于 Kawase，
+            // 一致 —— 此前直接把 strength 当 radius，同样强度下 Dual 明显偏弱，
             // 在本来就柔和的半透明材质上看起来像「没有模糊」
             "Dual" -> InternalBlurShader.blurFullScreen(strength * 2F, rounds = 2, sourceTexture = source)
 
@@ -595,7 +671,7 @@ object HudBlur : MinecraftInstance, Listenable {
      * 此刻正处于 EmbeddedStencil.erase(true)（GL_EQUAL）之后的 stencil 测试中，
      * 只有遮罩形状内的像素会写入。
      */
-    private fun drawClippedResult(x1: Float, y1: Float, x2: Float, y2: Float) {
+    private fun drawClippedResult(x1: Float, y1: Float, x2: Float, y2: Float, mode: String) {
         val texture = resultTexture
         if (texture <= 0) return
 
@@ -614,7 +690,7 @@ object HudBlur : MinecraftInstance, Listenable {
         scissorBox.clear()
         glGetInteger(GL_SCISSOR_BOX, scissorBox)
 
-        // 保存矩阵（glGetFloatv 方式，不占用矩阵栈，见 KawaseBlur 同款修复）：
+        // 保存矩阵（glGetFloatv 方式，不占用矩阵栈，与 InternalBlurShader 同款修复）：
         // 贴回必须使用自身正交矩阵，而不是调用方可能处于平移/缩放后的模型视图矩阵
         val prevMatrixMode = glGetInteger(GL11.GL_MATRIX_MODE)
         projMatrix.clear()
@@ -655,6 +731,7 @@ object HudBlur : MinecraftInstance, Listenable {
             glDisable(GL_ALPHA_TEST)
             glColor4f(1f, 1f, 1f, 1f)
 
+            // 贴回预模糊纹理
             glBindTexture(GL_TEXTURE_2D, texture)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP)

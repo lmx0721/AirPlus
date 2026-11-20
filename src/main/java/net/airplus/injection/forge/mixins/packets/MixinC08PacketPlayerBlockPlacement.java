@@ -9,6 +9,7 @@ import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
 import net.airplus.utils.rotation.Rotation;
 import net.airplus.utils.rotation.RotationUtils;
 import net.airplus.viaversion.vialoadingbase.ViaLoadingBase;
+import net.airplus.viaversion.viamcp.ViaMCP;
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.item.ItemStack;
@@ -69,7 +70,7 @@ public abstract class MixinC08PacketPlayerBlockPlacement {
         buf.writeByte(this.placedBlockDirection);
         buf.writeItemStackToBuffer(this.stack);
 
-        if (ViaLoadingBase.getInstance().getTargetVersion().getVersion() > ProtocolVersion.v1_8.getVersion()) {
+        if (ViaMCP.isReady() && ViaLoadingBase.getInstance().getTargetVersion().getVersion() > ProtocolVersion.v1_8.getVersion()) {
             float[] facing = packetFix$recalculateFacing();
 
             buf.writeByte((int) (facing[0] * 16.0F));

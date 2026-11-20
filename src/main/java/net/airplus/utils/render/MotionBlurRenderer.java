@@ -9,6 +9,7 @@ package net.airplus.utils.render;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.WorldClient;
+import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.OpenGlHelper;
 import net.minecraft.client.shader.Framebuffer;
 import org.apache.logging.log4j.LogManager;
@@ -446,13 +447,21 @@ public final class MotionBlurRenderer {
         int previousProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
         int previousFramebuffer = GL11.glGetInteger(GL_FRAMEBUFFER_BINDING);
         int previousUnit = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
+        // 记录 unit0..3 进入前的真实绑定（pass()/bindUnit() 用裸 GL 绑定，不经过守卫缓存）
+        GL13.glActiveTexture(GL13.GL_TEXTURE0);
+        int previousTex0 = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        GL13.glActiveTexture(GL13.GL_TEXTURE1);
+        int previousTex1 = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        GL13.glActiveTexture(GL13.GL_TEXTURE2);
+        int previousTex2 = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        GL13.glActiveTexture(GL13.GL_TEXTURE3);
+        int previousTex3 = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
         VIEWPORT.clear();
         GL11.glGetInteger(GL11.GL_VIEWPORT, VIEWPORT);
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
-        boolean rebuilt = false;
         try {
             GL13.glActiveTexture(GL13.GL_TEXTURE0);
-            rebuilt = ensureBuilt(main, width, height, tile);
+            ensureBuilt(main, width, height, tile);
 
             GL11.glDisable(GL11.GL_BLEND);
             GL11.glDisable(GL11.GL_DEPTH_TEST);
@@ -525,11 +534,23 @@ public final class MotionBlurRenderer {
             OpenGlHelper.glBindFramebuffer(OpenGlHelper.GL_FRAMEBUFFER, previousFramebuffer);
             GL11.glPopAttrib();
             GL11.glViewport(VIEWPORT.get(0), VIEWPORT.get(1), VIEWPORT.get(2), VIEWPORT.get(3));
+            // 重同步守卫缓存：裸 GL 绑定不经过 GlStateManager，缓存仍记着进入前的纹理。
+            // 若不修正，后续 GlStateManager.bindTexture 撞缓存值时被静默跳过，
+            // 字形 quad 继续采样模糊/深度纹理 —— 整屏文字变成方块。
+            // 两步法（先绑 0 推开缓存，再绑回进入前纹理）保证 真实 == 缓存 == 进入前。
+            resyncTextureCache(0, previousTex0);
+            resyncTextureCache(1, previousTex1);
+            resyncTextureCache(2, previousTex2);
+            resyncTextureCache(3, previousTex3);
             GL13.glActiveTexture(previousUnit);
-            // framebuffer 创建经由 OpenGlHelper/驱动侧，最后真实把 unit 0 绑定清回 0，
-            // 避免 vanilla 后续的图集重绑被错误状态吃掉（缓存失步防护惯例）。
-            if (rebuilt) GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
         }
+    }
+
+    /** 两步法重对齐纹理单元：先绑 0 把守卫缓存推开，再绑回进入前纹理，保证 真实 == 缓存 == 进入前。 */
+    private static void resyncTextureCache(int unit, int texture) {
+        GL13.glActiveTexture(GL13.GL_TEXTURE0 + unit);
+        GlStateManager.bindTexture(0);
+        GlStateManager.bindTexture(texture);
     }
 
     /**

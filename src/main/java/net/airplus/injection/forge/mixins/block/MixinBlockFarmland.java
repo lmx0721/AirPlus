@@ -7,6 +7,7 @@ package net.airplus.injection.forge.mixins.block;
 
 import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
 import net.airplus.viaversion.vialoadingbase.ViaLoadingBase;
+import net.airplus.viaversion.viamcp.ViaMCP;
 import net.minecraft.block.BlockFarmland;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.util.AxisAlignedBB;
@@ -29,7 +30,7 @@ public abstract class MixinBlockFarmland {
      */
     @Inject(method = "getCollisionBoundingBox", at = @At("HEAD"), cancellable = true)
     private void packetFix$getCollisionBoundingBox(World worldIn, BlockPos pos, IBlockState state, CallbackInfoReturnable<AxisAlignedBB> cir) {
-        if (ViaLoadingBase.getInstance().getTargetVersion().isNewerThanOrEqualTo(ProtocolVersion.v1_12_2)) {
+        if (ViaMCP.isReady() && ViaLoadingBase.getInstance().getTargetVersion().isNewerThanOrEqualTo(ProtocolVersion.v1_12_2)) {
             cir.setReturnValue(new AxisAlignedBB(pos.getX(), pos.getY(), pos.getZ(), pos.getX() + 1, pos.getY() + 0.9375, pos.getZ() + 1));
         }
     }

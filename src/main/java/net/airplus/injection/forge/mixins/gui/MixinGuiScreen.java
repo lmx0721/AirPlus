@@ -41,7 +41,7 @@ import static net.minecraft.client.renderer.GlStateManager.disableLighting;
 
 @Mixin(GuiScreen.class)
 @SideOnly(Side.CLIENT)
-public abstract class MixinGuiScreen {
+public abstract class MixinGuiScreen extends MixinGui {
     @Shadow
     public Minecraft mc;
 

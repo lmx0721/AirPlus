@@ -246,6 +246,10 @@ public abstract class MixinMinecraft implements IMinecraft {
 
     @Inject(method = "displayCrashReport", at = @At(value = "INVOKE", target = "Lnet/minecraftforge/fml/common/FMLCommonHandler;instance()Lnet/minecraftforge/fml/common/FMLCommonHandler;"))
     private void injectDisplayCrashReport(CrashReport crashReport, CallbackInfo callbackInfo) {
+        // Mark the client as crashed so the shutdown notification is skipped, then notify via the system tray
+        AirPlus.INSTANCE.setCrashed(true);
+        MiscUtils.showWindowsNotification(AirPlus.CLIENT_NAME,
+                "The client crashed due to " + crashReport.getCrashCause() + ", please check the log.");
         MiscUtils.showErrorPopup(crashReport.getCrashCause(), "Game crashed! ", MiscUtils.generateCrashInfo());
     }
 

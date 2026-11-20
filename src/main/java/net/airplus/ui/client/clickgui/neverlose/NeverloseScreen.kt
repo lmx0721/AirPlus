@@ -215,9 +215,13 @@ class NeverloseScreen : GuiScreen() {
         // Unified background color (single draw to avoid color stacking from overlapping draws)
         val bgColorUniform = colorWithAlpha(bgColor, opacity)
 
-        // Background blur (HudBlur，全局 Blur 设置统一控制类型/强度)
+        // Background blur (面板独立玻璃模糊：GlassBlur 原位采样，不走全屏 blur + stencil 裁剪；
+        // 类型/强度由 Client 模块的全局 Blur 设置统一控制)
+        // 玻璃系模式（Glass / FrostedLight / Midnight / Solid / Amoled / LiquidGlass）走 GlassTheme 全管线，
+        // 面板表面 = 玻璃本体，跳过自绘底色避免把染色与透镜折射盖住
+        var glassSurface = false
         if (ClickGUI.nlBlur) {
-            HudBlur.blur(
+            glassSurface = HudBlur.blurPanel(
                 posX.toFloat(), posY.toFloat(),
                 (posX + guiWidth).toFloat(), (posY + guiHeight).toFloat(),
                 12f
@@ -225,7 +229,9 @@ class NeverloseScreen : GuiScreen() {
         }
 
         // Single unified background draw (no double-drawing sidebar + main panel)
-        RoundedUtil.drawRound(posX.toFloat(), posY.toFloat(), guiWidth.toFloat(), guiHeight.toFloat(), 12f, bgColorUniform)
+        if (!glassSurface) {
+            RoundedUtil.drawRound(posX.toFloat(), posY.toFloat(), guiWidth.toFloat(), guiHeight.toFloat(), 12f, bgColorUniform)
+        }
 
         // Divider line between sidebar and main panel
         RenderUtils.drawRect(
@@ -891,10 +897,12 @@ class NeverloseScreen : GuiScreen() {
         GlStateManager.translate(offset, 0f, 0f)
         GlStateManager.color(1f, 1f, 1f, rightPanelAnim)
 
-        // Blur (HudBlur，全局 Blur 设置统一控制类型/强度)
+        // Blur (面板独立玻璃模糊：GlassBlur 原位采样，不走全屏 blur + stencil 裁剪)
+        // 玻璃系模式走 GlassTheme 全管线时面板表面 = 玻璃本体，跳过自绘底色
+        var glassSurface = false
         if (ClickGUI.nlBlur) {
             GlStateManager.pushMatrix()
-            HudBlur.blur(
+            glassSurface = HudBlur.blurPanel(
                 panelX.toFloat(), panelY.toFloat(),
                 (panelX + rightPanelWidth).toFloat(), (panelY + panelH).toFloat(),
                 12f
@@ -902,7 +910,9 @@ class NeverloseScreen : GuiScreen() {
             GlStateManager.popMatrix()
         }
 
-        RoundedUtil.drawRound(panelX.toFloat(), panelY.toFloat(), rightPanelWidth.toFloat(), panelH.toFloat(), 12f, colorWithAlpha(displayedBg, ClickGUI.nlBgOpacity))
+        if (!glassSurface) {
+            RoundedUtil.drawRound(panelX.toFloat(), panelY.toFloat(), rightPanelWidth.toFloat(), panelH.toFloat(), 12f, colorWithAlpha(displayedBg, ClickGUI.nlBgOpacity))
+        }
 
         // Header
         Fonts.font35.drawString("About AirClient", (panelX + 16).toFloat(), (panelY + 18).toFloat(), MUTED.rgb)

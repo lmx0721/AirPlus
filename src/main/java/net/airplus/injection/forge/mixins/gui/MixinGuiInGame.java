@@ -96,6 +96,52 @@ public abstract class MixinGuiInGame extends Gui {
         final HUD hud = HUD.INSTANCE;
         final RenderUtils render = RenderUtils.INSTANCE;
 
+        // BM (BetterMyau glass dock) replaces the vanilla hotbar while the HUD module is on and
+        // Hotbar-Style is "BM": cancel vanilla rendering and keep the 2D event alive — the dock
+        // itself is drawn in HUD's Render2DEvent handler. When the BM status capsule replaces
+        // the vanilla stats, hide them the same way DeltaForceStyle does (independent marker,
+        // so the restore above can never undo this frame's suppression).
+        if (hud.bmReplacesHotbar()) {
+            if (hud.getStatusBars()) {
+                net.minecraftforge.client.GuiIngameForge.renderHealth = false;
+                net.minecraftforge.client.GuiIngameForge.renderFood = false;
+                net.minecraftforge.client.GuiIngameForge.renderArmor = false;
+                net.minecraftforge.client.GuiIngameForge.renderAir = false;
+                net.minecraftforge.client.GuiIngameForge.renderExperiance = false;
+                net.minecraftforge.client.GuiIngameForge.renderHealthMount = false;
+                hud.markBmVanillaSuppressed();
+            } else {
+                hud.restoreBmVanillaFlags();
+            }
+            liquidBounce$injectRender2DEvent(delta);
+            ci.cancel();
+            return;
+        }
+
+        // BM inactive -> make sure the vanilla stats flags suppressed earlier are back on.
+        hud.restoreBmVanillaFlags();
+
+        // Rise inactive -> make sure the vanilla XP flag suppressed earlier is back on.
+        hud.restoreRiseVanillaFlags();
+
+        // Rise (Rise HotBar theme) replaces the vanilla hotbar while the HUD module is on and
+        // Hotbar-Style is "Rise": cancel vanilla rendering (the vanilla held-item name goes with
+        // it) and keep the 2D event alive, same as the BM branch above. The vanilla XP bar is
+        // hidden the same way the BM status capsule hides the stats — the Rise style draws its
+        // own rounded XP bar + level right above the bar, and hearts/food/armor/air stay vanilla.
+        // The bar body itself is drawn in HUD's Render2DEvent handler (HUD.onRender2D), the same
+        // phase as the BM dock, so its blur call shares the frame snapshot with other HUD parts.
+        if (hud.riseReplacesHotbar()) {
+            net.minecraftforge.client.GuiIngameForge.renderExperiance = false;
+            hud.markRiseVanillaSuppressed();
+            // Rise 热栏本体改在 HUD 的 Render2DEvent 处理器内绘制（见 HUD.onRender2D）：
+            // blur 必须与其它 HUD 组件同阶段调用，renderTooltip 阶段的贴回会被事件开头的
+            // 基准快照重拍时序吃掉，表现为热栏没有 blur。
+            liquidBounce$injectRender2DEvent(delta);
+            ci.cancel();
+            return;
+        }
+
         if (mc.getRenderViewEntity() instanceof EntityPlayer) {
             EntityPlayer entityPlayer = (EntityPlayer) mc.getRenderViewEntity();
             float slot = entityPlayer.inventory.currentItem;

@@ -506,7 +506,9 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     private val attackTimer = MSTimer()
     private var attackDelay = nextAttackDelay()
     private var clicks = 0
-    private var attackTickTimes = mutableListOf<Pair<MovingObjectPosition, Int>>()
+    // 只记录最近一次攻击（所有读取点都只取 lastOrNull），避免 50 CPS miss 场景下列表无界增长
+    private var lastAttackTickPos: MovingObjectPosition? = null
+    private var lastAttackTick = 0
 
     // Container Delay
     private var containerOpen = -1L
@@ -545,7 +547,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         options.noise3Context = null
         hittable = false
         prevTargetEntities.clear()
-        attackTickTimes.clear()
+        lastAttackTickPos = null
         attackTimer.reset()
         clicks = 0
         // 拟真堆叠点击生成器复位（连点惯性/疲劳状态不跨开关保留）
@@ -603,7 +605,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     }
 
     val onWorld = handler<WorldEvent> {
-        attackTickTimes.clear()
+        lastAttackTickPos = null
 
         if (blinkAutoBlock && BlinkUtils.isBlinking) BlinkUtils.unblink()
 
@@ -902,7 +904,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
                     }
 
                     val shouldEnterBlockBreakProgress =
-                        !shouldDelayClick(it.typeOfHit) || attackTickTimes.lastOrNull()?.first?.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK
+                        !shouldDelayClick(it.typeOfHit) || lastAttackTickPos?.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK
 
                     if (shouldEnterBlockBreakProgress) {
                         // Close inventory when open
@@ -921,7 +923,8 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
                     }
 
                     if (!shouldDelayClick(it.typeOfHit)) {
-                        attackTickTimes += it to runTimeTicks
+                        lastAttackTickPos = it
+                        lastAttackTick = runTimeTicks
 
                         if (it.typeOfHit.isEntity) {
                             val entity = it.entityHit
@@ -929,7 +932,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
                             // Use own function instead of clickMouse() to maintain keep sprint, auto block, etc
                             if (entity is EntityLivingBase && isSelected(entity, true)) {
                                 attackEntity(entity, isLastClick)
-                            } else attackTickTimes -= it to runTimeTicks
+                            } else lastAttackTickPos = null
                         } else {
                             // Imitate game click
                             mc.clickMouse()
@@ -1505,7 +1508,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         return toRotation(closest, false).fixedSensitivity()
     }
 
-    private fun ticksSinceClick() = runTimeTicks - (attackTickTimes.lastOrNull()?.second ?: 0)
+    private fun ticksSinceClick() = runTimeTicks - (if (lastAttackTickPos != null) lastAttackTick else 0)
 
     /**
      * Check if enemy is hittable with current rotations
@@ -1715,9 +1718,9 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             return false
         }
 
-        val lastAttack = attackTickTimes.lastOrNull()
+        val lastAttackPos = lastAttackTickPos ?: return false
 
-        return lastAttack != null && lastAttack.first.typeOfHit != currentType && runTimeTicks - lastAttack.second <= hitDelayTicks
+        return lastAttackPos.typeOfHit != currentType && runTimeTicks - lastAttackTick <= hitDelayTicks
     }
 
     private fun checkIfAimingAtBox(

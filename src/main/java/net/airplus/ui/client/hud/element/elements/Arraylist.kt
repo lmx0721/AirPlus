@@ -20,6 +20,10 @@ import net.airplus.ui.client.hud.element.Side.Horizontal
 import net.airplus.ui.client.hud.element.Side.Vertical
 import net.airplus.ui.font.AWTFontRenderer.Companion.assumeNonVolatile
 import net.airplus.ui.font.Fonts
+import net.airplus.ui.glass.Anim
+import net.airplus.ui.glass.Draw
+import net.airplus.ui.glass.GlState
+import net.airplus.ui.glass.SmoothFont
 import net.airplus.utils.client.ClientThemesUtils
 import net.airplus.utils.extensions.safeDiv
 import net.airplus.utils.render.*
@@ -51,13 +55,16 @@ class Arraylist(
     side: Side = Side(Horizontal.RIGHT, Vertical.UP),
 ) : Element("Arraylist", x, y, scale, side) {
 
-    private val style by choices("Style", arrayOf("LB", "Grouped", "Flow", "HotKey"), "LB")
+    private val style by choices("Style", arrayOf("LB", "Grouped", "Flow", "HotKey", "BM"), "LB")
 
     // Grouped / Flow / HotKey 卡片样式（移植自 MoonLight）的专属设置
     private val cardAlpha by float("Background-Alpha", 0.6F, 0F..1F) { style != "LB" }
     private val cardRadius by float("Corner-Radius", 6F, 0F..8F) { style != "LB" }
     private val cardBlur by boolean("Card-Blur", false) { style != "LB" }
     private val hotkeyHeader by boolean("HotKeys-Header", true) { style == "HotKey" }
+
+    // BM 样式（移植自 BetterMyau 模块列表）的专属设置：行染色浓度（对应 BetterMyau "background"，默认 25%）
+    private val bmBackground by float("BM-Background", 25F, 0F..100F) { style == "BM" }
 
     private val textColorMode by choices(
         "Text-Mode", arrayOf("Custom", "Fade", "Random", "Rainbow", "Gradient", "Theme"), "theme"
@@ -243,6 +250,7 @@ class Arraylist(
         "Grouped" -> drawGrouped()
         "Flow" -> drawFlow()
         "HotKey" -> drawHotKey()
+        "BM" -> drawBM()
         else -> drawLB()
     }
 
@@ -1215,6 +1223,151 @@ class Arraylist(
                 GlStateManager.popMatrix()
             }
 
+            resetColor()
+
+            result = when {
+                spanH > 0F -> cardBorder(maxSpanW, spanH)
+                mc.currentScreen is GuiHudDesigner -> emptyCardBorder()
+                else -> null
+            }
+        }
+        return result
+    }
+
+    // ===== BM 样式（移植自 BetterMyau 模块列表渲染） =====
+
+    /** 每行滑入/滑出动画（BetterMyau Anim.Smooth(0, 14)：模块开启行展开，关闭行收起后移除） */
+    private class BmRow(val module: Module) {
+        val show = Anim.Smooth(0F, 14F)
+        var name = ""
+        var tag = ""
+        var width = 0F
+    }
+
+    private val bmRows = LinkedHashMap<Module, BmRow>()
+
+    /**
+     * BetterMyau 模块列表：逐行圆角玻璃行 —— Draw.blurred 行背景模糊 + 0x0a0c10 染色 +
+     * 贴锚定边的 2px accent 发光条（BetterMyau showBar）+ SmoothFont.regular(9) 文本
+     * （模块名白 / 后缀 0xffaab0bc）。行按宽度降序排序（长行贴锚定边），外伸侧圆角
+     * 首行 5、其余随与次行的宽度差收窄（step ≤ 5）；行高 12、内边距 4，全部照搬源实现。
+     */
+    private fun drawBM(): Border? {
+        var result: Border? = null
+        assumeNonVolatile {
+            // BetterMyau HUD 同款玻璃 2D 状态；Draw 单位刻度 = guiScale × 元素缩放（像素/单位），
+            // 与元素自身的 scale/平移矩阵对齐 —— 抗锯齿宽度与 SmoothFont 光栅化精度随之正确
+            GlState.hudDefaults()
+            Draw.setScale(Draw.guiScaleFactor() * scale)
+
+            val bmFont = SmoothFont.regular(9f)
+            val listDt = Anim.dt()
+
+            // 每行动画推进：可见 → 展开，隐藏 → 收起（收起完成后移除，对齐 BetterMyau listShow）
+            for (module in moduleManager) {
+                if (isCardVisible(module) && !bmRows.containsKey(module)) {
+                    bmRows[module] = BmRow(module)
+                }
+            }
+            val shown = ArrayList<BmRow>(bmRows.size)
+            val rowIterator = bmRows.entries.iterator()
+            while (rowIterator.hasNext()) {
+                val row = rowIterator.next().value
+                val visible = isCardVisible(row.module)
+                row.show.update(visible, listDt)
+                if (!visible && row.show.value < 0.01F) {
+                    rowIterator.remove()
+                    continue
+                }
+                // 名称 / 后缀 / 行宽每帧算一次，排序与绘制共用（BetterMyau rowNames/rowWidths）
+                row.name = cardDisplayName(row.module)
+                row.tag = cardTagText(row.module)
+                var width = bmFont.width(row.name)
+                if (row.tag.isNotEmpty()) width += 3F + bmFont.width(row.tag)
+                row.width = width
+                shown.add(row)
+            }
+            // BetterMyau：行宽降序
+            shown.sortByDescending { it.width }
+
+            val rowH = 12F
+            val pad = 4F
+            val right = side.horizontal != Horizontal.LEFT
+            val bottom = side.vertical == Vertical.DOWN
+            val gap = 4F // BetterMyau showBar（accent 条）的锚定边让位
+            val tint = Draw.alpha(0x0A0C10, bmBackground / 100F)
+
+            var cursor = 0F
+            var spanH = 0F
+            var maxSpanW = 0F
+
+            for ((index, row) in shown.withIndex()) {
+                val show = row.show.value
+                val rowW = row.width + pad * 2F
+                val rowH2 = rowH * show
+                if (rowH2 <= 0F) continue
+
+                // 行从锚定边外滑入（BetterMyau slide = ±(1 - show) * 0.35 * rowW）
+                val slide = (if (right) 1F else -1F) * (1F - show) * 0.35F * rowW
+                val rowX = (if (right) -gap - rowW else gap) + slide
+                val rowY = if (bottom) cursor - rowH2 else cursor
+                cursor += if (bottom) -rowH2 else rowH2
+                spanH = if (bottom) -cursor else cursor
+                maxSpanW = maxOf(maxSpanW, rowW + gap)
+
+                // 行圆角：贴锚定边两角为 0，外伸侧首行 5、其余随与次行的宽度差收窄（BetterMyau 原样）
+                val nextW = if (index + 1 < shown.size) shown[index + 1].width + pad * 2F else 0F
+                val step = minOf(5F, maxOf(0F, rowW - nextW))
+                val first = if (index == 0) 5F else 0F
+                var tl = 0F
+                var tr = 0F
+                var br = 0F
+                var bl = 0F
+                if (right) {
+                    if (bottom) {
+                        tl = step; bl = first
+                    } else {
+                        bl = step; tl = first
+                    }
+                } else {
+                    if (bottom) {
+                        tr = step; br = first
+                    } else {
+                        br = step; tr = first
+                    }
+                }
+
+                Draw.pushAlpha(show)
+                try {
+                    // 行背景：圆角玻璃（模糊 + 0x0a0c10 染色），直接走 Draw.blurred，
+                    // 不依赖 Client.blurMode 全局设置（模糊不可用时 Draw 自行跳过）
+                    Draw.blurred(rowX, rowY, rowW, rowH2, tl, tr, br, bl, 1F)
+                    if (bmBackground > 0F) Draw.rect(rowX, rowY, rowW, rowH2, tl, tr, br, bl, tint)
+
+                    // accent 边条：贴锚定边 2px 发光条（BetterMyau showBar），颜色取主题逐行轮换
+                    val barX = if (right) -gap + 1F else gap - 3F
+                    val accent = ClientThemesUtils.getColor(index).rgb
+                    Draw.glow(barX, rowY, 2F, rowH2, 0F, 4F, Draw.alpha(accent, 0.45F))
+                    Draw.rect(barX, rowY, 2F, rowH2, 0F, accent)
+
+                    // 文本：模块名（白，复用 ModuleCase / InactiveModulesStyle / ShadowText）+
+                    // 后缀（复用 Tags 开关，色 0xffaab0bc）
+                    val textX = rowX + pad
+                    val textY = bmFont.centerY(rowY, rowH2) - 0.5F
+                    val markAsInactive = inactiveStyle == "Color" && !row.module.isActive
+                    val nameColor = if (markAsInactive) inactiveColor else Color.WHITE.rgb
+                    if (textShadow) bmFont.drawShadowed(row.name, textX, textY, nameColor)
+                    else bmFont.draw(row.name, textX, textY, nameColor)
+                    if (row.tag.isNotEmpty()) {
+                        bmFont.draw(row.tag, textX + bmFont.width(row.name).toFloat() + 3F, textY, 0xffaab0bc.toInt())
+                    }
+                } finally {
+                    Draw.popAlpha()
+                }
+            }
+
+            Draw.flush()
+            Draw.setScale(Draw.guiScaleFactor())
             resetColor()
 
             result = when {

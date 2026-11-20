@@ -136,8 +136,16 @@ object Nuker : Module("Nuker", Category.WORLD, gameDetecting = false) {
         val eyes = player.eyes
 
         if (!mc.playerController.isInCreativeMode) {
+            // 缓存每个方块的 center distance：过滤与 Distance 排序共用一份计算结果，
+            // 避免每 tick 对同一方块重复计算（半径 6 时约百次重复）
+            val centerDistances = HashMap<BlockPos, Double>()
+
             val validBlocks = searchBlocks(radius.roundToInt() + 1, null) { pos, block ->
-                if (getCenterDistance(pos) <= radius && validBlock(block)) {
+                val centerDistance = getCenterDistance(pos)
+
+                if (centerDistance <= radius && validBlock(block)) {
+                    centerDistances[pos] = centerDistance
+
                     if (!allBlocks && Block.getIdFromBlock(block) != blocks) {
                         return@searchBlocks false
                     }
@@ -157,7 +165,7 @@ object Nuker : Module("Nuker", Category.WORLD, gameDetecting = false) {
 
             val sortedBlocks = when (priority) {
                 "Distance" -> validBlocks.entries.sortedBy { (pos, _) ->
-                    val distance = getCenterDistance(pos)
+                    val distance = centerDistances[pos] ?: getCenterDistance(pos)
                     if (pos.x == safePos.x && safePos.y <= pos.y && pos.z == safePos.z) Double.MAX_VALUE - distance // Last block
                     else distance
                 }

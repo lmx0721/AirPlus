@@ -23,9 +23,13 @@ object Client : Module("Client", Category.CLIENT, canBeEnabled = false) {
 
     // ===== 全局 Blur 设置 =====
     // 客户端所有使用模糊的 UI（HUD 元素背景、ClickGUI、聊天栏、主题选择器、音乐界面、菜单等）
-    // 统一读取这里的模糊类型与强度；单帧只对整个屏幕做一次全屏模糊，
-    // 之后由 HudBlur 把预模糊纹理按各组件的遮罩形状裁剪贴回对应位置。
-    private val blurModeValue = choices("BlurMode", arrayOf("None", "Kawase", "Dual", "Better", "Rise"), "Better")
+    // 统一读取这里的模糊类型与强度；所有模式单帧只对整个屏幕做一次全屏模糊，之后由
+    // HudBlur 把预模糊纹理按各组件的遮罩形状裁剪贴回对应位置。
+    private val blurModeValue = choices(
+        "BlurMode",
+        arrayOf("None", "Kawase", "Dual", "Better", "Rise"),
+        "Better"
+    )
 
     // 模糊强度（int 滑条），internal 供个别风格 GUI 直接绑定
     internal val blurStrengthValue = int("BlurStrength", 10, 1..50)

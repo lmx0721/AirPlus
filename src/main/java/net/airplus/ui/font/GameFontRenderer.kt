@@ -47,7 +47,7 @@ fun FontRenderer.drawCenteredString(
 class GameFontRenderer(
     font: Font,
     /** 是否套用全局字体粗细；图标字体传 false。 */
-    styleable: Boolean = true
+    private val styleable: Boolean = true
 ) : FontRenderer(
     mc.gameSettings, ResourceLocation("textures/font/ascii.png"), mc.textureManager, false
 ) {
@@ -56,11 +56,38 @@ class GameFontRenderer(
 
     // 样式变体懒烘焙：绝大多数文字不含 §l/§o 样式码，启动时烘焙 bold/italic/boldItalic
     // 是纯浪费（每个字体 4 次字形贴图烘焙 → 1 次）。
-    private val boldFont: AWTFontRenderer by lazy { AWTFontRenderer(font.deriveFont(Font.BOLD), styleable = styleable) }
-    private val italicFont: AWTFontRenderer by lazy { AWTFontRenderer(font.deriveFont(Font.ITALIC), styleable = styleable) }
-    private val boldItalicFont: AWTFontRenderer by lazy {
-        AWTFontRenderer(font.deriveFont(Font.BOLD or Font.ITALIC), styleable = styleable)
-    }
+    // 用显式可空缓存替代 by lazy：dispose() 需要判断「是否已烘焙」，
+    // lazy 委托无法在不触发烘焙的前提下安全检查初始化状态。
+    private val boldFontVariant = font.deriveFont(Font.BOLD)
+    private val italicFontVariant = font.deriveFont(Font.ITALIC)
+    private val boldItalicFontVariant = font.deriveFont(Font.BOLD or Font.ITALIC)
+
+    @Volatile
+    private var boldFontCache: AWTFontRenderer? = null
+
+    @Volatile
+    private var italicFontCache: AWTFontRenderer? = null
+
+    @Volatile
+    private var boldItalicFontCache: AWTFontRenderer? = null
+
+    private val boldFont: AWTFontRenderer
+        get() = boldFontCache ?: synchronized(this) {
+            boldFontCache
+                ?: AWTFontRenderer(boldFontVariant, styleable = styleable).also { boldFontCache = it }
+        }
+
+    private val italicFont: AWTFontRenderer
+        get() = italicFontCache ?: synchronized(this) {
+            italicFontCache
+                ?: AWTFontRenderer(italicFontVariant, styleable = styleable).also { italicFontCache = it }
+        }
+
+    private val boldItalicFont: AWTFontRenderer
+        get() = boldItalicFontCache ?: synchronized(this) {
+            boldItalicFontCache
+                ?: AWTFontRenderer(boldItalicFontVariant, styleable = styleable).also { boldItalicFontCache = it }
+        }
 
     val fontHeight: Int
     val size: Int
@@ -79,6 +106,20 @@ class GameFontRenderer(
 
     init {
         fontHeight = height
+    }
+
+    /**
+     * 释放全部字形 atlas 的 GL 纹理（含已烘焙的 bold/italic 变体）。
+     * 重烘焙 / 移除字体后调用，防止旧 2048px atlas 泄漏显存（约 16MB/字体组）。
+     */
+    fun dispose() {
+        defaultFont.dispose()
+        boldFontCache?.dispose()
+        italicFontCache?.dispose()
+        boldItalicFontCache?.dispose()
+        boldFontCache = null
+        italicFontCache = null
+        boldItalicFontCache = null
     }
 
     /**

@@ -6,6 +6,7 @@
 package net.airplus.injection.forge.mixins.render;
 
 import net.airplus.features.module.modules.misc.NameProtect;
+import net.airplus.ui.glass.ContainerSkin;
 import net.airplus.utils.render.shader.shaders.GradientFontShader;
 import net.airplus.utils.render.shader.shaders.RainbowFontShader;
 import net.minecraft.client.gui.FontRenderer;
@@ -128,5 +129,12 @@ public class MixinFontRenderer {
             return null;
 
         return NameProtect.INSTANCE.handleTextMessage(string);
+    }
+
+    // CustomGui: labels drawn on the glass container skin would be dark grey (0x404040) on
+    // dark glass, so lighten them while a skinned container draws its foreground layer.
+    @ModifyVariable(method = "drawString(Ljava/lang/String;FFIZ)I", at = @At("HEAD"), ordinal = 0, argsOnly = true, require = 0)
+    private int airplus$containerLabel(int color) {
+        return ContainerSkin.recolor && (color & 0xffffff) == 0x404040 ? ContainerSkin.LABEL : color;
     }
 }

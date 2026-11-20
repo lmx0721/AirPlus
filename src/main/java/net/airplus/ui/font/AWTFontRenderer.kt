@@ -159,6 +159,9 @@ class AWTFontRenderer @JvmOverloads constructor(
         private var gcTicks = 0
 
         private val onRender2D = handler<Render2DEvent>(priority = Byte.MIN_VALUE) {
+            // 释放队列中待删除的旧字形 atlas（重烘焙/移除字体的 GL 纹理必须在渲染线程删除）
+            Fonts.flushPendingFontDisposes()
+
             // 全局字号/粗细变化：在渲染线程重烘焙核心字体并刷新回退字形缓存
             if (styleReloadPending) {
                 styleReloadPending = false
@@ -200,6 +203,8 @@ class AWTFontRenderer @JvmOverloads constructor(
     private var textureWidth: Int = 0
     private var textureHeight: Int = 0
     private var fontHeight: Int = -1
+    /** 烘焙字符范围上界（init 时从构造参数捕获，reinit 重建 atlas 用）。 */
+    private val bakedStop: Int = minOf(stopChar, 256)
 
     val height: Int
         get() = (fontHeight - 8) / 2
@@ -263,6 +268,9 @@ class AWTFontRenderer @JvmOverloads constructor(
     }
 
     fun drawString(text: String, x: Double, y: Double, color: Int) {
+        // 已 dispose 的残留引用（重烘焙后仍持有旧渲染器的调用方）：重建 atlas 而非
+        // 丢弃绘制。绑定 -1 纹理会污染 GL 状态 / 撞坏守卫缓存，直接返回则文字消失
+        if (textureID == -1) reinit()
         glPushMatrix()
         glScaled(0.25, 0.25, 0.25)
         glTranslated(x * 2.0, y * 2.0 - 2.0, 0.0)
@@ -430,7 +438,9 @@ class AWTFontRenderer @JvmOverloads constructor(
             g2d.dispose()
 
             val texId = TextureUtil.glGenTextures()
-            GlStateManager.bindTexture(texId)
+            // 两步法绑定：clearFallbackCache 删除过的纹理 id 可能被 glGenTextures 复用，
+            // 单步受保护绑定在缓存值撞车时会被跳过 → 上传落在错误纹理上 → 动态字形变方块。
+            forceBindTexture(texId)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
@@ -482,7 +492,30 @@ class AWTFontRenderer @JvmOverloads constructor(
         }
         dynamicCharTextures.values.forEach { glDeleteTextures(it) }
         dynamicCharTextures.clear()
+        // 全部派生状态一并失效：重烘焙（reinit）需要干净的起点，
+        // 否则残留的 charLocations / 显示列表 / 宽度缓存会指向已删除的旧 atlas
+        cachedStringFonts.values.forEach { glDeleteLists(it.displayList, 1) }
+        cachedStringFonts.clear()
+        cachedStringWidths.clear()
+        charLocations.clear()
+        fontHeight = -1
+        textureWidth = 0
+        textureHeight = 0
         activeFontRenderers.remove(this)
+    }
+
+    /**
+     * 自愈重烘焙：被 dispose 的渲染器若仍被残留引用（FontValue 缓存、GUI 面板字段等）
+     * 持有并再次绘制，重建 atlas 而不是丢弃文本。必须在渲染线程调用（drawString 即是）。
+     */
+    private fun reinit() {
+        textureWidth = 0
+        textureHeight = 0
+        fontHeight = -1
+        renderBitmap(0, bakedStop)
+        if (this !in activeFontRenderers) {
+            activeFontRenderers += this
+        }
     }
 
     protected fun finalize() {
@@ -607,7 +640,11 @@ class AWTFontRenderer @JvmOverloads constructor(
         }
 
         textureID = TextureUtil.glGenTextures()
-        GlStateManager.bindTexture(textureID)
+        // 两步法绑定：dispose 延迟释放队列删除的纹理 id 会被驱动回收复用，
+        // 单步守卫绑定在缓存值撞车时被静默跳过 → uploadTextureImageAllocate 把整个
+        // 2048px 字形图写进当前真实绑定的无关纹理（模糊金字塔/其他 atlas），而本
+        // atlas 从未初始化 → 该字体所有文字变方块。理由同 renderDynamicChar。
+        forceBindTexture(textureID)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)

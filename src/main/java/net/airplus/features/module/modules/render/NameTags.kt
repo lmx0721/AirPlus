@@ -460,15 +460,17 @@ object NameTags : Module("NameTags", Category.RENDER) {
         xinxinEntityPosition.clear()
         xinxinItemPosition.clear()
 
-        val world = mc.theWorld ?: return@handler
-
-        for (entity in world.loadedEntityList) {
-            if (xinxinShouldRender(entity) && ESPUtil.isInView(entity)) {
+        for (entity in xinxinEntityLookup) {
+            if (ESPUtil.isInView(entity)) {
                 xinxinEntityPosition[entity] = ESPUtil.getEntityPositionsOn2D(entity)
             }
+        }
 
-            if (xinxinItems && xinxinShouldRenderItem(entity) && ESPUtil.isInView(entity)) {
-                xinxinItemPosition[entity as EntityItem] = ESPUtil.getEntityPositionsOn2D(entity)
+        if (xinxinItems) {
+            for (item in xinxinItemLookup) {
+                if (ESPUtil.isInView(item)) {
+                    xinxinItemPosition[item] = ESPUtil.getEntityPositionsOn2D(item)
+                }
             }
         }
     }
@@ -651,6 +653,15 @@ object NameTags : Module("NameTags", Category.RENDER) {
     private fun xinxinShouldRenderItem(entity: Entity): Boolean =
         entity is EntityItem && !entity.isDead
 
+    /** 实体缓存：UpdateEvent 每 tick 过滤一次，替代每帧全量遍历 loadedEntityList */
+    private val xinxinEntityLookup by EntityLookup<EntityLivingBase>(1) { entity ->
+        xinxinShouldRender(entity)
+    }
+
+    private val xinxinItemLookup by EntityLookup<EntityItem>(1) { entity ->
+        xinxinShouldRenderItem(entity)
+    }
+
     private fun xinxinIsTargetItem(stack: ItemStack?): Boolean =
         stack != null && (
             stack.item == Items.golden_apple ||
@@ -722,16 +733,18 @@ object NameTags : Module("NameTags", Category.RENDER) {
     /** 当前正在绘制的名牌（供 paintCapsule 计算背景模糊的屏幕 AABB）。 */
     private var opaiCurrentTag: OpaiProjected? = null
 
+    /** 实体缓存：UpdateEvent 每 tick 过滤一次（存活实体），渲染帧循环不再全量遍历 loadedEntityList */
+    private val opaiEntityLookup by EntityLookup<Entity>(1) { entity -> !entity.isDead }
+
     private val opaiRender3D = handler<Render3DEvent> {
         if (mode != "Opai") return@handler
         opaiProjected.clear()
 
-        val world = mc.theWorld ?: return@handler
         val self = mc.thePlayer ?: return@handler
         val sr = ScaledResolution(mc)
 
-        for (entity in world.loadedEntityList) {
-            if (entity == self || entity.isDead) continue
+        for (entity in opaiEntityLookup) {
+            if (entity == self) continue
 
             val view = opaiView(entity) ?: continue
 
@@ -1051,12 +1064,14 @@ object NameTags : Module("NameTags", Category.RENDER) {
         return entity is EntityLivingBase && moonMobs
     }
 
+    /** 实体缓存：UpdateEvent 每 tick 过滤一次，替代每帧全量遍历 loadedEntityList */
+    private val moonEntityLookup by EntityLookup<EntityLivingBase>(1) { entity ->
+        !entity.isDead && moonApplies(entity)
+    }
+
     private val moonRender3D = handler<Render3DEvent> {
         if (mode != "Moon") return@handler
-        val world = mc.theWorld ?: return@handler
-        for (entity in world.loadedEntityList) {
-            if (entity !is EntityLivingBase || entity.isDead) continue
-            if (!moonApplies(entity)) continue
+        for (entity in moonEntityLookup) {
             moonRenderNameTag(entity)
         }
     }

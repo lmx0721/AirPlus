@@ -325,7 +325,7 @@ object RenderUtils : MinecraftInstance {
         val renderY = manager.viewerPosY
         val renderZ = manager.viewerPosZ
 
-        glPushAttrib(GL_ALL_ATTRIB_BITS)
+        glPushAttrib(GL_ENABLE_BIT or GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT or GL_CURRENT_BIT or GL_LINE_BIT or GL_LIGHTING_BIT or GL_TEXTURE_BIT)
         glPushMatrix()
 
         glDisable(GL_TEXTURE_2D)
@@ -412,7 +412,7 @@ object RenderUtils : MinecraftInstance {
         val renderY = manager.viewerPosY
         val renderZ = manager.viewerPosZ
 
-        glPushAttrib(GL_ALL_ATTRIB_BITS)
+        glPushAttrib(GL_ENABLE_BIT or GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT or GL_CURRENT_BIT or GL_LINE_BIT or GL_LIGHTING_BIT or GL_TEXTURE_BIT)
         glPushMatrix()
 
         glDisable(GL_TEXTURE_2D)
@@ -479,7 +479,7 @@ object RenderUtils : MinecraftInstance {
         val vStep = Math.PI / (CIRCLE_STEPS / 2)
         val hStep = 2 * Math.PI / CIRCLE_STEPS
 
-        glPushAttrib(GL_ALL_ATTRIB_BITS)
+        glPushAttrib(GL_ENABLE_BIT or GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT or GL_CURRENT_BIT or GL_LINE_BIT or GL_LIGHTING_BIT or GL_TEXTURE_BIT)
         glPushMatrix()
 
         glDisable(GL_TEXTURE_2D)
@@ -1671,8 +1671,14 @@ object RenderUtils : MinecraftInstance {
 
         val textureID = glGenTextures()
 
-        glPushAttrib(GL_ALL_ATTRIB_BITS)
+        glPushAttrib(GL_ENABLE_BIT or GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT or GL_CURRENT_BIT or GL_LINE_BIT or GL_LIGHTING_BIT or GL_TEXTURE_BIT)
         glPushMatrix()
+
+        // 裸 glBindTexture 不经过 GlStateManager 缓存；上传后必须把缓存同步回真实绑定，
+        // 否则后续受保护的字形页绑定（原版 FontRenderer / SmoothFont）会因“缓存值撞车”
+        // 被跳过 → 字形四边形采样错误纹理 → 文字变方块。两步法恢复进站前的绑定
+        // （GL_TEXTURE_BINDING_2D = 0x8069，GL 1.1 core，与 HudBlur 一致避免常量归属问题）。
+        val previousTexture0 = glGetInteger(0x8069)
 
         glBindTexture(GL_TEXTURE_2D, textureID)
 
@@ -1686,11 +1692,14 @@ object RenderUtils : MinecraftInstance {
         glPopMatrix()
         glPopAttrib()
 
+        GlStateManager.bindTexture(0)
+        GlStateManager.bindTexture(previousTexture0)
+
         return textureID
     }
 
     fun drawTexture(textureID: Int, x: Int, y: Int, width: Int, height: Int) {
-        glPushAttrib(GL_ALL_ATTRIB_BITS)
+        glPushAttrib(GL_ENABLE_BIT or GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT or GL_CURRENT_BIT or GL_LINE_BIT or GL_LIGHTING_BIT or GL_TEXTURE_BIT)
         glPushMatrix()
 
         glEnable(GL_TEXTURE_2D)
@@ -1699,6 +1708,8 @@ object RenderUtils : MinecraftInstance {
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glEnable(GL_ALPHA_TEST)
         glAlphaFunc(GL_GREATER, 0f)
+
+        val previousTexture0 = glGetInteger(0x8069)
 
         glBindTexture(GL_TEXTURE_2D, textureID)
 
@@ -1718,6 +1729,9 @@ object RenderUtils : MinecraftInstance {
 
         glPopMatrix()
         glPopAttrib()
+
+        GlStateManager.bindTexture(0)
+        GlStateManager.bindTexture(previousTexture0)
     }
 
     fun drawGlassmorphism(

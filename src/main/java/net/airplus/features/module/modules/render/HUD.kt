@@ -13,41 +13,64 @@ import net.airplus.features.module.Module
 import net.airplus.ui.client.hud.designer.GuiHudDesigner
 import net.airplus.ui.font.Fonts
 import net.airplus.ui.client.hud.element.Element.Companion.MAX_GRADIENT_COLORS
+import net.airplus.ui.glass.BmDock
 import net.airplus.utils.render.ColorSettingsFloat
 import net.airplus.utils.render.ColorSettingsInteger
 import net.airplus.utils.render.HudBlur
+import net.airplus.utils.render.RiseHotbar
 import net.minecraft.client.gui.GuiChat
+import net.minecraft.client.gui.ScaledResolution
+import net.minecraft.entity.player.EntityPlayer
 import net.minecraft.util.ResourceLocation
+import net.minecraftforge.client.GuiIngameForge
 
 object HUD : Module("HUD", Category.RENDER, gameDetecting = false, defaultState = true, defaultHidden = true) {
     val customHotbar by boolean("CustomHotbar", true)
 
-    val smoothHotbarSlot by boolean("SmoothHotbarSlot", true) { customHotbar }
+    // Hotbar 风格：LB = AirPlus 自绘圆角热栏；BM = BetterMyau 玻璃悬浮 dock 移植；Rise = Rise HotBar 主题移植
+    val hotbarStyle by choices("Hotbar-Style", arrayOf("LB", "BM", "Rise"), "LB") { customHotbar }
 
-    val roundedHotbarRadius by float("RoundedHotbar-Radius", 3F, 0F..5F) { customHotbar }
+    val smoothHotbarSlot by boolean("SmoothHotbarSlot", true) { customHotbar && hotbarStyle == "LB" }
 
-    val hotbarMode by choices("Hotbar-Color", arrayOf("Custom", "Rainbow", "Gradient"), "Custom") { customHotbar }
+    val roundedHotbarRadius by float("RoundedHotbar-Radius", 3F, 0F..5F) { customHotbar && hotbarStyle == "LB" }
+
+    val hotbarMode by choices("Hotbar-Color", arrayOf("Custom", "Rainbow", "Gradient"), "Custom") { customHotbar && hotbarStyle == "LB" }
     val hbHighlightColors = ColorSettingsInteger(this, "Hotbar-Highlight-Colors", applyMax = true)
-    { customHotbar }.with(a = 0)
+    { customHotbar && hotbarStyle == "LB" }.with(a = 0)
     val hbBackgroundColors = ColorSettingsInteger(this, "Hotbar-Background-Colors")
-    { customHotbar && hotbarMode == "Custom" }.with(a = 190)
+    { customHotbar && hotbarStyle == "LB" && hotbarMode == "Custom" }.with(a = 190)
     val gradientHotbarSpeed by float("Hotbar-Gradient-Speed", 1f, 0.5f..10f)
-    { customHotbar && hotbarMode == "Gradient" }
+    { customHotbar && hotbarStyle == "LB" && hotbarMode == "Gradient" }
     val maxHotbarGradientColors by int("Max-Hotbar-Gradient-Colors", 4, 1..MAX_GRADIENT_COLORS)
-    { customHotbar && hotbarMode == "Gradient" }
+    { customHotbar && hotbarStyle == "LB" && hotbarMode == "Gradient" }
     val bgGradColors = ColorSettingsFloat.create(this, "Hotbar-Gradient")
-    { customHotbar && hotbarMode == "Gradient" && it <= maxHotbarGradientColors }
-    val hbHighlightBorder by float("HotbarBorder-Highlight-Width", 2F, 0.5F..5F) { customHotbar }
+    { customHotbar && hotbarStyle == "LB" && hotbarMode == "Gradient" && it <= maxHotbarGradientColors }
+    val hbHighlightBorder by float("HotbarBorder-Highlight-Width", 2F, 0.5F..5F) { customHotbar && hotbarStyle == "LB" }
     val hbHighlightBorderColors = ColorSettingsInteger(this, "HotbarBorder-Highlight-Colors")
-    { customHotbar }.with(a = 255, g = 111, b = 255)
-    val hbBackgroundBorder by float("HotbarBorder-Background-Width", 0.5F, 0.5F..5F) { customHotbar }
+    { customHotbar && hotbarStyle == "LB" }.with(a = 255, g = 111, b = 255)
+    val hbBackgroundBorder by float("HotbarBorder-Background-Width", 0.5F, 0.5F..5F) { customHotbar && hotbarStyle == "LB" }
     val hbBackgroundBorderColors = ColorSettingsInteger(this, "HotbarBorder-Background-Colors")
-    { customHotbar }.with(a = 0)
+    { customHotbar && hotbarStyle == "LB" }.with(a = 0)
 
-    val rainbowX by float("Rainbow-X", -1000F, -2000F..2000F) { customHotbar && hotbarMode == "Rainbow" }
-    val rainbowY by float("Rainbow-Y", -1000F, -2000F..2000F) { customHotbar && hotbarMode == "Rainbow" }
-    val gradientX by float("Gradient-X", -1000F, -2000F..2000F) { customHotbar && hotbarMode == "Gradient" }
-    val gradientY by float("Gradient-Y", -1000F, -2000F..2000F) { customHotbar && hotbarMode == "Gradient" }
+    val rainbowX by float("Rainbow-X", -1000F, -2000F..2000F) { customHotbar && hotbarStyle == "LB" && hotbarMode == "Rainbow" }
+    val rainbowY by float("Rainbow-Y", -1000F, -2000F..2000F) { customHotbar && hotbarStyle == "LB" && hotbarMode == "Rainbow" }
+    val gradientX by float("Gradient-X", -1000F, -2000F..2000F) { customHotbar && hotbarStyle == "LB" && hotbarMode == "Gradient" }
+    val gradientY by float("Gradient-Y", -1000F, -2000F..2000F) { customHotbar && hotbarStyle == "LB" && hotbarMode == "Gradient" }
+
+    // BM 热栏（BetterMyau 玻璃 dock 移植）
+    val statusBars by boolean("Status-Bars", true) { customHotbar && hotbarStyle == "BM" }
+    val healthNumbers by boolean("Health-Numbers", true) { customHotbar && hotbarStyle == "BM" && statusBars }
+    val itemName by boolean("Item-Name", true) { customHotbar && hotbarStyle == "BM" }
+    val magnify by boolean("Magnify", true) { customHotbar && hotbarStyle == "BM" }
+    val bmScale by int("BM-Scale", 100, 80..130) { customHotbar && hotbarStyle == "BM" }
+    val bmOffsetY by int("BM-Offset-Y", 4, 0..20) { customHotbar && hotbarStyle == "BM" }
+
+    // Rise 热栏（Rise HotBar 主题移植）：悬浮圆角深色条 + 顶部 XP 进度条与等级数字
+    val riseShowXPBar by boolean("Rise-Show-XP-Bar", true) { customHotbar && hotbarStyle == "Rise" }
+    val riseRadius by float("Rise-Radius", 9F, 0F..10F) { customHotbar && hotbarStyle == "Rise" }
+    val riseBackgroundAlpha by float("Rise-Background-Alpha", 110F, 0F..255F) { customHotbar && hotbarStyle == "Rise" }
+    val riseAccentColors = ColorSettingsInteger(this, "Rise-Accent-Colors", applyMax = true)
+    { customHotbar && hotbarStyle == "Rise" }.with(a = 255)
 
     val inventoryParticle by boolean("InventoryParticle", false)
     private val blur by boolean("Blur", false)
@@ -86,7 +109,30 @@ object HUD : Module("HUD", Category.RENDER, gameDetecting = false, defaultState 
         if (mc.currentScreen is GuiHudDesigner)
             return@handler
 
+        // Rise（Rise HotBar 主题）：原版热栏已在 MixinGuiInGame 中取消，这里在 2D 事件内绘制本体。
+        // 此前在 renderTooltip 阶段（Render2DEvent 派发之前）绘制 —— 那是全项目唯一发生在
+        // 2D 事件派发外的 blur 调用点：HudBlur 的基准快照在事件派发开头重拍，Rise 热栏先贴回的
+        // 模糊会随后被「已含 HUD 内容」的重拍/快照时序吃掉，表现为热栏没有 blur。
+        // 移到事件内后与其它 HUD 组件共享同一帧模糊快照（与 BM dock 同阶段）。
+        if (riseReplacesHotbar() && mc.renderViewEntity is EntityPlayer) {
+            RiseHotbar.render(ScaledResolution(mc), mc.renderViewEntity as EntityPlayer, it.partialTicks, riseSettings)
+        }
+
         hud.render(false)
+
+        // BM（BetterMyau 玻璃 dock）：原版热栏已在 MixinGuiInGame 中取消，这里绘制 dock 本体
+        if (bmReplacesHotbar())
+            BmDock.render(bmSettings, mc.renderViewEntity as EntityPlayer, it.partialTicks)
+    }
+
+    // BM dock：用户手动切槽（数字键/滚轮）时在下一次槽位变化时播放音效。
+    // ClientSlotChangeEvent 每次控制器同步都会触发，因此对比真实背包槽位判断是否为本地变更。
+    private var lastSupposedSlot = -1
+    val onSlotChange = handler<ClientSlotChangeEvent> { event ->
+        if (event.supposedSlot != lastSupposedSlot) {
+            lastSupposedSlot = event.supposedSlot
+            if (bmReplacesHotbar()) BmDock.userSwap()
+        }
     }
 
     val onUpdate = handler<UpdateEvent> {
@@ -111,4 +157,83 @@ object HUD : Module("HUD", Category.RENDER, gameDetecting = false, defaultState 
     fun shouldModifyChatFont() = handleEvents() && fontChat
 
     fun shouldRenderCustomChat() = handleEvents() && chatCustom
+
+    /**
+     * BM dock 是否接管热栏绘制（BetterMyau Hotbar.active() 的等价条件）：
+     * HUD 开启 + CustomHotbar + Hotbar-Style 为 BM，且当前渲染实体为非旁观者玩家。
+     */
+    fun bmReplacesHotbar(): Boolean =
+        handleEvents() && customHotbar && hotbarStyle == "BM" &&
+            mc.thePlayer != null && mc.playerController != null &&
+            !mc.playerController.isSpectator && mc.renderViewEntity is EntityPlayer
+
+    /**
+     * Rise 热栏是否接管热栏绘制（Rise HotBar 主题）：HUD 开启 + CustomHotbar + Hotbar-Style 为 Rise，
+     * 且当前渲染实体为非旁观者玩家。接管时原版经验条被压制（Rise 自绘 XP 进度条与其重叠），
+     * 血量/护甲/饥饿等状态条保持原版。
+     */
+    fun riseReplacesHotbar(): Boolean =
+        handleEvents() && customHotbar && hotbarStyle == "Rise" &&
+            mc.thePlayer != null && mc.playerController != null &&
+            !mc.playerController.isSpectator && mc.renderViewEntity is EntityPlayer
+
+    // BM dock 压制原版状态条标记（与 DeltaForceStyle 同机制，二者互相独立）
+    @Volatile
+    private var bmVanillaSuppressed = false
+
+    fun markBmVanillaSuppressed() {
+        bmVanillaSuppressed = true
+    }
+
+    fun restoreBmVanillaFlags() {
+        if (!bmVanillaSuppressed) return
+        bmVanillaSuppressed = false
+        try {
+            GuiIngameForge.renderHealth = true
+            GuiIngameForge.renderFood = true
+            GuiIngameForge.renderArmor = true
+            GuiIngameForge.renderAir = true
+            GuiIngameForge.renderExperiance = true
+            GuiIngameForge.renderHealthMount = true
+        } catch (_: Throwable) {
+            // 类未加载等极端情况忽略
+        }
+    }
+
+    // BM dock 设置桥（HUD 的 BM 属性 -> BmDock.Settings）
+    private val bmSettings = object : BmDock.Settings {
+        override fun statusBars() = this@HUD.statusBars
+        override fun healthNumbers() = this@HUD.healthNumbers
+        override fun itemName() = this@HUD.itemName
+        override fun magnify() = this@HUD.magnify
+        override fun scalePercent() = bmScale
+        override fun offsetY() = bmOffsetY
+    }
+
+    // Rise 热栏压制原版经验条标记（原版 XP 条与 Rise 自绘 XP 条位置重叠，血量等其余状态条保持原版；
+    // 与 BM 的压制标记相互独立，互不干扰恢复）
+    @Volatile
+    private var riseVanillaSuppressed = false
+
+    fun markRiseVanillaSuppressed() {
+        riseVanillaSuppressed = true
+    }
+
+    fun restoreRiseVanillaFlags() {
+        if (!riseVanillaSuppressed) return
+        riseVanillaSuppressed = false
+        try {
+            GuiIngameForge.renderExperiance = true
+        } catch (_: Throwable) {
+            // 类未加载等极端情况忽略
+        }
+    }
+
+    // Rise 热栏设置桥（HUD 的 Rise 属性 -> RiseHotbar.Settings），供 MixinGuiInGame 传入
+    val riseSettings = object : RiseHotbar.Settings {
+        override fun showXPBar() = this@HUD.riseShowXPBar
+        override fun radius() = riseRadius
+        override fun backgroundAlpha() = riseBackgroundAlpha.toInt()
+        override fun accentColor() = riseAccentColors.color().rgb
+    }
 }

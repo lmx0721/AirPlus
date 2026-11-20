@@ -5,7 +5,6 @@
  */
 package net.airplus.utils.client
 
-import kotlinx.coroutines.Dispatchers
 import net.airplus.event.*
 import net.airplus.features.module.modules.combat.FakeLag
 import net.airplus.features.module.modules.combat.Velocity
@@ -56,7 +55,7 @@ object PacketUtils : MinecraftInstance, Listenable {
         }
     }
 
-    val onPacket = handler<PacketEvent>(dispatcher = Dispatchers.Main, priority = 2) { event ->
+    val onPacket = handler<PacketEvent>(priority = 2) { event ->
         val world = mc.theWorld ?: return@handler
 
         when (val packet = event.packet) {

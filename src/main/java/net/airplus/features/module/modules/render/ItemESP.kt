@@ -113,6 +113,9 @@ object ItemESP : Module("ItemESP", Category.RENDER) {
         .filter { !onLook || isLookingOnEntities(it, maxAngleDifference.toDouble()) }
         .filter { thruBlocks || isEntityHeightVisible(it) }
 
+    /** Moon 模式的未过滤物品缓存：每 tick 刷新，替代每帧全量遍历 loadedEntityList */
+    private val moonItemEntities by EntityLookup<EntityItem>()
+
     val onRender3D = handler<Render3DEvent> {
         if (mc.theWorld == null || mc.thePlayer == null)
             return@handler
@@ -263,8 +266,7 @@ object ItemESP : Module("ItemESP", Category.RENDER) {
         val viewerZ = renderManager.viewerPosZ
         val filterAll = moonItems == "All"
 
-        for (entityObj in world.loadedEntityList) {
-            val entity = entityObj as? EntityItem ?: continue
+        for (entity in moonItemEntities) {
             if (entity.isDead) continue
             val stack = entity.entityItem ?: continue
             if (!filterAll && !isMoonUseful(stack)) continue

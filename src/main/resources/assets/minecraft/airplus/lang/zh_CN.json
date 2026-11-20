@@ -87,6 +87,8 @@
 
         "module.criticals.description": "攻击生物时自动暴击。",
 
+        "module.customGui.description": "更美观的界面",
+
         "module.customSkin.description": "自定义玩家皮肤",
 
         "module.modelChanger.description": "修改玩家渲染模型",
@@ -453,7 +455,7 @@
         "module.localNPC.description": "让你的世界生机勃勃!",
         "module.execution.description": "击杀目标后播放第一人称处决动画",
         "module.moreBends.description": "让模型的肢体动作更生动",
-        "module.motionBlur.description": "基于深度重投影的逐像素运动模糊（BetterMyau 迁移）：只模糊世界，手部/ESP/HUD 保持清晰，模糊量与帧率无关",
+        "module.motionBlur.description": "运动模糊",
         "module.notifier.description": "提示你大部分信息",
         "module.rawInput.description": "鼠标输入修复",
         "module.sound.description": "自定义客户端音效。",

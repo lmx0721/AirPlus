@@ -97,6 +97,10 @@ object AirPlus {
 
     var isStarting = true
 
+    // 客户端是否已崩溃（由 displayCrashReport mixin 置位），用于区分正常关闭与异常关闭
+    @Volatile
+    var crashed = false
+
     // Managers
     val moduleManager = ModuleManager
     val commandManager = CommandManager
@@ -170,11 +174,15 @@ object AirPlus {
 
         try {
             // Initialize ViaMCP (protocol translation) and its version slider
-            runCatching {
-                ViaMCP.create()
-                ViaMCP.INSTANCE.initAsyncSlider(160, 8, 110, 20)
-            }.onFailure {
-                LOGGER.error("Failed to initialize ViaMCP.", it)
+            // 协议栈初始化含大量类扫描/协议注册（约 0.5-1s），移入后台线程执行；
+            // 未就绪时相关 Mixin 按 ViaMCP.isReady() 回退到原生 1.8 行为
+            SharedScopes.IO.launch {
+                runCatching {
+                    ViaMCP.create()
+                    ViaMCP.INSTANCE.initAsyncSlider(160, 8, 110, 20)
+                }.onFailure {
+                    LOGGER.error("Failed to initialize ViaMCP.", it)
+                }
             }
 
             // Initialize the Chinese input fix (port of AirClient's InputFix)
@@ -287,6 +295,12 @@ object AirPlus {
             }
 
             EventManager.call(StartupEvent)
+
+            // 系统通知：客户端启动完成
+            SharedScopes.IO.launch {
+                MiscUtils.showWindowsNotification(CLIENT_NAME, "Welcome to $CLIENT_NAME")
+            }
+
             LOGGER.info("Successfully started client")
         }
     }
@@ -295,6 +309,11 @@ object AirPlus {
      * Execute if client will be stopped
      */
     fun stopClient() {
+        // 系统通知：正常关闭提示；异常关闭（崩溃）已在 displayCrashReport 中提示，不再重复
+        if (!crashed) {
+            MiscUtils.showWindowsNotification(CLIENT_NAME, "See you!")
+        }
+
         // Call client shutdown
         EventManager.call(ClientShutdownEvent)
 

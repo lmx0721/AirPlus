@@ -306,9 +306,49 @@ object Fonts : MinecraftInstance {
     val font32: GameFontRenderer get() = fontRegular35
 
     private fun <T : FontRenderer> register(fontInfo: FontInfo, fontRenderer: T): T {
+        // 重烘焙路径：同一 FontInfo 被重新注册时，旧渲染器（2048px 字形 atlas）进入
+        // 渲染线程延迟释放队列，避免 GL 纹理泄漏显存（约 16MB/字体组）
+        val previous = CREATED.entries.firstOrNull { it.value == fontInfo }?.key
+        if (previous != null && previous !== fontRenderer) {
+            queueFontDispose(previous)
+            CREATED.remove(previous)
+        }
         FONT_PROVIDERS[fontInfo] = { fontRenderer }
         CREATED[fontRenderer] = fontInfo
         return fontRenderer
+    }
+
+    // ===== 渲染线程延迟释放 =====
+    // 字体重烘焙可能由配置线程触发（Client.onChanged），GL 纹理删除必须留在渲染线程执行，
+    // 旧渲染器先入队，由 AWTFontRenderer 的 Render2D 回调统一 dispose。
+    private val pendingDisposes = mutableListOf<GameFontRenderer>()
+
+    fun queueFontDispose(renderer: FontRenderer?) {
+        if (renderer is GameFontRenderer) {
+            synchronized(pendingDisposes) { pendingDisposes.add(renderer) }
+        }
+    }
+
+    fun flushPendingFontDisposes() {
+        val toDispose = synchronized(pendingDisposes) {
+            if (pendingDisposes.isEmpty()) {
+                return
+            }
+            val copy = ArrayList(pendingDisposes)
+            pendingDisposes.clear()
+            copy
+        }
+        for (renderer in toDispose) {
+            try {
+                renderer.dispose()
+            } catch (ignored: Exception) {
+            }
+        }
+        // 删除纹理后 GlStateManager 缓存可能仍记着已删除的 id（真实绑定不变）。
+        // 驱动会把回收 id 发给下一次 glGenTextures，届时守卫绑定撞缓存值被静默跳过，
+        // 字形图上传落错纹理 → 文字方块。裸绑 0 推开真实绑定，再守卫绑 0 同步缓存。
+        org.lwjgl.opengl.GL11.glBindTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0)
+        net.minecraft.client.renderer.GlStateManager.bindTexture(0)
     }
 
     private fun registerLazy(fontInfo: FontInfo, provider: () -> GameFontRenderer) {
@@ -441,8 +481,13 @@ object Fonts : MinecraftInstance {
     }
 
     private fun loadCustomFonts() {
-        FONT_PROVIDERS.keys.removeIf { it.isCustom }
-        CREATED.values.removeIf { it.isCustom }
+        // 先按 FontInfo 找到旧的自定义渲染器并入队释放，再清理注册表
+        val customInfos = FONT_PROVIDERS.keys.filterTo(ArrayList()) { it.isCustom }
+        for (info in customInfos) {
+            CREATED.entries.firstOrNull { it.value == info }?.key?.let { queueFontDispose(it) }
+            FONT_PROVIDERS.remove(info)
+        }
+        CREATED.entries.removeIf { it.value.isCustom }
 
         customFontInfoList.forEach {
             registerCustomAWTFont(it, save = false)
@@ -471,6 +516,7 @@ object Fonts : MinecraftInstance {
         }
 
         FONT_PROVIDERS.remove(fontInfo)
+        CREATED.entries.firstOrNull { it.value == fontInfo }?.key?.let { queueFontDispose(it) }
         CREATED.entries.removeIf { it.value == fontInfo }
         return customFontInfoList.firstOrNull {
             it.name == fontInfo.name && it.fontSize == fontInfo.size
@@ -633,17 +679,26 @@ object Fonts : MinecraftInstance {
             FontInfo(name = "HarmonyOS Sans SC Medium", size = 40),
             mainFontRenderer(40)
         )
-        // 可失效懒缓存置空，下次访问按新字体重建
+        // 可失效懒缓存置空，下次访问按新字体重建（旧实例经 register() 进入延迟释放队列）
         _fontRegular45 = null
+        _fontBold180?.let { queueFontDispose(it) }
         _fontBold180 = null
+        _fontExtraBold35?.let { queueFontDispose(it) }
         _fontExtraBold35 = null
+        _fontExtraBold40?.let { queueFontDispose(it) }
         _fontExtraBold40 = null
         // Rise GUI 字体跟随主字体，一并重建
+        _fontRise35?.let { queueFontDispose(it) }
         _fontRise35 = null
+        _fontRise40?.let { queueFontDispose(it) }
         _fontRise40 = null
+        _fontRise50?.let { queueFontDispose(it) }
         _fontRise50 = null
         // Moonlight 移植的动态主字体缓存一并失效
-        dynamicMainFonts.clear()
+        synchronized(dynamicMainFonts) {
+            dynamicMainFonts.values.forEach { queueFontDispose(it) }
+            dynamicMainFonts.clear()
+        }
     }
 
     /** 全局字号/粗细变化后重建核心文本字体（在渲染线程调用，见 AWTFontRenderer.onRender2D）。 */

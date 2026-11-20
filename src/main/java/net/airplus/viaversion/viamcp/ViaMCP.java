@@ -31,6 +31,15 @@ public class ViaMCP {
         INSTANCE = new ViaMCP();
     }
 
+    /**
+     * Whether ViaMCP / ViaLoadingBase has finished initialization.
+     * ViaLoadingBase is initialized asynchronously (protocol registration scans
+     * take ~0.5-1s); mixins must treat the uninitialized state as native 1.8.
+     */
+    public static boolean isReady() {
+        return INSTANCE != null && ViaLoadingBase.getInstance() != null;
+    }
+
     private AsyncVersionSlider asyncVersionSlider;
 
     public ViaMCP() {

@@ -19,6 +19,7 @@ import net.airplus.utils.render.MotionBlurRenderer;
 import net.airplus.utils.rotation.Rotation;
 import net.airplus.utils.rotation.RotationUtils;
 import net.airplus.viaversion.vialoadingbase.ViaLoadingBase;
+import net.airplus.viaversion.viamcp.ViaMCP;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.renderer.EntityRenderer;
@@ -230,6 +231,12 @@ public abstract class MixinEntityRenderer {
 
     @Inject(at = @At("HEAD"), method = "updateCameraAndRender")
     private void injectCameraModifications(float p_updateCameraAndRender_1_, long p_updateCameraAndRender_2_, CallbackInfo ci) {
+        // Glass UI: per-frame clock + blur cache reset, so blurred backdrops and glass
+        // animations follow the live frame instead of freezing at the first one.
+        net.airplus.ui.glass.GlassTheme.beginFrame();
+        net.airplus.ui.glass.GlassBlur.invalidate();
+        net.airplus.ui.glass.ScreenTransition.frameStart();
+
         FreeCam.INSTANCE.useModifiedPosition();
 
         // Camera: per-frame perspective-switch animation state update, must run before
@@ -353,6 +360,7 @@ public abstract class MixinEntityRenderer {
 
     @Inject(at = @At("TAIL"), method = "updateCameraAndRender")
     private void injectCameraRestorations(float p_updateCameraAndRender_1_, long p_updateCameraAndRender_2_, CallbackInfo ci) {
+        net.airplus.ui.glass.ScreenTransition.frameEnd();
         net.airplus.utils.render.GLErrorProbe.drain("I-frame-end");
         FreeLook.INSTANCE.restoreOriginalRotation();
         FreeCam.INSTANCE.restoreOriginalPosition();
@@ -586,7 +594,7 @@ public abstract class MixinEntityRenderer {
             }
 
             // PacketFix：跨版本（目标协议 >= 1.12.2）时实体拾取最大距离由 3.0 改为 2.9
-            final double maxPickDistance = ViaLoadingBase.getInstance().getTargetVersion().isNewerThanOrEqualTo(ProtocolVersion.v1_12_2) ? 2.9D : 3.0D;
+            final double maxPickDistance = ViaMCP.isReady() && ViaLoadingBase.getInstance().getTargetVersion().isNewerThanOrEqualTo(ProtocolVersion.v1_12_2) ? 2.9D : 3.0D;
 
             if (pointedEntity != null && flag && vec3.distanceTo(vec33) > (reach.handleEvents() ? reach.getCombatReach() : maxPickDistance)) {
                 pointedEntity = null;

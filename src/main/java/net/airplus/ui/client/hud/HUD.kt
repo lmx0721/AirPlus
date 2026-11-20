@@ -108,11 +108,10 @@ object HUD : MinecraftInstance {
 
         if (button == 0) {
             for (element in elements.reversed()) {
-                if (!element.isInBorder(
-                        (mouseX / element.scale) - element.renderX, (mouseY / element.scale) - element.renderY
-                    )
-                )
-                    continue
+                val scaledX = (mouseX / element.scale) - element.renderX
+                val scaledY = (mouseY / element.scale) - element.renderY
+
+                if (!element.isInBorder(scaledX, scaledY)) continue
 
                 element.drag = true
                 elements -= element
@@ -159,14 +158,16 @@ object HUD : MinecraftInstance {
                 val width = scaledWidth / element.scale
                 val height = scaledHeight / element.scale
 
+                // 增量移动：此前错误地把 renderX 直接赋值为本次鼠标位移（moveX），
+                // 导致拖拽时元素瞬移到与鼠标增量相同的位置
                 if ((element.renderX + minX + moveX >= 0.0 || moveX > 0) &&
                     (element.renderX + maxX + moveX <= width || moveX < 0)
                 )
-                    element.renderX = moveX.toDouble()
+                    element.renderX += moveX
                 if ((element.renderY + minY + moveY >= 0.0 || moveY > 0) &&
                     (element.renderY + maxY + moveY <= height || moveY < 0)
                 )
-                    element.renderY = moveY.toDouble()
+                    element.renderY += moveY
             }
         }
     }

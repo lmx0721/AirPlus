@@ -42,7 +42,13 @@ loom {
                 vmArgs.remove("-XstartOnFirstThread")
             }
             property("dev-mode", "true")
-            vmArgs("-Xmx4096m", "-Xms1024m")
+            vmArgs(
+                "-Xmx4G", "-Xms4G",
+                "-XX:+UseG1GC", "-XX:MaxGCPauseMillis=50",
+                "-XX:+UnlockExperimentalVMOptions",
+                "-XX:G1NewSizePercent=20", "-XX:G1ReservePercent=20", "-XX:G1HeapRegionSize=32M",
+                "-XX:+DisableExplicitGC", "-XX:+AlwaysPreTouch"
+            )
         }
         remove(getByName("server"))
     }
