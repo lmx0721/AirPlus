@@ -158,16 +158,17 @@ object HUD : MinecraftInstance {
                 val width = scaledWidth / element.scale
                 val height = scaledHeight / element.scale
 
-                // 增量移动：此前错误地把 renderX 直接赋值为本次鼠标位移（moveX），
-                // 导致拖拽时元素瞬移到与鼠标增量相同的位置
+                // renderX/renderY 的 setter 本身就是增量语义（LEFT/UP: x += v，MIDDLE/RIGHT/DOWN: x -= v），
+                // 因此传 moveX 即增量移动；不能用 `renderX += moveX`——它会先读 getter 再走 setter，
+                // 变成 x = 2x + moveX，位置每帧翻倍，元素瞬间飞出屏幕
                 if ((element.renderX + minX + moveX >= 0.0 || moveX > 0) &&
                     (element.renderX + maxX + moveX <= width || moveX < 0)
                 )
-                    element.renderX += moveX
+                    element.renderX = moveX.toDouble()
                 if ((element.renderY + minY + moveY >= 0.0 || moveY > 0) &&
                     (element.renderY + maxY + moveY <= height || moveY < 0)
                 )
-                    element.renderY += moveY
+                    element.renderY = moveY.toDouble()
             }
         }
     }

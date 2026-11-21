@@ -65,7 +65,14 @@ object LocalSettingsCommand : Command("localsettings", "localsetting", "localcon
                 chat("§9Set settings...")
                 SettingsUtils.applyScript(settings)
                 chat("§6Settings applied successfully.")
-                addNotification(Notification.informative("Local Settings Command","Updated Settings"))
+
+                val comment = extractComment(settings)
+                if (comment.isNotBlank()) {
+                    chat("§9Comment: §7$comment")
+                    addNotification(Notification.informative("Local Settings", comment))
+                } else {
+                    addNotification(Notification.informative("Local Settings Command", "Updated Settings"))
+                }
                 playEdit()
             } catch (e: IOException) {
                 e.printStackTrace()
@@ -88,12 +95,23 @@ object LocalSettingsCommand : Command("localsettings", "localsetting", "localcon
 
                 settingsFile.createNewFile()
 
-                val option = if (args.size > 3) StringUtils.toCompleteString(args, 3).lowercase() else "default"
-                val all = "all" in option
-                val default = "default" in option
-                val values = all || default || "values" in option
-                val binds = all || "binds" in option
-                val states = all || default || "states" in option
+                // 解析可选项与注释：
+                // .localsettings save <name>                        -> 默认选项，无注释
+                // .localsettings save <name> <注释...>              -> 默认选项，带注释
+                // .localsettings save <name> <all/values/...> <注释...>
+                val optionArg = args.getOrNull(3)?.lowercase()
+                val knownOption = optionArg in setOf("all", "default", "values", "binds", "states")
+                val option = if (knownOption) optionArg else null
+                val commentStart = when {
+                    knownOption -> 4
+                    args.size > 3 -> 3
+                    else -> args.size
+                }
+                val comment = if (args.size > commentStart) StringUtils.toCompleteString(args, commentStart) else ""
+
+                val values = option == "all" || option == null || option == "default" || option == "values"
+                val binds = option == "all" || option == "binds"
+                val states = option == "all" || option == null || option == "default" || option == "states"
 
                 if (!values && !binds && !states) {
                     chatSyntaxError()
@@ -102,17 +120,31 @@ object LocalSettingsCommand : Command("localsettings", "localsetting", "localcon
 
                 chat("§9Creating settings...")
                 val settingsScript = SettingsUtils.generateScript(values, binds, states)
+                val scriptWithComment = if (comment.isNotBlank()) "# $comment\n\n$settingsScript" else settingsScript
 
                 chat("§9Saving settings...")
-                settingsFile.writeText(settingsScript)
+                settingsFile.writeText(scriptWithComment)
 
                 chat("§6Settings saved successfully.")
+                if (comment.isNotBlank()) {
+                    chat("§9Comment: §7$comment")
+                }
             } catch (throwable: Throwable) {
                 chat("§cFailed to create local config: §3${throwable.message}")
                 LOGGER.error("Failed to create local config.", throwable)
             }
         }
     }
+
+    /**
+     * 提取设置脚本开头的注释行（以 # 开头），拼接为一行文本。
+     */
+    private fun extractComment(script: String): String =
+        script.lineSequence()
+            .takeWhile { it.startsWith("#") }
+            .map { it.removePrefix("#").trim() }
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
 
     private suspend fun deleteSettings(args: Array<String>) {
         withContext(Dispatchers.IO) {

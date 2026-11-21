@@ -3,41 +3,21 @@ package net.airplus.api
 import net.airplus.utils.io.applyBypassHttps
 import net.airplus.utils.io.decodeJson
 import net.airplus.utils.io.get
-import net.airplus.utils.io.post
-import net.airplus.utils.kotlin.RandomUtils
-import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody
 import java.util.concurrent.TimeUnit
 
-private const val HARD_CODED_BRANCH = "legacy"
-
-private const val API_V1_ENDPOINT = "https://api.liquidbounce.net/api/v1"
+// AirPlus 自己的云参数源（GitHub 仓库 + jsDelivr CDN）
+// 仓库结构：index.json 为配置列表，settings/<settingId>.txt 为具体配置脚本
+private const val SETTINGS_CLOUD_BASE = "https://cdn.jsdelivr.net/gh/lmx0721/AirPlus-Cloud@main"
 
 // AirPlus 自己的更新源（GitHub Releases）
 private const val GITHUB_RELEASE_ENDPOINT = "https://api.github.com/repos/lmx0721/AirPlus/releases/latest"
-
-
-/**
- * Session token
- *
- * This is used to identify the client in one session
- */
-private val SESSION_TOKEN = RandomUtils.randomString(16)
 
 private val client = OkHttpClient.Builder()
     .connectTimeout(3, TimeUnit.SECONDS)
     .readTimeout(15, TimeUnit.SECONDS)
     .applyBypassHttps()
-    .addInterceptor { chain ->
-        val original = chain.request()
-        val request: Request = original.newBuilder()
-            .header("X-Session-Token", SESSION_TOKEN)
-            .build()
-
-        chain.proceed(request)
-    }.build()
+    .build()
 
 /**
  * ClientApi
@@ -54,49 +34,25 @@ object ClientApi {
         }
     }
 
-    fun getSettingsList(branch: String = HARD_CODED_BRANCH): List<AutoSettings> {
-        val url = "$API_V1_ENDPOINT/client/$branch/settings"
+    /**
+     * 从云参数仓库拉取配置列表（index.json）
+     */
+    fun getSettingsList(): List<AutoSettings> {
+        val url = "$SETTINGS_CLOUD_BASE/index.json"
         client.get(url).use { response ->
             if (!response.isSuccessful) error("Request failed: ${response.code}")
             return response.body.charStream().decodeJson()
         }
     }
 
-    fun getSettingsScript(branch: String = HARD_CODED_BRANCH, settingId: String): String {
-        val url = "$API_V1_ENDPOINT/client/$branch/settings/$settingId"
+    /**
+     * 从云参数仓库拉取指定配置脚本
+     */
+    fun getSettingsScript(settingId: String): String {
+        val url = "$SETTINGS_CLOUD_BASE/settings/$settingId.txt"
         client.get(url).use { response ->
             if (!response.isSuccessful) error("Request failed: ${response.code}")
             return response.body.string()
-        }
-    }
-
-    @Deprecated("Removed API")
-    fun reportSettings(branch: String = HARD_CODED_BRANCH, settingId: String): ReportResponse {
-        val url = "$API_V1_ENDPOINT/client/$branch/settings/report/$settingId"
-        client.get(url).use { response ->
-            if (!response.isSuccessful) error("Request failed: ${response.code}")
-            return response.body.charStream().decodeJson()
-        }
-    }
-
-    @Deprecated("Removed API")
-    fun uploadSettings(
-        branch: String = HARD_CODED_BRANCH,
-        name: RequestBody,
-        contributors: RequestBody,
-        settingsFile: MultipartBody.Part
-    ): UploadResponse {
-        val url = "$API_V1_ENDPOINT/client/$branch/settings/upload"
-        val requestBody = MultipartBody.Builder()
-            .setType(MultipartBody.FORM)
-            .addFormDataPart("name", null, name)
-            .addFormDataPart("contributors", null, contributors)
-            .addPart(settingsFile)
-            .build()
-
-        client.post(url, requestBody).use { response ->
-            if (!response.isSuccessful) error("Request failed: ${response.code}")
-            return response.body.charStream().decodeJson()
         }
     }
 }

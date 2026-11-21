@@ -7,6 +7,7 @@ package net.airplus.config
 
 import net.airplus.AirPlus.moduleManager
 import net.airplus.api.ClientApi
+import net.airplus.features.module.Category
 import net.airplus.features.module.Module
 import net.airplus.file.FileManager
 import net.airplus.utils.attack.EntityUtils.Targets
@@ -22,6 +23,12 @@ import kotlin.reflect.KMutableProperty0
  * Utility class for handling settings and scripts in AirPlus.
  */
 object SettingsUtils {
+
+    /**
+     * Client/Fun 分类的模块设置不参与配置的加载与保存。
+     */
+    private fun Module.isExcludedFromSettings() =
+        category == Category.CLIENT || category == Category.FUN
 
     fun loadFromUrl(url: String) = if (url.startsWith("http")) {
         HttpClient.get(url).use {
@@ -106,6 +113,10 @@ object SettingsUtils {
                         return@forEachIndexed
                     }
 
+                    if (module.isExcludedFromSettings()) {
+                        return@forEachIndexed
+                    }
+
                     when (valueName) {
                         "toggle" -> setToggle(module, value)
                         "bind" -> setBind(module, value)
@@ -171,6 +182,10 @@ object SettingsUtils {
 
         return buildString {
             for (module in moduleManager) {
+                if (module.isExcludedFromSettings()) {
+                    continue
+                }
+
                 if (all || !module.subjective) {
                     if (values) {
                         for (value in module.values) {
