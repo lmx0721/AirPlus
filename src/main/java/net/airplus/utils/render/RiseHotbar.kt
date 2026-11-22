@@ -103,9 +103,17 @@ object RiseHotbar : MinecraftInstance {
         )
 
         // ---- BLUR（Rise BLUR 队列）+ 辉光（Rise BLOOM 队列的等价实现，随全局 Glow 设置）----
-        HudBlur.blur(bgX1, bgY1, bgX2, bgY2, radius)
+        // 与其它 HUD 元素相同的显式遮罩写法：不依赖默认遮罩路径，
+        // 遮罩圆角与背景绘制完全一致
+        HudBlur.blur(bgX1, bgY1, bgX2, bgY2, radius) {
+            drawRoundedRect(bgX1, bgY1, bgX2, bgY2, -1, radius)
+        }
         if (xpVisible) {
-            HudBlur.blur(bgX1, bgY1 - XP_HEIGHT - XP_GAP, bgX2, bgY1 - XP_GAP, minOf(radius, XP_RADIUS_CAP))
+            // XP 条高度只有 3px：圆角半径必须 ≤ 高度一半，否则多边形自相交、遮罩画不出来
+            val xpRadius = minOf(radius, XP_RADIUS_CAP, XP_HEIGHT / 2F)
+            HudBlur.blur(bgX1, bgY1 - XP_HEIGHT - XP_GAP, bgX2, bgY1 - XP_GAP, xpRadius) {
+                drawRoundedRect(bgX1, bgY1 - XP_HEIGHT - XP_GAP, bgX2, bgY1 - XP_GAP, -1, xpRadius)
+            }
         }
 
         // ---- REGULAR：半透明黑叠层（同色叠加，选中槽位更深）----

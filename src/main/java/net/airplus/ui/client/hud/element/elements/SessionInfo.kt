@@ -244,55 +244,67 @@ class SessionInfo(
 
     /**
      * Rise 样式：Ported from MoonLight SessionInfoWidget（"Rise" 分支）。
-     * 140x55 圆角(11)面板：黑色半透明填充 + 主题色细描边（原 drawRoundOutline 11 / 0.1f），
-     * 主题色 "Session Stats" 标题居中，其下为会话时长，底部为 kills / wins 两列统计。
+     * 圆角(11)面板：黑色半透明填充 + 主题色细描边，主题色 "Session Stats" 标题居中，
+     * 其下为会话时长，底部为 kills / wins 两列统计。面板尺寸随字体动态计算，
+     * 保证所选字体较大时文字不溢出（默认 140x55）。
      */
     private fun drawRise(): Border {
         val themeColor = ClientThemesUtils.getColor()
+        val designer = mc.currentScreen is GuiHudDesigner
+        val titleFont = Fonts.fontRise40
+        val dataFont = Fonts.fontUsans32
+
+        val titleText = "Session Stats"
+        val timeText = if (designer) "5m 32s" else playTime()
+        val killsText = "kills: ${if (designer) 12 else kills}"
+        val winsText = "wins: ${if (designer) 3 else win}"
+
+        // 面板尺寸：默认 140x55，随所选字体宽高动态扩展
+        val width = maxOf(
+            RISE_WIDTH,
+            RISE_PADDING * 2 + titleFont.getStringWidth(titleText),
+            RISE_PADDING * 2 + dataFont.getStringWidth(timeText)
+        )
+        val height = maxOf(
+            RISE_HEIGHT,
+            RISE_PADDING + titleFont.height + 3f + dataFont.height + 4f + dataFont.height + RISE_PADDING
+        )
 
         if (blur) {
             HudBlur.blur(
                 (scale * renderX).toFloat(),
                 (scale * renderY).toFloat(),
-                (scale * (renderX + RISE_WIDTH)).toFloat(),
-                (scale * (renderY + RISE_HEIGHT)).toFloat()
+                (scale * (renderX + width)).toFloat(),
+                (scale * (renderY + height)).toFloat()
             ) {
-                drawRoundedRect(0f, 0f, RISE_WIDTH, RISE_HEIGHT, -1, RISE_RADIUS)
+                drawRoundedRect(0f, 0f, width, height, -1, RISE_RADIUS)
             }
         }
 
         assumeNonVolatile {
-            val designer = mc.currentScreen is GuiHudDesigner
-            val titleFont = Fonts.fontRise35
-            val dataFont = Fonts.fontUsans20
-
             // 面板填充 + 主题色描边
-            drawRoundedRect(0f, 0f, RISE_WIDTH, RISE_HEIGHT, Color(0, 0, 0, 100).rgb, RISE_RADIUS)
-            drawRoundedBorder(0f, 0f, RISE_WIDTH, RISE_HEIGHT, 1f, themeColor.rgb, RISE_RADIUS)
-
-            val timeText = if (designer) "5m 32s" else playTime()
-            val killsText = "kills: ${if (designer) 12 else kills}"
-            val winsText = "wins: ${if (designer) 3 else win}"
+            drawRoundedRect(0f, 0f, width, height, Color(0, 0, 0, 100).rgb, RISE_RADIUS)
+            drawRoundedBorder(0f, 0f, width, height, 1f, themeColor.rgb, RISE_RADIUS)
 
             titleFont.drawString(
-                "Session Stats", RISE_WIDTH / 2f - titleFont.getStringWidth("Session Stats") / 2f,
+                titleText, width / 2f - titleFont.getStringWidth(titleText) / 2f,
                 RISE_PADDING, themeColor.rgb
             )
             val timeY = RISE_PADDING + titleFont.height + 3f
             dataFont.drawString(
-                timeText, RISE_WIDTH / 2f - dataFont.getStringWidth(timeText) / 2f, timeY,
+                timeText, width / 2f - dataFont.getStringWidth(timeText) / 2f, timeY,
                 Color(255, 255, 255, 200).rgb
             )
             val statsY = timeY + dataFont.height + 4f
             dataFont.drawString(
-                killsText, 35f - dataFont.getStringWidth(killsText) / 2f, statsY, Color(255, 255, 255, 200).rgb
+                killsText, width * 0.25f - dataFont.getStringWidth(killsText) / 2f, statsY, Color(255, 255, 255, 200).rgb
             )
             dataFont.drawString(
-                winsText, 105f - dataFont.getStringWidth(winsText) / 2f, statsY, Color(255, 255, 255, 200).rgb
+                winsText, width * 0.75f - dataFont.getStringWidth(winsText) / 2f, statsY, Color(255, 255, 255, 200).rgb
             )
         }
 
-        return Border(0f, 0f, RISE_WIDTH, RISE_HEIGHT)
+        return Border(0f, 0f, width, height)
     }
 
     /**
@@ -408,13 +420,13 @@ class SessionInfo(
         GlStateManager.disableBlend()
     }
 
-    /** 在 64×64 皮肤纹理上取 8×8 区域（u,v）绘制到 (x,y,size)。 */
+    /** 在 64×64 皮肤纹理上取 8×8 区域（u,v）绘制到 (x,y,size)。顶点序 BR→TR→TL→BL，UV 一一对应。 */
     private fun drawSkinRegion(x: Float, y: Float, size: Float, u: Int, v: Int) {
         val factor = 1f / 64f
         val tessellator = Tessellator.getInstance()
         val buffer = tessellator.worldRenderer
         buffer.begin(7, DefaultVertexFormats.POSITION_TEX)
-        buffer.pos((x + size).toDouble(), (y + size).toDouble(), 0.0).tex((u * factor).toDouble(), ((v + 8) * factor).toDouble()).endVertex()
+        buffer.pos((x + size).toDouble(), (y + size).toDouble(), 0.0).tex(((u + 8) * factor).toDouble(), ((v + 8) * factor).toDouble()).endVertex()
         buffer.pos((x + size).toDouble(), y.toDouble(), 0.0).tex(((u + 8) * factor).toDouble(), (v * factor).toDouble()).endVertex()
         buffer.pos(x.toDouble(), y.toDouble(), 0.0).tex((u * factor).toDouble(), (v * factor).toDouble()).endVertex()
         buffer.pos(x.toDouble(), (y + size).toDouble(), 0.0).tex((u * factor).toDouble(), ((v + 8) * factor).toDouble()).endVertex()

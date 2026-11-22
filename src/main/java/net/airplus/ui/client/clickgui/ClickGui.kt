@@ -35,6 +35,7 @@ import net.airplus.utils.client.asResourceLocation
 import net.airplus.utils.client.chat
 import net.airplus.utils.client.playSound
 import net.airplus.utils.kotlin.SharedScopes
+import net.airplus.utils.render.HudBlur
 import net.airplus.utils.render.RenderUtils.deltaTime
 import net.airplus.utils.render.RenderUtils.drawImage
 import net.minecraft.client.gui.GuiScreen
@@ -166,6 +167,10 @@ object ClickGui : GuiScreen() {
             mouseY = (y / scale).roundToInt()
 
             drawDefaultBackground()
+
+            // 背景模糊（与 Rise/Augustus 等样式一致；BlurMode = None 时 HudBlur 内部自动跳过）
+            HudBlur.blur(0F, 0F, width.toFloat(), height.toFloat())
+
             drawImage(hudIcon, 9, height - 41, 32, 32)
 
             val scale = scale.toDouble()

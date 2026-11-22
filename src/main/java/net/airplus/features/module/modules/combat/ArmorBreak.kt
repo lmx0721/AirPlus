@@ -17,6 +17,7 @@ import net.airplus.features.module.Category
 import net.airplus.features.module.Module
 import net.airplus.features.module.modules.player.Gapple
 import net.airplus.features.module.modules.combat.armorbreak.EdMoonlightMode
+import net.airplus.features.module.modules.player.AutoArmor
 import net.airplus.utils.client.PacketUtils.sendPacket
 import net.minecraft.enchantment.Enchantment
 import net.minecraft.enchantment.EnchantmentHelper
@@ -293,6 +294,10 @@ object ArmorBreak : Module("ArmorBreak", Category.COMBAT) {
 
     private val onAttack = handler<AttackEvent> { event ->
         if (mode != "Flux") return@handler
+
+        // AutoArmor 优先：装备盔甲期间暂停换刀，攻击仍按当前武器打出
+        if (AutoArmor.isWorking) return@handler
+
         val target = event.targetEntity as? EntityLivingBase ?: return@handler
         val player = mc.thePlayer ?: return@handler
 
@@ -362,7 +367,7 @@ object ArmorBreak : Module("ArmorBreak", Category.COMBAT) {
             pendingBlock = false
         }
 
-        if (funMode && mc.currentScreen == null) {
+        if (funMode && mc.currentScreen == null && !AutoArmor.isWorking) {
             funSwitch()
         }
 
@@ -398,7 +403,8 @@ object ArmorBreak : Module("ArmorBreak", Category.COMBAT) {
         if (pendingDoubleHit) {
             if (doubleHitTimer > 0) {
                 doubleHitTimer--
-            } else {
+            } else if (!AutoArmor.isWorking) {
+                // AutoArmor 优先：等待其装备完成后再执行双重打击
                 pendingDoubleHit = false
                 val doubleHitTarget = currentTarget
                 if (doubleHitTarget != null && !doubleHitTarget.isDead) {

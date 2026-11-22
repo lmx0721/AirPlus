@@ -16,6 +16,7 @@ import net.airplus.ui.client.hud.element.ElementInfo
 import net.airplus.ui.client.hud.element.Side
 import net.airplus.ui.font.Fonts
 import net.airplus.utils.render.RenderUtils.drawImage
+import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.util.ResourceLocation
 import java.awt.Color
 import kotlin.math.abs
@@ -35,29 +36,42 @@ class Logo(
         else -> drawClassic()
     }
 
-    // "Classic"：图标字体字形（SessIcon "F" = 剑），随主题色染色
+    // "Classic"：图标字体字形（SessIcon "F" = 剑），随主题色染色。
+    // 默认放大 1.5 倍（原 fontSessIcon48 相对 Icon 样式 64px 偏小）
     private fun drawClassic(): Border {
         val glyph = "F"
         val font = Fonts.fontSessIcon48
+        GlStateManager.pushMatrix()
+        GlStateManager.scale(TEXT_SCALE, TEXT_SCALE, 1f)
         font.drawStringWithShadow(glyph, 0f, 0f, logoColor.rgb)
-        return Border(0f, 0f, font.getStringWidth(glyph).toFloat(), font.height.toFloat())
+        GlStateManager.popMatrix()
+        return Border(
+            0f, 0f,
+            font.getStringWidth(glyph).toFloat() * TEXT_SCALE,
+            font.height.toFloat() * TEXT_SCALE
+        )
     }
 
-    // Hanabi "Simple": brightness pulsing watermark (PaletteUtil.fade behaviour)
+    // Hanabi "Simple": brightness pulsing watermark (PaletteUtil.fade behaviour)，同样放大 1.5 倍
     private fun drawSimple(): Border {
         val hsb = Color.RGBtoHSB(255, 255, 255, null)
         val brightness = abs(((System.currentTimeMillis() % 2000L) / 1000f + 1f / 5f * 2f) % 2f - 1f)
         val faded = Color(Color.HSBtoRGB(hsb[0], hsb[1], 0.5f + 0.5f * brightness))
         val textColor = Color(255, 255, 255, faded.red).rgb
 
-        Fonts.fontUsans50.drawStringWithShadow("Hanabi", 0f, 0f, textColor)
-        Fonts.fontUsans20.drawStringWithShadow("Build 3.1", 2f, 15f, textColor)
+        val titleW = Fonts.fontUsans50.getStringWidth("Hanabi").toFloat()
+        val subW = Fonts.fontUsans20.getStringWidth("Build 3.1").toFloat()
+        val titleH = Fonts.fontUsans50.height.toFloat()
+        val subH = Fonts.fontUsans20.height.toFloat()
 
-        val width = max(
-            Fonts.fontUsans50.getStringWidth("Hanabi"),
-            Fonts.fontUsans20.getStringWidth("Build 3.1") + 2
-        ).toFloat()
-        return Border(0f, 0f, width, 15f + Fonts.fontUsans20.height)
+        GlStateManager.pushMatrix()
+        GlStateManager.scale(TEXT_SCALE, TEXT_SCALE, 1f)
+        Fonts.fontUsans50.drawStringWithShadow("Hanabi", 0f, 0f, textColor)
+        Fonts.fontUsans20.drawStringWithShadow("Build 3.1", 2f, titleH + 1f, textColor)
+        GlStateManager.popMatrix()
+
+        val width = max(titleW, subW + 2f) * TEXT_SCALE
+        return Border(0f, 0f, width, (titleH + 1f + subH) * TEXT_SCALE)
     }
 
     // AirPlus client icon
@@ -68,5 +82,8 @@ class Logo(
 
     companion object {
         private val CLIENT_ICON = ResourceLocation("airplus/icon_64x64.png")
+
+        /** Classic / Simple 两个文字样式的默认放大倍数 */
+        private const val TEXT_SCALE = 1.5f
     }
 }

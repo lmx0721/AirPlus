@@ -67,6 +67,13 @@ object AutoArmor : Module("AutoArmor", Category.PLAYER) {
     val borderStrength by +InventoryManager.borderStrength
     val borderColor by +InventoryManager.borderColor
 
+    /** 是否正在装备盔甲（已调度点击但尚未完成），供 ArmorBreak/ArmorBreaker2 让位，避免背包点击与槽位伪装冲突 */
+    @Volatile
+    private var working = false
+
+    val isWorking: Boolean
+        get() = working
+
     suspend fun equipFromHotbar() {
         if (!shouldOperate(onlyHotbar = true)) {
             autoArmorCurrentSlot = -1
@@ -103,6 +110,7 @@ object AutoArmor : Module("AutoArmor", Category.PLAYER) {
                 continue
 
             hasClickedHotbar = true
+            working = true
 
             val equippingAction = {
                 // Set current slot being stolen for highlighting
@@ -139,6 +147,8 @@ object AutoArmor : Module("AutoArmor", Category.PLAYER) {
         // Sync selected slot next tick
         if (hasClickedHotbar)
             nextTick { SilentHotbar.resetSlot(this) }
+
+        working = false
     }
 
     suspend fun equipFromInventory() {
@@ -193,11 +203,16 @@ object AutoArmor : Module("AutoArmor", Category.PLAYER) {
                 }
 
                 // No item is equipped in armor slot
-                null ->
+                null -> {
+                    working = true
+
                     // Equip by shift-clicking
                     click(index, 0, 1)
+                }
 
                 else -> {
+                    working = true
+
                     if (smartSwap) {
                         // Player has worse armor equipped, drag the best armor, swap it with currently equipped armor and drop the bad armor
                         // This way there is no time of having no armor (but more clicks)
@@ -225,6 +240,8 @@ object AutoArmor : Module("AutoArmor", Category.PLAYER) {
 
         // Wait till all scheduled clicks were sent
         awaitTicked()
+
+        working = false
     }
 
     fun equipFromHotbarInChest(hotbarIndex: Int?, stack: ItemStack) {

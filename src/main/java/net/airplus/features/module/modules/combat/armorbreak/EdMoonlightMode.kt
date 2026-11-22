@@ -28,6 +28,7 @@ import net.airplus.event.UpdateEvent
 import net.airplus.event.handler
 import net.airplus.features.module.modules.combat.ArmorBreak
 import net.airplus.features.module.modules.combat.KillAura
+import net.airplus.features.module.modules.player.AutoArmor
 import net.airplus.features.module.modules.combat.ArmorBreak.abIncludeAxe
 import net.airplus.features.module.modules.combat.ArmorBreak.abAlignCrits
 import net.airplus.features.module.modules.combat.ArmorBreak.abAutoLadderSize
@@ -208,12 +209,18 @@ object EdMoonlightMode : Listenable, MinecraftInstance {
 
         val held = player.heldItem
         if (held != null && held.item is ItemAxe && gappleSwordOnly() && Gapple.state && Gapple.isEating) {
-            switchToBestSword()
+            // AutoArmor 优先：装备盔甲期间不换刀
+            if (!AutoArmor.isWorking)
+                switchToBestSword()
         }
     }
 
     private val onAttack = handler<AttackEvent> { event ->
         if (thSelfAttack) return@handler
+
+        // AutoArmor 优先：装备盔甲期间暂停换刀，攻击仍按当前武器打出
+        if (AutoArmor.isWorking) return@handler
+
         val player = mc.thePlayer ?: return@handler
         val attackTarget = event.targetEntity
 
@@ -326,18 +333,22 @@ object EdMoonlightMode : Listenable, MinecraftInstance {
         val player = mc.thePlayer ?: return@handler
 
         climbKbRestore()
-        if (usePre() && !useTickHit()) {
-            preSwitchTick()
-        }
 
-        if (useTickHit()) {
-            tickHitTick()
-        }
+        // AutoArmor 优先：装备盔甲期间暂停换刀调度（记账/刷包逻辑照常运行）
+        if (!AutoArmor.isWorking) {
+            if (usePre() && !useTickHit()) {
+                preSwitchTick()
+            }
 
-        smartAxeBack()
-        limitAxeHold()
-        if (abBurst) {
-            burstTick()
+            if (useTickHit()) {
+                tickHitTick()
+            }
+
+            smartAxeBack()
+            limitAxeHold()
+            if (abBurst) {
+                burstTick()
+            }
         }
 
         settleBlock()

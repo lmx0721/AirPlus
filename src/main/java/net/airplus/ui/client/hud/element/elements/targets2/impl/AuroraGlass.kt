@@ -5,6 +5,7 @@ import net.airplus.ui.client.hud.element.elements.Target2
 import net.airplus.ui.client.hud.element.elements.targets2.TargetStyle
 import net.airplus.ui.font.Fonts
 import net.airplus.utils.render.RoundedUtil
+import net.airplus.utils.render.Stencil
 import net.minecraft.entity.player.EntityPlayer
 import java.awt.Color
 import kotlin.math.max
@@ -80,13 +81,19 @@ class AuroraGlass(inst: Target2) : TargetStyle("Aurora Glass", inst, true) {
         val fillW = barW * ratio
         if (fillW > 1f) {
             val shift = (System.currentTimeMillis() % 4000L) / 4000f
+            // 流光渐变：先把整条血条裁成圆角矩形（stencil），再在其中逐段平铺 2px 纯色矩形。
+            // 之前逐段自带 4px 圆角（段宽仅 2px，radius 远超段宽一半），会画出奇异多边形
+            Stencil.write(false)
+            RoundedUtil.drawRound(padX.toFloat(), barY, barW, 8f, 4f, Color.WHITE)
+            Stencil.erase(true)
             var x = 0f
             while (x < fillW) {
                 val segW = min(2f, fillW - x)
                 val color = sample((x / (width * 3f)) + shift)
-                RoundedUtil.drawRound(padX + x, barY, segW, 8f, 4f, getColor(color))
+                RoundedUtil.drawRound(padX + x, barY, segW, 8f, 0f, getColor(color))
                 x += 2f
             }
+            Stencil.dispose()
         }
     }
 

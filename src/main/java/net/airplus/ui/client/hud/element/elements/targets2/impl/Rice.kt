@@ -143,26 +143,34 @@ class Rice(inst: Target2) : TargetStyle("Rice", inst, true) {
         val barWidth = (length - 5F - maxHealthLength) * (easingHealth / entity.maxHealth).pow(2).toFloat()
 
         Stencil.write(false)
-        GL11.glDisable(GL11.GL_TEXTURE_2D)
-        GL11.glEnable(GL11.GL_BLEND)
-        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA)
-        if (gradientRoundedBarValue.get() && barWidth > 0F)
-            RenderUtils.fastRoundedRect(5F, 42F, 5F + barWidth, 48F, 3F)
-        else
-            RenderUtils.quickDrawRect(5F, 42F, 5F + barWidth, 48F)
+        try {
+            GL11.glDisable(GL11.GL_TEXTURE_2D)
+            GL11.glEnable(GL11.GL_BLEND)
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA)
+            if (gradientRoundedBarValue.get() && barWidth > 0F)
+                RenderUtils.fastRoundedRect(5F, 42F, 5F + barWidth, 48F, 3F)
+            else
+                RenderUtils.quickDrawRect(5F, 42F, 5F + barWidth, 48F)
 
-        GL11.glDisable(GL11.GL_BLEND)
-        Stencil.erase(true)
-        val colorModeLower = targetInstance.colorModeValue.lowercase(Locale.getDefault())
-        when (colorModeLower) {
-            "custom", "health" -> RenderUtils.drawRect(5F, 42F, length - maxHealthLength, 48F, targetInstance.barColor.rgb)
-            else -> for (i in 0 until gradientLoopValue.get()) {
-                val barStart = i.toDouble() / gradientLoopValue.get().toDouble() * (length - 5F - maxHealthLength).toDouble()
-                val barEnd = (i + 1).toDouble() / gradientLoopValue.get().toDouble() * (length - 5F - maxHealthLength).toDouble()
-                RenderUtils.drawGradientSideways(5.0 + barStart, 42.0, 5.0 + barEnd, 48.0, getColorAtIndex(i), getColorAtIndex(i + 1))
+            GL11.glDisable(GL11.GL_BLEND)
+            Stencil.erase(true)
+            val colorModeLower = targetInstance.colorModeValue.lowercase(Locale.getDefault())
+            when (colorModeLower) {
+                "custom", "health" -> RenderUtils.drawRect(5F, 42F, length - maxHealthLength, 48F, targetInstance.barColor.rgb)
+                else -> for (i in 0 until gradientLoopValue.get()) {
+                    val barStart = i.toDouble() / gradientLoopValue.get().toDouble() * (length - 5F - maxHealthLength).toDouble()
+                    val barEnd = (i + 1).toDouble() / gradientLoopValue.get().toDouble() * (length - 5F - maxHealthLength).toDouble()
+                    RenderUtils.drawGradientSideways(5.0 + barStart, 42.0, 5.0 + barEnd, 48.0, getColorAtIndex(i), getColorAtIndex(i + 1))
+                }
             }
+        } catch (e: Exception) {
+            // 与 Chill 样式一致：任何异常都必须兜底释放 stencil，
+            // 否则 GL_EQUAL 泄漏会让后续 HudBlur.blur 误走 reuseOuterMask，
+            // 表现为下一张卡片/下一帧的目标背景 blur 被贴进残留血条形状（模糊"消失"）
+            e.printStackTrace()
+        } finally {
+            Stencil.dispose()
         }
-        Stencil.dispose()
 
         GlStateManager.resetColor()
         font.drawString(healthName, 10F + barWidth, 41F, getColor(-1).rgb)

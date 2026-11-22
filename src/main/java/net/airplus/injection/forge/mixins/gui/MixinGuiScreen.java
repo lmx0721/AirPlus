@@ -12,11 +12,14 @@ import net.airplus.features.module.modules.render.HUD;
 import net.airplus.file.configs.models.ClientConfiguration;
 import net.airplus.injection.implementations.IMinecraft;
 import net.airplus.ui.client.mainmenu.MainMenuStyles;
+import net.airplus.ui.glass.ContainerSkin;
 import net.airplus.utils.inputfix.GuiScreenFix;
 import net.airplus.utils.inputfix.InputFixInit;
 import net.airplus.utils.render.ParticleUtils;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.*;
+import net.minecraft.client.gui.inventory.GuiContainer;
+import net.minecraft.item.ItemStack;
 import net.minecraft.event.ClickEvent;
 import net.minecraft.event.HoverEvent;
 import net.minecraft.util.ChatStyle;
@@ -151,5 +154,14 @@ public abstract class MixinGuiScreen extends MixinGui {
     @Redirect(method = "handleKeyboardInput", at = @At(value = "INVOKE", target = "Lorg/lwjgl/input/Keyboard;getEventKeyState()Z", remap = false))
     private boolean patcher$checkCharacter() {
         return Keyboard.getEventKey() == 0 && Keyboard.getEventCharacter() >= ' ' || Keyboard.getEventKeyState();
+    }
+
+    /** CustomGui 的 Styles New 模式：容器物品信息卡改由 blur + shadow 的玻璃卡绘制（悬停时淡入）。 */
+    @Inject(method = "renderToolTip", at = @At("HEAD"), cancellable = true, require = 0)
+    private void airplus$glassTooltip(ItemStack stack, int x, int y, CallbackInfo ci) {
+        if (!(mc.currentScreen instanceof GuiContainer)) return;
+        GuiContainer container = (GuiContainer) mc.currentScreen;
+        if (!ContainerSkin.isNewLook() || !ContainerSkin.handles(container)) return;
+        if (ContainerSkin.tooltip(container.getSlotUnderMouse(), stack, x, y)) ci.cancel();
     }
 }

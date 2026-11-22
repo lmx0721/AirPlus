@@ -18,8 +18,9 @@ import java.awt.Color
 object CustomGui : Module("CustomGui", Category.CLIENT, defaultState = true) {
     val containers by boolean("Containers", true)
 
-    // 背板外观模式：Liquid = 液态玻璃透镜（默认）；Frosted = 磨砂模糊（无透镜）；Off = 不模糊的实色玻璃
-    val blurMode by choices("Background-Blur", arrayOf("Liquid", "Frosted", "Off"), "Liquid") { containers }
+    // 背板外观模式：Liquid = 液态玻璃透镜（默认）；Frosted = 磨砂模糊（无透镜）；
+    // New = 新样式（大圆角方格 + blur 浮层 + blur 物品信息卡 + 淡入）；Off = 不模糊的实色玻璃
+    val blurMode by choices("Background-Blur", arrayOf("Liquid", "Frosted", "New", "Off"), "New") { containers }
 
     // 光标瞄准格子的动画速度（高亮框滑动 / 显隐 / 物品放大全部按该倍率加速）
     val highlightSpeed by float("Highlight-Speed", 1f, 0.1f..5f) { containers }

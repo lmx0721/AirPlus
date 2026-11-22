@@ -147,8 +147,14 @@ public abstract class MixinGuiContainer extends MixinGuiScreen {
         int accent = CustomGui.INSTANCE.getHighlightColorValue().selectedColor().getRGB();
         float size = bettermyau$slotSize;
         Draw.pushAlpha(show);
-        Draw.rect(x, y, size, size, airplus$skinned ? 4 : 3, Draw.alpha(0xffffff, 0.22f));
-        Draw.outline(x, y, size, size, airplus$skinned ? 4 : 3, 0.75f, Draw.alpha(accent, 0.9f), Draw.alpha(accent, 0.45f));
+        if (ContainerSkin.isNewLook() && airplus$skinned) {
+            // Styles New：淡蓝单格背景高亮 + 细描边，圆角与井格一致
+            Draw.rect(x, y, size, size, 6, Draw.alpha(accent, 0.18f));
+            Draw.outline(x, y, size, size, 6, 0.75f, Draw.alpha(accent, 0.85f), Draw.alpha(accent, 0.40f));
+        } else {
+            Draw.rect(x, y, size, size, airplus$skinned ? 4 : 3, Draw.alpha(0xffffff, 0.22f));
+            Draw.outline(x, y, size, size, airplus$skinned ? 4 : 3, 0.75f, Draw.alpha(accent, 0.9f), Draw.alpha(accent, 0.45f));
+        }
         Draw.popAlpha();
     }
 
@@ -171,6 +177,8 @@ public abstract class MixinGuiContainer extends MixinGuiScreen {
         }
         bettermyau$grow.update(bettermyau$grownSlot != null, dt);
         if (bettermyau$shrink.update(0, dt) <= 0.01f) bettermyau$shrinkingSlot = null;
+        // Styles New：没有悬停物品时重置信息卡淡入，下一次悬停重新淡入
+        if (bettermyau$grownSlot == null) ContainerSkin.tooltipIdle();
     }
 
     @Inject(method = "drawSlot", at = @At("HEAD"), require = 0)
@@ -179,7 +187,9 @@ public abstract class MixinGuiContainer extends MixinGuiScreen {
         if (slot == null || !airplus$highlight()) return;
         float amount = slot == bettermyau$grownSlot ? bettermyau$grow.value : slot == bettermyau$shrinkingSlot ? bettermyau$shrink.value : 0;
         if (amount <= 0.01f) return;
-        float cx = slot.xDisplayPosition + 8, cy = slot.yDisplayPosition + 8, scale = 1 + 0.12f * amount;
+        // Styles New：物品放大更明显（1.22 倍），其它模式保持原 1.12 倍
+        float growth = airplus$skinned && ContainerSkin.isNewLook() ? 0.22f : 0.12f;
+        float cx = slot.xDisplayPosition + 8, cy = slot.yDisplayPosition + 8, scale = 1 + growth * amount;
         GlStateManager.pushMatrix();
         GlStateManager.translate(cx, cy, 0);
         GlStateManager.scale(scale, scale, 1);
@@ -193,6 +203,8 @@ public abstract class MixinGuiContainer extends MixinGuiScreen {
         bettermyau$slotScaled = false;
         GlStateManager.popMatrix();
     }
+
+    // renderToolTip 声明在 GuiScreen（见 MixinGuiScreen.airplus$glassTooltip），不在 GuiContainer。
 
     @Inject(method = "drawScreen", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/gui/inventory/GuiContainer;drawGuiContainerForegroundLayer(II)V", shift = At.Shift.AFTER), require = 0)

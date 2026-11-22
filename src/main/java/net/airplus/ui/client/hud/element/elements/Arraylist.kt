@@ -18,8 +18,10 @@ import net.airplus.ui.client.hud.element.ElementInfo
 import net.airplus.ui.client.hud.element.Side
 import net.airplus.ui.client.hud.element.Side.Horizontal
 import net.airplus.ui.client.hud.element.Side.Vertical
+import net.airplus.ui.font.AWTFontRenderer
 import net.airplus.ui.font.AWTFontRenderer.Companion.assumeNonVolatile
 import net.airplus.ui.font.Fonts
+import net.airplus.ui.font.GameFontRenderer
 import net.airplus.ui.glass.Anim
 import net.airplus.ui.glass.Draw
 import net.airplus.ui.glass.GlState
@@ -38,8 +40,10 @@ import net.airplus.utils.render.shader.shaders.GradientFontShader
 import net.airplus.utils.render.shader.shaders.GradientShader
 import net.airplus.utils.render.shader.shaders.RainbowFontShader
 import net.airplus.utils.render.shader.shaders.RainbowShader
+import net.minecraft.client.gui.FontRenderer
 import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.client.renderer.GlStateManager.resetColor
+import org.lwjgl.opengl.GL11
 import java.awt.Color
 import kotlin.math.exp
 import kotlin.math.pow
@@ -55,7 +59,7 @@ class Arraylist(
     side: Side = Side(Horizontal.RIGHT, Vertical.UP),
 ) : Element("Arraylist", x, y, scale, side) {
 
-    private val style by choices("Style", arrayOf("LB", "Grouped", "Flow", "HotKey", "BM"), "LB")
+    private val style by choices("Style", arrayOf("LB", "Grouped", "Flow", "HotKey", "BM", "Flux"), "LB")
 
     // Grouped / Flow / HotKey 卡片样式（移植自 MoonLight）的专属设置
     private val cardAlpha by float("Background-Alpha", 0.6F, 0F..1F) { style != "LB" }
@@ -171,6 +175,22 @@ class Arraylist(
     ) { style == "LB" && tags }
     private val animationSpeed by float("AnimationSpeed", 0.2F, 0.01F..1F) { style == "LB" && animation == "Back" }
 
+    // ===== Flux 样式（迁移自 edmoonlight ArrayListFlux）=====
+    private val fluxSuffix by choices("Flux-Suffix", arrayOf("None", "Space", "Dash", "Brackets", "Parenthesis"), "Dash") { style == "Flux" }
+    private val fluxSuffixColor by choices("Flux-Suffix-Color", arrayOf("White", "Gray"), "Gray") { style == "Flux" }
+    private val fluxGap by float("Flux-Gap", 3F, 0F..10F) { style == "Flux" }
+    private val fluxBackground by boolean("Flux-Background", true) { style == "Flux" }
+    private val fluxOpacity by int("Flux-Background-Opacity", 160, 0..255) { style == "Flux" && fluxBackground }
+    private val fluxBlur by boolean("Flux-Blur", true) { style == "Flux" && fluxBackground }
+    private val fluxTopLine by boolean("Flux-TopLine", true) { style == "Flux" }
+    private val fluxSideLine by boolean("Flux-SideLine", true) { style == "Flux" }
+    private val fluxColorMode by choices("Flux-Color-Mode", arrayOf("Static", "Rainbow", "Fade", "Blend"), "Rainbow") { style == "Flux" }
+    private val fluxColors = ColorSettingsInteger(this, "FluxColor") { style == "Flux" }.with(blueRibbon)
+    private val fluxSecondColors = ColorSettingsInteger(this, "Flux-Second-Color") { style == "Flux" && fluxColorMode == "Blend" }.with(Color(255, 128, 64))
+    private val fluxFadeSpeed by float("Flux-Fade-Speed", 2F, 0.5F..5F) { style == "Flux" && (fluxColorMode == "Fade" || fluxColorMode == "Blend") }
+    private val fluxSmoothFont by boolean("Flux-Smooth-Font", true) { style == "Flux" }
+    private val fluxHideRender by boolean("Flux-HideRender", false) { style == "Flux" }
+
     companion object : Configurable("StandaloneArraylist") {
         val spacedModulesValue = boolean("SpacedModules", false)
     }
@@ -189,6 +209,9 @@ class Arraylist(
     private lateinit var tagSuffix: String
 
     private var modules = emptyList<Module>()
+
+    // Flux 样式的每模块高度动画（0 -> fontHeight + gap*2）
+    private val fluxAnim = HashMap<Module, Float>()
 
     private val inactiveColor = Color(255, 255, 255, 100).rgb
 
@@ -251,6 +274,7 @@ class Arraylist(
         "Flow" -> drawFlow()
         "HotKey" -> drawHotKey()
         "BM" -> drawBM()
+        "Flux" -> drawFlux()
         else -> drawLB()
     }
 
@@ -1385,7 +1409,184 @@ class Arraylist(
                 it.slide > 0 && !it.isHidden && !(hideRender && it.category == Category.RENDER)
             }.sortedBy { -font.getStringWidth(getDisplayString(it)) }
 
+            "Flux" -> moduleManager.filter {
+                it.state && !it.isHidden && !(fluxHideRender && it.category == Category.RENDER)
+            }.sortedBy { -font.getStringWidth(it.name + fluxTagOf(it)) }
+
             else -> moduleManager.filter { isCardVisible(it) }
         }
+    }
+
+    // ===== Flux 样式（迁移自 edmoonlight ArrayListFlux，右对齐、逐行高度动画、彩色行） =====
+
+    /** edmoonlight FluxHud#approach */
+    private fun fluxApproach(animation: Float, target: Float, speed: Float): Float {
+        val add = RenderUtils.deltaTime * (speed / 1000F)
+        return if (animation < target) minOf(target, animation + add) else maxOf(target, animation - add)
+    }
+
+    private fun fluxPrefix(): String = when (fluxSuffix) {
+        "Space" -> " "
+        "Dash" -> " - "
+        "Brackets" -> " ("
+        "Parenthesis" -> " ["
+        else -> ""
+    }
+
+    private fun fluxPostfix(): String = when (fluxSuffix) {
+        "Brackets" -> ")"
+        "Parenthesis" -> "]"
+        else -> ""
+    }
+
+    private fun fluxTagOf(module: Module): String {
+        if (fluxSuffix == "None") return ""
+        val tag = module.tag?.replace(Regex("§."), "")?.trim() ?: return ""
+        return if (tag.isEmpty()) "" else fluxPrefix() + tag + fluxPostfix()
+    }
+
+    /** edmoonlight FluxHud#darker */
+    private fun fluxDarker(hex: Int, factor: Int): Int {
+        val ratio = 100F / factor
+        val a = (hex shr 24) and 255
+        val r = (((hex shr 16) and 255) - ((hex shr 16) and 255) / ratio).toInt().coerceAtLeast(0)
+        val g = (((hex shr 8) and 255) - ((hex shr 8) and 255) / ratio).toInt().coerceAtLeast(0)
+        val b = ((hex and 255) - (hex and 255) / ratio).toInt().coerceAtLeast(0)
+        return (a shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
+    /** edmoonlight FluxHud#blend */
+    private fun fluxBlend(color1: Int, color2: Int, offsetIn: Float): Int {
+        var offset = offsetIn
+        if (offset > 1F) offset = 1F - (offset % 1F)
+        val invert = 1.0 - offset
+        val r = (((color1 shr 16) and 255) * invert + ((color2 shr 16) and 255) * offset).toInt()
+        val g = (((color1 shr 8) and 255) * invert + ((color2 shr 8) and 255) * offset).toInt()
+        val b = ((color1 and 255) * invert + (color2 and 255) * offset).toInt()
+        val a = (((color1 shr 24) and 255) * invert + ((color2 shr 24) and 255) * offset).toInt()
+        return ((a and 255) shl 24) or ((r and 255) shl 16) or ((g and 255) shl 8) or (b and 255)
+    }
+
+    /** edmoonlight FluxHud#color：Static / Rainbow / Fade / Blend */
+    private fun fluxColorAt(count: Int): Int {
+        val base = fluxColors.color().rgb or 0xFF000000.toInt()
+        val now = System.currentTimeMillis()
+        val ms = (fluxFadeSpeed * 1000F).toLong().coerceAtLeast(1L)
+        return when (fluxColorMode) {
+            "Rainbow" -> {
+                val hsb = Color.RGBtoHSB((base shr 16) and 255, (base shr 8) and 255, base and 255, null)
+                val hue = ((Math.ceil(now / 5.1 + count * 10) % 360.0) / 360.0).toFloat()
+                Color.HSBtoRGB(hue, hsb[1], hsb[2]) or 0xFF000000.toInt()
+            }
+            "Fade" -> fluxBlend(base, fluxDarker(base, 60), ((now - count * -100L) % ms) / (ms / 2.0f))
+            "Blend" -> fluxBlend(base, fluxSecondColors.color().rgb or 0xFF000000.toInt(), ((now - count * -100L) % ms) / (ms / 2.0f))
+            else -> base
+        }
+    }
+
+    private fun drawFlux(): Border? {
+        var result: Border? = null
+        assumeNonVolatile {
+            resetColor()
+
+            val fontRenderer: FontRenderer = if (fluxSmoothFont) font else mc.fontRendererObj
+            val fontHeight = when (fontRenderer) {
+                is GameFontRenderer -> fontRenderer.height
+                is AWTFontRenderer -> fontRenderer.height
+                else -> fontRenderer.FONT_HEIGHT
+            }.toFloat()
+
+            val topLineOffset = if (fluxTopLine) 1F else 0F
+            val offsetX = if (fluxSmoothFont) -0.5F else 1F
+            val suffixGray = -5592406
+            val bgAlpha = (fluxOpacity and 0xFF) shl 24
+            val suffixColor = if (fluxSuffixColor == "White") -1 else suffixGray
+
+            // 宽度降序排序（与 edmoonlight 一致）
+            val rows = moduleManager.filter {
+                it.state && !it.isHidden && !(fluxHideRender && it.category == Category.RENDER)
+            }.map { module ->
+                val textWidth = fontRenderer.getStringWidth(module.name + fluxTagOf(module)).toFloat()
+                module to textWidth
+            }.sortedByDescending { it.second }
+
+            // Pass 1：更新逐行高度动画并排布
+            data class FluxRow(val module: Module, val textWidth: Float, val rowWidth: Float, val top: Float, val height: Float)
+            val laidOut = ArrayList<FluxRow>()
+            var posY = 0F
+            var count = 0
+            for ((module, textWidth) in rows) {
+                val anim = fluxAnim.getOrPut(module) { 0F }
+                val newHeight = fluxApproach(anim, fontHeight + fluxGap * 2F, fontHeight * 9F)
+                fluxAnim[module] = newHeight
+                if (newHeight <= 0.05F) continue
+                laidOut.add(FluxRow(module, textWidth, textWidth + (if (fluxSideLine) 4F else 2F), posY, newHeight))
+                posY += newHeight
+                count++
+            }
+
+            if (count == 0) {
+                if (mc.currentScreen is GuiHudDesigner) result = emptyCardBorder()
+                return@assumeNonVolatile
+            }
+
+            // Pass 2：整表一次全屏模糊（AABB 并集 + 逐行矩形遮罩，与 LB 样式同一套路）
+            if (fluxBackground && fluxBlur) {
+                var minX = Float.MAX_VALUE
+                var minY = Float.MAX_VALUE
+                var maxX = -Float.MAX_VALUE
+                var maxY = -Float.MAX_VALUE
+                laidOut.forEach {
+                    minX = minOf(minX, -it.rowWidth - 1F); minY = minOf(minY, it.top + topLineOffset)
+                    maxX = maxOf(maxX, 1F); maxY = maxOf(maxY, it.top + topLineOffset + it.height)
+                }
+                HudBlur.blur(
+                    (scale * (minX + renderX)).toFloat(), (scale * (minY + renderY)).toFloat(),
+                    (scale * (maxX + renderX)).toFloat(), (scale * (maxY + renderY)).toFloat(),
+                ) {
+                    laidOut.forEach {
+                        drawRect(-it.rowWidth - 1F, it.top + topLineOffset, 1F, it.top + topLineOffset + it.height, -1)
+                    }
+                }
+            }
+
+            // Pass 3：逐行背景、顶线、侧边线、裁剪文本
+            laidOut.forEachIndexed { index, row ->
+                val rowTop = row.top + topLineOffset
+                val rowBottom = row.top + topLineOffset + row.height
+                val color = fluxColorAt(index)
+
+                if (fluxBackground) {
+                    drawRect(-row.rowWidth - 1F, rowTop, 1F, rowBottom, bgAlpha)
+                }
+
+                if (fluxTopLine && index == 0) {
+                    drawRect(-row.rowWidth, row.top, 0F, row.top + 1F, color)
+                }
+
+                if (fluxSideLine) {
+                    drawRect(-1F, row.top, 0F, rowBottom, color)
+                }
+
+                // 文本可见性裁剪（随高度动画逐渐展开）
+                RenderUtils.makeScissorBox(
+                    (scale * (-row.rowWidth - 1F + renderX)).toFloat(), (scale * (rowTop + renderY)).toFloat(),
+                    (scale * (5F + renderX)).toFloat(), (scale * (rowBottom + renderY)).toFloat()
+                )
+                GL11.glEnable(GL11.GL_SCISSOR_TEST)
+
+                fontRenderer.drawString(row.module.name, -row.rowWidth + offsetX, rowTop, color, true)
+                val sub = fluxTagOf(row.module)
+                if (sub.isNotEmpty()) {
+                    fontRenderer.drawString(sub, -row.rowWidth + offsetX + row.textWidth, rowTop, suffixColor, true)
+                }
+
+                GL11.glDisable(GL11.GL_SCISSOR_TEST)
+            }
+
+            val widest = laidOut.maxOf { it.rowWidth + 1F }
+            result = Border(-widest, 0F, 0F, posY)
+        }
+        return result
     }
 }

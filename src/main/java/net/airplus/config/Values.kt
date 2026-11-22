@@ -322,7 +322,9 @@ class ListValue(
 
     override fun fromJsonF(element: JsonElement) =
         when {
-            element.isJsonPrimitive -> validate(element.asString)
+            // 列表可能是动态填充的（如 Gif 的目录扫描），加载配置时不能因
+            // 值暂时不在列表中就回退默认值，否则重启后会丢失上一次的选择
+            element.isJsonPrimitive -> values.find { it.equals(element.asString, true) } ?: element.asString
             else -> null
         }
 

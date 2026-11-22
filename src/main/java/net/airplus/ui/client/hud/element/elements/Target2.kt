@@ -538,6 +538,9 @@ class Target2 : Element("Target2"), Listenable {
             GlStateManager.popMatrix()
         } catch (e: Exception) {
             e.printStackTrace()
+            // 兜底释放 stencil：样式内部的 Stencil.write/erase 若因异常被跳过 dispose，
+            // GL_EQUAL 泄漏会让下一帧的 HudBlur.blur 误走 reuseOuterMask（blur 消失）
+            Stencil.dispose()
         } finally {
             GlStateManager.resetColor()
             GL11.glPopMatrix()
@@ -818,6 +821,9 @@ class Target2 : Element("Target2"), Listenable {
             }
         } catch (e: Exception) {
             e.printStackTrace()
+            // 兜底释放 stencil：样式内部的 Stencil.write/erase 若因异常被跳过 dispose，
+            // GL_EQUAL 泄漏会让下一帧的 HudBlur.blur 误走 reuseOuterMask（blur 消失）
+            Stencil.dispose()
         } finally {
             GlStateManager.resetColor()
             GL11.glPopMatrix()

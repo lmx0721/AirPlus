@@ -49,7 +49,9 @@ object HUD : MinecraftInstance {
         Nearby::class.java,
         Ping::class.java,
         HitDirection::class.java,
-        Keybinds::class.java
+        Keybinds::class.java,
+        Gif::class.java,
+        BlockCount::class.java
     )
 
     val ELEMENTS = ALL_ELEMENT_CLASSES.associateWithTo(IdentityHashMap(ALL_ELEMENT_CLASSES.size)) {

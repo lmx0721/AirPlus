@@ -13,6 +13,7 @@ import net.airplus.event.handler
 import net.airplus.features.module.Category
 import net.airplus.features.module.Module
 import net.airplus.features.module.modules.world.scaffolds.Scaffold
+import net.airplus.features.module.modules.player.AutoArmor
 import net.airplus.utils.client.PacketUtils.sendPacket
 import net.minecraft.enchantment.Enchantment
 import net.minecraft.enchantment.EnchantmentHelper
@@ -125,6 +126,9 @@ object ArmorBreaker2 : Module("ArmorBreaker2", Category.COMBAT) {
 
         val target = KillAura.target ?: return@handler
         if (Scaffold.state) return@handler
+
+        // AutoArmor 优先：装备盔甲期间暂停破甲，避免同时 windowClick 换刀 / C09 槽位伪装冲突
+        if (AutoArmor.isWorking) return@handler
 
         val slot = getSwitchSlot(target.hurtTime)
         if (slot == -1) return@handler
