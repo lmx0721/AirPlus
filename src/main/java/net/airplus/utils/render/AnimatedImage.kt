@@ -12,6 +12,7 @@ import net.minecraft.client.renderer.texture.DynamicTexture
 import java.awt.AlphaComposite
 import java.awt.Graphics2D
 import java.awt.image.BufferedImage
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -83,6 +84,20 @@ class AnimatedImage : MinecraftInstance {
     fun loadFile(file: File) {
         val normalized = file.absoluteFile.normalize().path
         request("file:$normalized") { file.inputStream() }
+    }
+
+    /**
+     * 从 jar 内置资源（ResourceLocation）加载。资源管理器非线程安全，
+     * 在调用线程（渲染线程）先把字节读出，再交给后台解码线程。
+     * request 内部按 key 去重：同一资源不会每帧重读。
+     */
+    fun loadResource(location: net.minecraft.util.ResourceLocation) {
+        val key = "resource:$location"
+        if (key == sourceKey && (loading || isReady || error != null)) return
+        val bytes = runCatching {
+            mc.resourceManager.getResource(location).inputStream.use { it.readBytes() }
+        }.getOrNull()
+        request(key) { ByteArrayInputStream(bytes ?: throw IOException("Missing resource: $location")) }
     }
 
     fun update() {

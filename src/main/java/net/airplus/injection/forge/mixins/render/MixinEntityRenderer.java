@@ -170,6 +170,26 @@ public abstract class MixinEntityRenderer {
                 GlStateManager.enableLighting();
                 GlStateManager.disableLighting();
                 /*
+                 * 第六轮补充：固定管线杂项硬同步（ESP outline/wireframe 等实体渲染 pass 的残留）。
+                 * 这些状态 GlStateManager 不记账或属于实体渲染残留，上面各两步法覆盖不到：
+                 *  - stencil：outline ESP 走完 renderFive 已真实关掉，但万一异常路径残留开启，
+                 *    手部片元会被过期的 stencil 值裁掉；无 GlStateManager 缓存，裸关即可。
+                 *  - polygon mode：wireframe ESP 留下的 GL_LINE 会让手臂/物品变线框；
+                 *    裸写回 FILL。
+                 *  - colorMask：blur 管线等历史问题源（缓存失步会让守卫式恢复被跳过），
+                 *    两步法把真实与缓存收敛为全开。
+                 *  - unit-0 texEnv：强制回 MODULATE（等价 vanilla unsetBrightness 的收敛值），
+                 *    防 setBrightness 的 COMBINE/INTERPOLATE 残留把手臂采样染黑。
+                 */
+                GL11.glDisable(GL11.GL_STENCIL_TEST);
+                GL11.glStencilFunc(GL11.GL_ALWAYS, 0, 0xF);
+                GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_KEEP);
+                GL11.glPolygonMode(GL11.GL_FRONT_AND_BACK, GL11.GL_FILL);
+                GlStateManager.colorMask(false, false, false, false);
+                GlStateManager.colorMask(true, true, true, true);
+                GlStateManager.setActiveTexture(OpenGlHelper.defaultTexUnit);
+                GL11.glTexEnvi(GL11.GL_TEXTURE_ENV, GL11.GL_TEXTURE_ENV_MODE, GL11.GL_MODULATE);
+                /*
                  * unit-1（lightmap）强制同步（第五轮补充：光照"被覆盖"的真正出口）。
                  * 许多 Render3DEvent 处理器（Trail/Particles/Blink 等）调用
                  * mc.entityRenderer.disableLightmap() 且从不 enableLightmap()：

@@ -213,6 +213,20 @@ class Arraylist(
     // Flux 样式的每模块高度动画（0 -> fontHeight + gap*2）
     private val fluxAnim = HashMap<Module, Float>()
 
+    // ===== LB 行缓存（每 tick 失效，见 updateElement）=====
+    // drawLB 每帧对每个可见模块重复执行 getDisplayString + getStringWidth 3~5 次
+    // （动画宽度、行矩形、上一行比较、文本绘制、图标位），字符串拼接与逐字符
+    // advance 全在渲染热路径上；Random 颜色模式的 getHSBColor 也是每行每帧重复分配。
+    // updateElement 每 tick 重建缓存，渲染帧只读（tick 内设置/标签变化最多延迟 50ms 生效）。
+    private class LbRow(val text: String, val width: Float, val color: Int)
+
+    private val lbRows = HashMap<Module, LbRow>()
+
+    private fun lbRow(module: Module): LbRow = lbRows.getOrPut(module) {
+        val text = getDisplayString(module)
+        LbRow(text, font.getStringWidth(text).toFloat(), Color.getHSBColor(module.hue, saturation, brightness).rgb)
+    }
+
     private val inactiveColor = Color(255, 255, 255, 100).rgb
 
     private val isCustomRectSupported
@@ -294,9 +308,7 @@ class Arraylist(
 
                 if (!shouldShow && module.slide <= 0f) continue
 
-                val displayString = getDisplayString(module)
-
-                val width = font.getStringWidth(displayString) + padding
+                val width = lbRow(module).width + padding
 
                 when (animation) {
                     "Slide" -> {
@@ -359,7 +371,7 @@ class Arraylist(
                     rect[3] = yPos + textSpacer
                     when (side.horizontal) {
                         Horizontal.LEFT -> {
-                            val width = font.getStringWidth(getDisplayString(module))
+                            val width = lbRow(module).width
                             val xPos = -(width - module.slide) + if (rectMode == "Left") 6 else 3
                             rect[0] = (if (rectMode == "Left") 1f else 0f) - 3f
                             rect[2] = xPos + width + (if (rectMode == "Right") 4f else 1f) + 3f
@@ -382,21 +394,30 @@ class Arraylist(
                     maxX = maxOf(maxX, rect[2]); maxY = maxOf(maxY, rect[3])
                 }
 
-                HudBlur.blur(
-                    (scale * (minX + renderX)).toFloat(), (scale * (minY + renderY)).toFloat(),
-                    (scale * (maxX + renderX)).toFloat(), (scale * (maxY + renderY)).toFloat(),
-                    roundedBackgroundRadius, panelCorners
-                ) {
-                    rowRects.forEach {
-                        drawRoundedRect(it[0], it[1], it[2], it[3], -1, roundedBackgroundRadius, RenderUtils.RoundedCorners.ALL)
+                // 模糊门控：背景全透明时贴回结果不可见，跳过（stencil 清屏 + 贴回 quad 纯浪费）
+                val blurEnabled = when (backgroundMode) {
+                    "Custom", "Theme" -> bgColors.color().alpha > 0
+                    "Fade" -> bgFadeColors.color().alpha > 0
+                    else -> true
+                }
+                if (blurEnabled) {
+                    HudBlur.blur(
+                        (scale * (minX + renderX)).toFloat(), (scale * (minY + renderY)).toFloat(),
+                        (scale * (maxX + renderX)).toFloat(), (scale * (maxY + renderY)).toFloat(),
+                        roundedBackgroundRadius, panelCorners
+                    ) {
+                        rowRects.forEach {
+                            drawRoundedRect(it[0], it[1], it[2], it[3], -1, roundedBackgroundRadius, RenderUtils.RoundedCorners.ALL)
+                        }
                     }
                 }
 
+                val backgroundGradientEnabled = backgroundMode == "Gradient"
                 GradientShader.begin(
-                    backgroundMode == "Gradient",
+                    backgroundGradientEnabled,
                     gradientX,
                     gradientY,
-                    bgGradColors.toColorArray(maxBackgroundGradientColors),
+                    if (backgroundGradientEnabled) bgGradColors.toColorArray(maxBackgroundGradientColors) else emptyList(),
                     gradientBackgroundSpeed,
                     gradientOffset
                 ).use {
@@ -408,7 +429,7 @@ class Arraylist(
                                 when (backgroundMode) {
                                     "Gradient" -> 0
                                     "Rainbow" -> 0
-                                    "Random" -> Color.getHSBColor(module.hue, saturation, brightness).rgb
+                                    "Random" -> lbRow(module).color
                                     "Fade" -> fade(bgFadeColors, index * bgFadeDistance, 100).rgb
                                     "Theme" -> ClientThemesUtils.getColorWithAlpha(index, bgColors.color().alpha).rgb
                                     else -> backgroundCustomColor
@@ -424,7 +445,7 @@ class Arraylist(
             modules.forEachIndexed { index, module ->
                 val yPos =
                     (if (side.vertical == Vertical.DOWN) -textSpacer else textSpacer) * if (side.vertical == Vertical.DOWN) index + 1 else index
-                val moduleColor = Color.getHSBColor(module.hue, saturation, brightness).rgb
+                val moduleColor = lbRow(module).color
 
                 val textFadeColor = fade(textFadeColors, index * textFadeDistance, 100).rgb
                 val rectFadeColor = fade(rectFadeColors, index * rectFadeDistance, 100).rgb
@@ -433,21 +454,22 @@ class Arraylist(
                 val markAsInactive =
                     inactiveStyle == "Color" && !module.isActive
 
-                val displayString = getDisplayString(module)
-                val displayStringWidth = font.getStringWidth(displayString)
+                val row = lbRow(module)
+                val displayString = row.text
+                val displayStringWidth = row.width
 
-                val previousDisplayString = getDisplayString(modules[(if (index > 0) index else 1) - 1])
-                val previousDisplayStringWidth = font.getStringWidth(previousDisplayString)
+                val previousDisplayStringWidth = lbRow(modules[(if (index > 0) index else 1) - 1]).width
 
                 when (side.horizontal) {
                     Horizontal.RIGHT, Horizontal.MIDDLE -> {
                         val xPos = -module.slide - if (displayIcons) 2 else 3
 
+                        val textGradientEnabled = !markAsInactive && textColorMode == "Gradient"
                         GradientFontShader.begin(
-                            !markAsInactive && textColorMode == "Gradient",
+                            textGradientEnabled,
                             gradientX,
                             gradientY,
-                            textGradColors.toColorArray(maxTextGradientColors),
+                            if (textGradientEnabled) textGradColors.toColorArray(maxTextGradientColors) else emptyList(),
                             gradientTextSpeed,
                             gradientOffset
                         ).use {
@@ -472,11 +494,12 @@ class Arraylist(
                             }
                         }
 
+                        val rectGradientEnabled = !markAsInactive && isCustomRectGradientSupported
                         GradientShader.begin(
-                            !markAsInactive && isCustomRectGradientSupported,
+                            rectGradientEnabled,
                             gradientX,
                             gradientY,
-                            rectGradColors.toColorArray(maxRectGradientColors),
+                            if (rectGradientEnabled) rectGradColors.toColorArray(maxRectGradientColors) else emptyList(),
                             gradientRectSpeed,
                             gradientOffset
                         ).use {
@@ -550,14 +573,15 @@ class Arraylist(
                     }
 
                     Horizontal.LEFT -> {
-                        val width = font.getStringWidth(displayString)
+                        val width = displayStringWidth
                         val xPos = -(width - module.slide) + if (rectMode == "Left") 6 else 3
 
+                        val textGradientEnabled = !markAsInactive && textColorMode == "Gradient"
                         GradientFontShader.begin(
-                            !markAsInactive && textColorMode == "Gradient",
+                            textGradientEnabled,
                             gradientX,
                             gradientY,
-                            textGradColors.toColorArray(maxTextGradientColors),
+                            if (textGradientEnabled) textGradColors.toColorArray(maxTextGradientColors) else emptyList(),
                             gradientTextSpeed,
                             gradientOffset
                         ).use {
@@ -578,11 +602,12 @@ class Arraylist(
                             }
                         }
 
+                        val rectGradientEnabled = !markAsInactive && isCustomRectGradientSupported
                         GradientShader.begin(
-                            !markAsInactive && isCustomRectGradientSupported,
+                            rectGradientEnabled,
                             gradientX,
                             gradientY,
-                            rectGradColors.toColorArray(maxRectGradientColors),
+                            if (rectGradientEnabled) rectGradColors.toColorArray(maxRectGradientColors) else emptyList(),
                             gradientRectSpeed,
                             gradientOffset
                         ).use {
@@ -675,7 +700,7 @@ class Arraylist(
                 }
 
                 if (displayIcons) {
-                    val width = font.getStringWidth(displayString)
+                    val width = displayStringWidth
 
                     val side = if (side.horizontal == Side.Horizontal.LEFT) {
                         (-width + module.slide) / 6 + if (rectMode == "Left") 3 else 0
@@ -1404,10 +1429,13 @@ class Arraylist(
     }
 
     override fun updateElement() {
+        // LB 行缓存每 tick 重建：排序本身就需要每模块一次文本+宽度计算，
+        // 顺便填充缓存，渲染帧（每秒 60+ 次）不再重复计算
+        lbRows.clear()
         modules = when (style) {
             "LB" -> moduleManager.filter {
                 it.slide > 0 && !it.isHidden && !(hideRender && it.category == Category.RENDER)
-            }.sortedBy { -font.getStringWidth(getDisplayString(it)) }
+            }.sortedBy { -lbRow(it).width }
 
             "Flux" -> moduleManager.filter {
                 it.state && !it.isHidden && !(fluxHideRender && it.category == Category.RENDER)
@@ -1502,25 +1530,51 @@ class Arraylist(
             val bgAlpha = (fluxOpacity and 0xFF) shl 24
             val suffixColor = if (fluxSuffixColor == "White") -1 else suffixGray
 
-            // 宽度降序排序（与 edmoonlight 一致）
-            val rows = moduleManager.filter {
+            // 宽度降序排序（与 edmoonlight 一致）；关闭的模块走收起动画：
+            // 保留在布局里高度渐缩到 0，而不是瞬间消失（启用行在前、收起行在后）
+            val enabled = moduleManager.filter {
                 it.state && !it.isHidden && !(fluxHideRender && it.category == Category.RENDER)
             }.map { module ->
-                val textWidth = fontRenderer.getStringWidth(module.name + fluxTagOf(module)).toFloat()
-                module to textWidth
+                module to fontRenderer.getStringWidth(module.name + fluxTagOf(module)).toFloat()
             }.sortedByDescending { it.second }
 
+            val enabledSet = enabled.mapTo(HashSet()) { it.first }
+            val collapsing = fluxAnim.entries
+                .filter { it.key !in enabledSet && it.value > 0.05F }
+                .map { it.key to fontRenderer.getStringWidth(it.key.name + fluxTagOf(it.key)).toFloat() }
+                .sortedByDescending { it.second }
+
             // Pass 1：更新逐行高度动画并排布
-            data class FluxRow(val module: Module, val textWidth: Float, val rowWidth: Float, val top: Float, val height: Float)
+            data class FluxRow(
+                val module: Module, val nameWidth: Float, val textWidth: Float,
+                val rowWidth: Float, val top: Float, val height: Float
+            )
             val laidOut = ArrayList<FluxRow>()
             var posY = 0F
             var count = 0
-            for ((module, textWidth) in rows) {
+            for ((module, textWidth) in enabled) {
+                val nameWidth = fontRenderer.getStringWidth(module.name).toFloat()
                 val anim = fluxAnim.getOrPut(module) { 0F }
                 val newHeight = fluxApproach(anim, fontHeight + fluxGap * 2F, fontHeight * 9F)
                 fluxAnim[module] = newHeight
-                if (newHeight <= 0.05F) continue
-                laidOut.add(FluxRow(module, textWidth, textWidth + (if (fluxSideLine) 4F else 2F), posY, newHeight))
+                if (newHeight <= 0.05F) {
+                    fluxAnim.remove(module)
+                    continue
+                }
+                laidOut.add(FluxRow(module, nameWidth, textWidth, textWidth + (if (fluxSideLine) 4F else 2F), posY, newHeight))
+                posY += newHeight
+                count++
+            }
+            for ((module, textWidth) in collapsing) {
+                val nameWidth = fontRenderer.getStringWidth(module.name).toFloat()
+                val anim = fluxAnim[module] ?: continue
+                val newHeight = fluxApproach(anim, 0F, fontHeight * 9F)
+                if (newHeight <= 0.05F) {
+                    fluxAnim.remove(module)
+                    continue
+                }
+                fluxAnim[module] = newHeight
+                laidOut.add(FluxRow(module, nameWidth, textWidth, textWidth + (if (fluxSideLine) 4F else 2F), posY, newHeight))
                 posY += newHeight
                 count++
             }
@@ -1578,7 +1632,9 @@ class Arraylist(
                 fontRenderer.drawString(row.module.name, -row.rowWidth + offsetX, rowTop, color, true)
                 val sub = fluxTagOf(row.module)
                 if (sub.isNotEmpty()) {
-                    fontRenderer.drawString(sub, -row.rowWidth + offsetX + row.textWidth, rowTop, suffixColor, true)
+                    // tag 起点必须用「名称自身的宽度」定位：此前误用 textWidth（名称+tag 总宽），
+                    // tag 被画到行右边缘外并被 scissor 裁掉，表现为 tag 不显示
+                    fontRenderer.drawString(sub, -row.rowWidth + offsetX + row.nameWidth, rowTop, suffixColor, true)
                 }
 
                 GL11.glDisable(GL11.GL_SCISSOR_TEST)

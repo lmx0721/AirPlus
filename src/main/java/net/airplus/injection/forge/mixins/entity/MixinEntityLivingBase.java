@@ -11,6 +11,7 @@ import net.airplus.event.EventState;
 import net.airplus.event.JumpEvent;
 import net.airplus.features.module.modules.combat.AutoClicker;
 import net.airplus.features.module.modules.fun.LocalNPC;
+import net.airplus.features.module.modules.fun.Pet;
 import net.airplus.features.module.modules.movement.LiquidWalk;
 import net.airplus.features.module.modules.movement.NoJumpDelay;
 import net.airplus.features.module.modules.movement.Sprint;
@@ -135,6 +136,7 @@ public abstract class MixinEntityLivingBase extends MixinEntity {
     @Inject(method = "onLivingUpdate", at = @At("HEAD"))
     private void localNPCTick(CallbackInfo callbackInfo) {
         LocalNPC.INSTANCE.onFakeTick((EntityLivingBase) (Object) this);
+        Pet.INSTANCE.onFakeTick((EntityLivingBase) (Object) this);
     }
 
     @Inject(method = "onLivingUpdate", at = @At(value = "FIELD", target = "Lnet/minecraft/entity/EntityLivingBase;isJumping:Z", ordinal = 1))

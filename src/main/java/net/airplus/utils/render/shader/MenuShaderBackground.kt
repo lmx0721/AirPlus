@@ -188,6 +188,19 @@ object MenuShaderBackground {
         uniform4(program, "iMouse", mouseX, mouseY, 0f, 0f)
     }
 
+    /** 返回预设的已链接程序句柄（0 = 编译预算延迟，-1 = 编译失败缓存）；供世界天空渲染复用 */
+    fun getProgram(name: String): Int = ensureProgram(name)
+
+    /** 世界天空路径：动画时间按 [timeScale] 缩放后写入预设 uniforms（无鼠标输入） */
+    fun setPresetUniforms(program: Int, width: Int, height: Int, timeScale: Float) {
+        val time = (System.currentTimeMillis() % 3600000L) / 1000f * timeScale
+        uniform1(program, "time", time)
+        uniform2(program, "resolution", width.toFloat(), height.toFloat())
+        uniform1(program, "iTime", time)
+        uniform2(program, "iResolution", width.toFloat(), height.toFloat())
+        uniform3(program, "iResolution", width.toFloat(), height.toFloat(), 1f)
+    }
+
     /**
      * Fullscreen animated menu background: renders into an offscreen target at most
      * every 16ms and presents it stretched to the real framebuffer every call.

@@ -11,6 +11,10 @@ object EmbeddedStencil {
     private var prevStencilTest = false
     private var prevClearStencil = 0
 
+    /** 限定清屏范围时保存调用方 scissor 状态用（渲染线程单线程使用）。
+     *  GL 查询必须用 direct buffer（heap buffer 会被 LWJGL2 拒绝） */
+    private val scissorSave = org.lwjgl.BufferUtils.createIntBuffer(16)
+
     fun checkSetupFBO(framebuffer: Framebuffer?) {
         if (framebuffer != null && framebuffer.depthBuffer > -1) {
             setupFBO(framebuffer)
@@ -29,12 +33,33 @@ object EmbeddedStencil {
         EXTFramebufferObject.glBindRenderbufferEXT(EXTFramebufferObject.GL_RENDERBUFFER_EXT, 0)
     }
 
-    fun write(invert: Boolean) {
+    /**
+     * 开启 stencil 写入（GL_ALWAYS REPLACE），可选把 stencil 清屏限定在给定 GL 像素矩形内。
+     *
+     * @param clearBox null = 全屏清屏（旧行为）；非 null = {x, y, w, h}（GL 像素坐标），
+     *        只清除该矩形内的 stencil。正确性依据：调用方（HudBlur）的贴回 quad 自身被
+     *        scissor 到同一矩形，区域外的旧 stencil 值不参与本次 GL_EQUAL 贴回判定，
+     *        因此无需全屏清除——把每面板一次的全屏 stencil 写入（1080p ≈ 2MB）降到面板面积
+     */
+    fun write(invert: Boolean, clearBox: IntArray? = null) {
         checkSetupFBO(Minecraft.getMinecraft().framebuffer)
         prevStencilTest = glIsEnabled(GL_STENCIL_TEST)
         prevClearStencil = glGetInteger(GL_STENCIL_CLEAR_VALUE)
-        glClearStencil(0)
-        glClear(GL_STENCIL_BUFFER_BIT)
+        if (clearBox != null) {
+            // 保存调用方 scissor 状态 → 限定清屏范围 → 还原（清屏绝不泄漏 scissor）
+            val prevScissorOn = glIsEnabled(GL_SCISSOR_TEST)
+            scissorSave.clear()
+            glGetInteger(GL_SCISSOR_BOX, scissorSave)
+            glScissor(clearBox[0], clearBox[1], clearBox[2], clearBox[3])
+            glEnable(GL_SCISSOR_TEST)
+            glClearStencil(0)
+            glClear(GL_STENCIL_BUFFER_BIT)
+            glScissor(scissorSave[0], scissorSave[1], scissorSave[2], scissorSave[3])
+            if (prevScissorOn) glEnable(GL_SCISSOR_TEST) else glDisable(GL_SCISSOR_TEST)
+        } else {
+            glClearStencil(0)
+            glClear(GL_STENCIL_BUFFER_BIT)
+        }
         glEnable(GL_STENCIL_TEST)
         glStencilFunc(GL_ALWAYS, 1, 65535)
         glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE)

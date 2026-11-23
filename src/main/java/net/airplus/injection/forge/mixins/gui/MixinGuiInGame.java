@@ -142,6 +142,14 @@ public abstract class MixinGuiInGame extends Gui {
             return;
         }
 
+        // Grid / Sakura 热栏：同样接管原版热栏（本体在 HUD 的 Render2DEvent 处理器内绘制，
+        // 与其它 HUD 组件共享同帧模糊快照）。状态条与 XP 均保持原版，无需压制标记。
+        if (hud.gridReplacesHotbar() || hud.sakuraReplacesHotbar()) {
+            liquidBounce$injectRender2DEvent(delta);
+            ci.cancel();
+            return;
+        }
+
         if (mc.getRenderViewEntity() instanceof EntityPlayer) {
             EntityPlayer entityPlayer = (EntityPlayer) mc.getRenderViewEntity();
             float slot = entityPlayer.inventory.currentItem;

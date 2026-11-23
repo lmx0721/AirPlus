@@ -16,8 +16,10 @@ import net.airplus.ui.client.hud.element.Element.Companion.MAX_GRADIENT_COLORS
 import net.airplus.ui.glass.BmDock
 import net.airplus.utils.render.ColorSettingsFloat
 import net.airplus.utils.render.ColorSettingsInteger
+import net.airplus.utils.render.GridHotbar
 import net.airplus.utils.render.HudBlur
 import net.airplus.utils.render.RiseHotbar
+import net.airplus.utils.render.SakuraHotbar
 import net.minecraft.client.gui.GuiChat
 import net.minecraft.client.gui.ScaledResolution
 import net.minecraft.entity.player.EntityPlayer
@@ -27,8 +29,13 @@ import net.minecraftforge.client.GuiIngameForge
 object HUD : Module("HUD", Category.RENDER, gameDetecting = false, defaultState = true, defaultHidden = true) {
     val customHotbar by boolean("CustomHotbar", true)
 
-    // Hotbar 风格：LB = AirPlus 自绘圆角热栏；BM = BetterMyau 玻璃悬浮 dock 移植；Rise = Rise HotBar 主题移植
-    val hotbarStyle by choices("Hotbar-Style", arrayOf("LB", "BM", "Rise"), "LB") { customHotbar }
+    // Hotbar 风格：LB = AirPlus 自绘圆角热栏；BM = BetterMyau 玻璃悬浮 dock 移植；Rise = Rise HotBar 主题移植；
+    // Grid = 独立方格 + 底部滑动选中线；Sakura = 樱花粉圆角边框体系
+    val hotbarStyle by choices(
+        "Hotbar-Style",
+        arrayOf("LB", "BM", "Rise", "Grid", "Sakura"),
+        "LB"
+    ) { customHotbar }
 
     val smoothHotbarSlot by boolean("SmoothHotbarSlot", true) { customHotbar && hotbarStyle == "LB" }
 
@@ -71,6 +78,22 @@ object HUD : Module("HUD", Category.RENDER, gameDetecting = false, defaultState 
     val riseBackgroundAlpha by float("Rise-Background-Alpha", 110F, 0F..255F) { customHotbar && hotbarStyle == "Rise" }
     val riseAccentColors = ColorSettingsInteger(this, "Rise-Accent-Colors", applyMax = true)
     { customHotbar && hotbarStyle == "Rise" }.with(a = 255)
+
+    // Grid 热栏（独立方格 + 底部滑动选中线）：方格半透明黑底 + 底部自定义颜色横线平滑滑动
+    val gridBlur by boolean("Grid-Blur", true) { customHotbar && hotbarStyle == "Grid" }
+    val gridLineColors = ColorSettingsInteger(this, "Grid-Line-Colors", applyMax = true)
+    { customHotbar && hotbarStyle == "Grid" }.with(a = 255)
+    val gridBackgroundAlpha by float("Grid-Background-Alpha", 120F, 0F..255F)
+    { customHotbar && hotbarStyle == "Grid" }
+
+    // Sakura 热栏（樱花粉边框体系）：3px 圆角外框（圆角半径可调，AA 平滑）+ 每格粉色细边框，
+    // 选中格高不透明度粉色边框 + 自定义颜色 glow
+    val sakuraBlur by boolean("Sakura-Blur", true) { customHotbar && hotbarStyle == "Sakura" }
+    val sakuraRadius by float("Sakura-Radius", 8F, 0F..10F) { customHotbar && hotbarStyle == "Sakura" }
+    val sakuraColors = ColorSettingsInteger(this, "Sakura-Colors", applyMax = true)
+    { customHotbar && hotbarStyle == "Sakura" }.with(r = 255, g = 183, b = 197, a = 255)
+    val sakuraGlowColors = ColorSettingsInteger(this, "Sakura-Glow-Colors", applyMax = true)
+    { customHotbar && hotbarStyle == "Sakura" }.with(r = 255, g = 110, b = 180, a = 255)
 
     val inventoryParticle by boolean("InventoryParticle", false)
     private val blur by boolean("Blur", false)
@@ -116,6 +139,14 @@ object HUD : Module("HUD", Category.RENDER, gameDetecting = false, defaultState 
         // 移到事件内后与其它 HUD 组件共享同一帧模糊快照（与 BM dock 同阶段）。
         if (riseReplacesHotbar() && mc.renderViewEntity is EntityPlayer) {
             RiseHotbar.render(ScaledResolution(mc), mc.renderViewEntity as EntityPlayer, it.partialTicks, riseSettings)
+        }
+
+        // Grid / Sakura 热栏本体：与 Rise 相同阶段绘制，blur 共享同帧快照
+        if (gridReplacesHotbar() && mc.renderViewEntity is EntityPlayer) {
+            GridHotbar.render(ScaledResolution(mc), mc.renderViewEntity as EntityPlayer, it.partialTicks, gridSettings)
+        }
+        if (sakuraReplacesHotbar() && mc.renderViewEntity is EntityPlayer) {
+            SakuraHotbar.render(ScaledResolution(mc), mc.renderViewEntity as EntityPlayer, it.partialTicks, sakuraSettings)
         }
 
         hud.render(false)
@@ -177,6 +208,24 @@ object HUD : Module("HUD", Category.RENDER, gameDetecting = false, defaultState 
             mc.thePlayer != null && mc.playerController != null &&
             !mc.playerController.isSpectator && mc.renderViewEntity is EntityPlayer
 
+    /**
+     * Grid 热栏是否接管热栏绘制：HUD 开启 + CustomHotbar + Hotbar-Style 为 Grid，
+     * 且当前渲染实体为非旁观者玩家。状态条与 XP 均保持原版。
+     */
+    fun gridReplacesHotbar(): Boolean =
+        handleEvents() && customHotbar && hotbarStyle == "Grid" &&
+            mc.thePlayer != null && mc.playerController != null &&
+            !mc.playerController.isSpectator && mc.renderViewEntity is EntityPlayer
+
+    /**
+     * Sakura 热栏是否接管热栏绘制：HUD 开启 + CustomHotbar + Hotbar-Style 为 Sakura，
+     * 且当前渲染实体为非旁观者玩家。状态条与 XP 均保持原版。
+     */
+    fun sakuraReplacesHotbar(): Boolean =
+        handleEvents() && customHotbar && hotbarStyle == "Sakura" &&
+            mc.thePlayer != null && mc.playerController != null &&
+            !mc.playerController.isSpectator && mc.renderViewEntity is EntityPlayer
+
     // BM dock 压制原版状态条标记（与 DeltaForceStyle 同机制，二者互相独立）
     @Volatile
     private var bmVanillaSuppressed = false
@@ -235,5 +284,20 @@ object HUD : Module("HUD", Category.RENDER, gameDetecting = false, defaultState 
         override fun radius() = riseRadius
         override fun backgroundAlpha() = riseBackgroundAlpha.toInt()
         override fun accentColor() = riseAccentColors.color().rgb
+    }
+
+    // Grid 热栏设置桥
+    val gridSettings = object : GridHotbar.Settings {
+        override fun blur() = this@HUD.gridBlur
+        override fun lineColor() = gridLineColors.color().rgb
+        override fun backgroundAlpha() = gridBackgroundAlpha.toInt()
+    }
+
+    // Sakura 热栏设置桥
+    val sakuraSettings = object : SakuraHotbar.Settings {
+        override fun blur() = this@HUD.sakuraBlur
+        override fun radius() = sakuraRadius
+        override fun color() = sakuraColors.color().rgb
+        override fun glowColor() = sakuraGlowColors.color().rgb
     }
 }

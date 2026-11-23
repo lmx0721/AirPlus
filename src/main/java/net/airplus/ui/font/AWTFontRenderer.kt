@@ -460,7 +460,20 @@ class AWTFontRenderer @JvmOverloads constructor(
         }
     }
 
-    fun getStringWidth(text: String): Int = cachedStringWidths.getOrPut(text) {
+    fun getStringWidth(text: String): Int {
+        // 已 dispose（延迟释放队列清掉 atlas）但残留引用仍在算宽度时，charLocations 已空：
+        // 所有字符走原版 fallback 估算，得到一个严重失真的宽度。此时绝不入缓存 ——
+        // 否则 drawString 自愈 reinit() 重烘焙出正确字形后，毒化宽度仍永久留在缓存里，
+        // 表现为文字布局宽度大于实际绘制宽度（文字后面拖一截空位，直到重启才消失）。
+        // 已烘焙状态下缓存命中/写入，与历史行为一致。
+        return if (textureID == -1) {
+            measureStringWidth(text)
+        } else {
+            cachedStringWidths.getOrPut(text) { measureStringWidth(text) }
+        }
+    }
+
+    private fun measureStringWidth(text: String): Int {
         var myWidth = 0
         var fallbackWidth = 0f
         val fallbackScale = font.size / 32f
@@ -482,7 +495,7 @@ class AWTFontRenderer @JvmOverloads constructor(
             }
         }
 
-        (myWidth / 2) + fallbackWidth.roundToInt()
+        return (myWidth / 2) + fallbackWidth.roundToInt()
     }
 
     fun dispose() {
@@ -512,6 +525,9 @@ class AWTFontRenderer @JvmOverloads constructor(
         textureWidth = 0
         textureHeight = 0
         fontHeight = -1
+        // 兜底：dispose 后 reinit 前可能已有毒化宽度入缓存（若上游路径绕过上面的
+        // textureID 检查），重烘焙后一并失效
+        cachedStringWidths.clear()
         renderBitmap(0, bakedStop)
         if (this !in activeFontRenderers) {
             activeFontRenderers += this

@@ -83,6 +83,10 @@ class Gif : Element("Gif") {
     private var folderWasEnabled = false
     private var lastOpenTime = 0L
 
+    // 首帧同步标记：配置里 Folder 保存为 true 时，启动后首帧只同步状态、
+    // 不判成「false -> true 转变」，避免每次启动客户端都自动打开资源管理器
+    private var syncedFolderState = false
+
     /**
      * Draw element
      */
@@ -94,7 +98,12 @@ class Gif : Element("Gif") {
         }
 
         // Folder 设置：仅在 false -> true 转变时打开一次资源管理器，
-        // 配合防抖间隔，杜绝配置加载即触发、连点、循环打开多个窗口
+        // 配合防抖间隔，杜绝配置加载即触发、连点、循环打开多个窗口。
+        // 首帧只同步状态：配置里 Folder=true 属于「加载时已开启」而非「转变」
+        if (!syncedFolderState) {
+            syncedFolderState = true
+            folderWasEnabled = openFolderValue
+        }
         if (openFolderValue && !folderWasEnabled && now - lastOpenTime > FOLDER_OPEN_DEBOUNCE_MS) {
             lastOpenTime = now
             refreshGifChoices()

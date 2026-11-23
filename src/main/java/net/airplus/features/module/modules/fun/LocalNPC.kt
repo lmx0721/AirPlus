@@ -263,8 +263,9 @@ object LocalNPC : Module("LocalNPC", Category.FUN, gameDetecting = false) {
      * 复刻 vanilla EntityLivingBase#moveEntityWithHeading 服务端分支的运动部分
      * （客户端世界 jungle 分支整段跳过），不引入服务器同步插值：
      * 地面/空中通用 + 水/岩浆简化处理。
+     * （internal：Pet 模块复用同一物理分支驱动跟随宠物）
      */
-    private fun tickProxyPhysics(entity: EntityLivingBase, world: net.minecraft.world.World) {
+    fun tickProxyPhysics(entity: EntityLivingBase, world: net.minecraft.world.World) {
         val x = MathHelper.floor_double(entity.posX)
         val y = MathHelper.floor_double(entity.entityBoundingBox.minY)
         val z = MathHelper.floor_double(entity.posZ)

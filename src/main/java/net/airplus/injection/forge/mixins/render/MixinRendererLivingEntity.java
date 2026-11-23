@@ -154,8 +154,11 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
                 final String espMode = esp.getMode();
                 if ("wireframe".equalsIgnoreCase(espMode)) {
                     glPushMatrix();
-                    // Only save the state groups actually modified below (enable bits, polygon mode, line state)
-                    glPushAttrib(GL_ENABLE_BIT | GL_POLYGON_BIT | GL_LINE_BIT);
+                    // ESP pass 内只允许裸 GL 调用（绝不走 GlStateManager 写缓存）：
+                    // attrib 掩码补上 GL_CURRENT_BIT（当前颜色）与 GL_COLOR_BUFFER_BIT（blendFunc），
+                    // 让 pop 把真实状态完整弹回；GlStateManager 的 color/blendFunc 缓存全程未被写入，
+                    // 与弹回后的真实状态天然一致，不产生失步。
+                    glPushAttrib(GL_ENABLE_BIT | GL_POLYGON_BIT | GL_LINE_BIT | GL_CURRENT_BIT | GL_COLOR_BUFFER_BIT);
                     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
                     glDisable(GL_TEXTURE_2D);
                     glDisable(GL_LIGHTING);
@@ -163,11 +166,17 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
                     glEnable(GL_LINE_SMOOTH);
                     glEnable(GL_BLEND);
                     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                    RenderUtils.INSTANCE.glColor(esp.getColor(p_renderModel_1_));
+                    final Color wireframeColor = esp.getColor(p_renderModel_1_);
+                    glColor4f(wireframeColor.getRed() / 255F, wireframeColor.getGreen() / 255F,
+                        wireframeColor.getBlue() / 255F, wireframeColor.getAlpha() / 255F);
                     glLineWidth(esp.getWireframeWidth());
                     airplus$model.render(p_renderModel_1_, p_renderModel_2_, p_renderModel_3_, p_renderModel_4_, p_renderModel_5_, p_renderModel_6_, p_renderModel_7_);
                     glPopAttrib();
                     glPopMatrix();
+                    // 两步法把颜色缓存与真实状态收敛为白色：后续 layers/第一人称手臂（renderPlayerArm
+                    // 不重置当前颜色）与手持物品都依赖白色当前颜色，残留 ESP 色会让它们整体染色/发黑。
+                    color(0f, 0f, 0f, 0f);
+                    color(1f, 1f, 1f, 1f);
                 } else if ("outline".equalsIgnoreCase(espMode)) {
                     ClientUtils.INSTANCE.disableFastRender();
                     resetColor();
@@ -188,6 +197,15 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
                     OutlineUtils.setColor(color);
                     OutlineUtils.renderFive();
                     OutlineUtils.setColor(Color.WHITE);
+                    // renderFour 把 unit-1 光照坐标留在 (240,240)（glPushAttrib 不保存 multiTexCoords），
+                    // 恢复到实体自身亮度，避免本体普通 pass 与后续渲染全亮/发灰；
+                    // 再用两步法把颜色缓存与真实状态收敛为白色（OutlineUtils.setColor 是裸 glColor，
+                    // 缓存从未同步），防止残留 ESP 色染到 layers / 第一人称手臂与手持物品上。
+                    final int airplus$brightness = p_renderModel_1_.getBrightnessForRender(mc.timer.renderPartialTicks);
+                    OpenGlHelper.setLightmapTextureCoords(OpenGlHelper.lightmapTexUnit,
+                        (airplus$brightness % 65536) / 1f, (airplus$brightness / 65536) / 1f);
+                    color(0f, 0f, 0f, 0f);
+                    color(1f, 1f, 1f, 1f);
                 }
                 mc.gameSettings.fancyGraphics = fancyGraphics;
                 mc.gameSettings.gammaSetting = gamma;
@@ -215,6 +233,19 @@ public abstract class MixinRendererLivingEntity extends MixinRender {
         }
 
         ci.cancel();
+    }
+
+    /**
+     * ModelChanger：Image/GIF 模式整体取消 doRender（模型/盔甲层/手持物/名牌全隐藏），
+     * 改为在实体脚下绘制面向相机的 billboard 平面贴图（AnimatedImage 解码与逐帧上传）。
+     * 声明顺序需在 injectMoBendsRender 之前，保证 billboard 优先于 MoBends 接管。
+     */
+    @Inject(method = "doRender(Lnet/minecraft/entity/EntityLivingBase;DDDFF)V", at = @At("HEAD"), cancellable = true)
+    private <T extends EntityLivingBase> void injectModelChangerBillboard(T entity, double x, double y, double z, float entityYaw, float partialTicks, CallbackInfo ci) {
+        if (ModelChanger.INSTANCE.shouldRenderBillboard(entity)) {
+            ModelChanger.INSTANCE.renderBillboard(entity, x, y, z, partialTicks);
+            ci.cancel();
+        }
     }
 
     /**

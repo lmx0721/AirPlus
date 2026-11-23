@@ -76,6 +76,9 @@ object HudBlur : MinecraftInstance, Listenable {
     private var baseStrength = -1f
     private var baseKawaseGeneration = -1
     private var baseTexture = -1
+    /** 基准快照纹理的实际像素尺寸（Kawase halfRes 模式下为主 framebuffer 的一半） */
+    private var baseWidth = 0
+    private var baseHeight = 0
 
     init {
         // priority = Byte.MAX_VALUE：EventManager 按 priority 降序执行，本处理器必须
@@ -286,7 +289,17 @@ object HudBlur : MinecraftInstance, Listenable {
         // → 真实=ON / 缓存=OFF 的持久失步（colorMask 缓存毒化会静默丢弃同帧后续的
         // 守卫式恢复）。先快照入口真实值，write 的裸写不经过缓存，退出时按入口值恢复。
         forceColorMaskOn()
-        if (!reuseOuterMask) EmbeddedStencil.write(false)
+        if (!reuseOuterMask) {
+            // stencil 清屏限定到模糊 AABB：贴回 quad 被 scissor 到同一矩形（drawClippedResult），
+            // 区域外的旧 stencil 值不参与本次 GL_EQUAL 贴回判定，无需全屏清除
+            // （每面板一次全屏 stencil 写入 → 一次面板面积写入，HUD 面板越多省得越多）
+            val clearFactor = ScaledResolution(mc).scaleFactor
+            stencilClearBox[0] = (left * clearFactor).toInt().coerceAtLeast(0)
+            stencilClearBox[1] = (mc.displayHeight - bottom * clearFactor).toInt().coerceAtLeast(0)
+            stencilClearBox[2] = ((right - left) * clearFactor).toInt().coerceAtLeast(1)
+            stencilClearBox[3] = ((bottom - top) * clearFactor).toInt().coerceAtLeast(1)
+            EmbeddedStencil.write(false, stencilClearBox)
+        }
         try {
             glDisable(GL_DEPTH_TEST)
             GlStateManager.disableDepth()
@@ -478,8 +491,8 @@ object HudBlur : MinecraftInstance, Listenable {
                 // 同步 result*/cached* 指针到基准快照：drawClippedResult 永远贴
                 // 「当前调用」对应的那张纹理（此前命中时可能残留别强度的派生纹理）
                 resultTexture = baseTexture
-                resultWidth = mc.displayWidth
-                resultHeight = mc.displayHeight
+                resultWidth = baseWidth
+                resultHeight = baseHeight
                 cachedMode = mode
                 cachedStrength = Client.blurStrength
                 cachedKawaseGeneration = baseKawaseGeneration
@@ -507,7 +520,10 @@ object HudBlur : MinecraftInstance, Listenable {
             "Kawase" -> {
                 val iterations = (strength / 3F).toInt().coerceIn(1, 5)
                 val offset = (strength / iterations).toInt().coerceIn(1, 6)
-                KawaseBlur.blurFullScreen(iterations, offset, source)
+                // 半分辨率结果（跳过最后一次升采样到全分辨率）：基准快照（source == null）
+                // 走 halfRes 管线；派生强度自动忽略（内部走独立槽位全管线，避免覆盖
+                // 主链 chain[1] 上的基准快照纹理）
+                KawaseBlur.blurFullScreen(iterations, offset, source, halfRes = source == null)
             }
 
             // Dual = 两轮 H/V 分离高斯（per-round σ = radius/2，两轮净 σ ≈ radius/√2）。
@@ -537,9 +553,19 @@ object HudBlur : MinecraftInstance, Listenable {
             baseStrength = strength
             baseKawaseGeneration = KawaseBlur.chainGeneration
         }
+        // Kawase halfRes 结果纹理是 1/2 分辨率，贴回的纹理坐标映射必须用实际尺寸
+        if (mode == "Kawase" && KawaseBlur.lastResultWidth > 0) {
+            resultWidth = KawaseBlur.lastResultWidth
+            resultHeight = KawaseBlur.lastResultHeight
+        } else {
+            resultWidth = mcW
+            resultHeight = mcH
+        }
+        if (isBase) {
+            baseWidth = resultWidth
+            baseHeight = resultHeight
+        }
         resultTexture = texture
-        resultWidth = mcW
-        resultHeight = mcH
         cachedMode = mode
         cachedStrength = strength
         cachedKawaseGeneration = KawaseBlur.chainGeneration
@@ -628,12 +654,16 @@ object HudBlur : MinecraftInstance, Listenable {
             baseMode = mode
             baseStrength = Client.blurStrength
             baseKawaseGeneration = KawaseBlur.chainGeneration
+            baseWidth = resultWidth
+            baseHeight = resultHeight
         } else {
             // 基准拍摄失败：本帧不再重试（baseSession=session 使 isSnapshotValid 失败短路）
             baseTexture = -1
             baseSession = session
             baseMode = mode
             baseStrength = Client.blurStrength
+            baseWidth = 0
+            baseHeight = 0
         }
 
         cachedMode = savedMode
@@ -814,4 +844,7 @@ object HudBlur : MinecraftInstance, Listenable {
     private val projMatrix = BufferUtils.createFloatBuffer(16)
     private val modelMatrix = BufferUtils.createFloatBuffer(16)
     private val scissorBox = BufferUtils.createIntBuffer(16)
+
+    /** 本帧 blur 调用的 stencil 清屏范围（GL 像素 {x, y, w, h}），复用避免每帧分配 */
+    private val stencilClearBox = IntArray(4)
 }

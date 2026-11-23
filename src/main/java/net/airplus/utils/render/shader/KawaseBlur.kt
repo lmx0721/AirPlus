@@ -46,8 +46,18 @@ object KawaseBlur {
     @JvmField
     var framebuffer = Framebuffer(1, 1, false)
 
-    /** 按 iterations 缓存的 FBO 链：key=iterations，list[0]=全分辨率，list[1..n+1]=降采样级 */
+    /** 按 (链槽位, iterations) 缓存的 FBO 链：key=slot*100+iterations，list[0]=全分辨率，list[1..n+1]=降采样级。
+     *  slot 0 = 主链（基准快照，halfRes 时结果在 chain[1]）；slot 1 = 派生强度链（strengthScale≠1 的
+     *  派生模糊，source 为基准快照纹理）——独立成链，避免派生 pass 读写主链的 chain[1]（halfRes 模式下
+     *  那正是基准快照本体）造成同纹理读写未定义行为 + 基准快照被当帧污染 */
     private val chains = HashMap<Int, MutableList<Framebuffer>>()
+
+    /** 最近一次 blurFullScreen 结果纹理的实际像素尺寸（halfRes 时为 1/2 分辨率）。
+     *  调用方（HudBlur）贴回时用它做纹理坐标映射，代替主 framebuffer 尺寸 */
+    @JvmField
+    var lastResultWidth = 0
+    @JvmField
+    var lastResultHeight = 0
 
     /**
      * FBO 链代数：每次重建链（尺寸变化 → 旧链纹理被 deleteFramebuffer）时 +1。
@@ -116,8 +126,9 @@ object KawaseBlur {
      * 链按 iterations 缓存：同帧多个不同参数的调用者不再互相删除/重建对方正在使用的 FBO
      * （此前共享单链 + 参数不同 = 每帧两次全链重建，是模糊区域发灰/闪烁的根源）。
      */
-    private fun ensureChain(iterations: Int): List<Framebuffer> {
-        var chain = chains[iterations]
+    private fun ensureChain(slot: Int, iterations: Int): List<Framebuffer> {
+        val key = slot * 100 + iterations
+        var chain = chains[key]
         val main = chain?.firstOrNull()
         if (chain == null || chain.size != iterations + 2 ||
             main == null ||
@@ -145,12 +156,11 @@ object KawaseBlur {
 
                 newChain.add(currentBuffer)
             }
-            chains[iterations] = newChain
+            chains[key] = newChain
             // 链重建 = 旧纹理 id 全部作废：递增代数，让调用方（HudBlur）的缓存放心失效
             chainGeneration++
             chain = newChain
         }
-        framebuffer = chain!![0]
         return chain!!
     }
 
@@ -252,9 +262,17 @@ object KawaseBlur {
         iterations: Int,
         offset: Int,
         stencilFramebufferTexture: Int?,
-        sourceTexture: Int? = null
+        sourceTexture: Int? = null,
+        halfRes: Boolean = false
     ) {
-        val chain = ensureChain(iterations)
+        // 派生强度调用（source != null）永远走独立槽位的全分辨率管线：
+        // 1) halfRes 时主链 chain[1] 是基准快照本体，派生 pass 的第一次降采样就写 chain[1]
+        //    （读 source=基准纹理 → 写同一纹理，未定义行为，且基准快照被污染）
+        // 2) 独立槽位让两条链的 FBO 互不重叠
+        val derived = sourceTexture != null
+        val useHalfRes = halfRes && !derived && stencilFramebufferTexture == null
+        val slot = if (derived) 1 else 0
+        val chain = ensureChain(slot, iterations)
 
         val down = kawaseDown!!
         val up = kawaseUp!!
@@ -292,16 +310,25 @@ object KawaseBlur {
 
             // Downsample 阶段（sourceTexture 非 null 时以调用方给定的预模糊基准纹理为源，
             // 而非主 framebuffer —— HudBlur 派生强度路径保证源内容与标准强度完全一致）
+            // halfRes 时多下采一级（到 chain[iterations+1]），让升采样回程必然经过 chain[1]：
+            // iterations=1 时也至少有完整的一次 down+up 对，而不是只有单次降采样
+            val deepest = if (useHalfRes) iterations + 1 else iterations
             renderFBO(chain[1], sourceTexture ?: mc.framebuffer.framebufferTexture, down, offset.toFloat())
-            for (i in 1 until iterations) {
+            for (i in 1 until deepest) {
                 renderFBO(chain[i + 1], chain[i].framebufferTexture, down, offset.toFloat())
             }
 
             // Upsample 阶段（中间步骤 check=0）
-            for (i in iterations downTo 2) {
+            for (i in deepest downTo 2) {
                 renderFBO(chain[i - 1], chain[i].framebufferTexture, up, offset.toFloat())
             }
 
+            if (useHalfRes) {
+                // 半分辨率结果：跳过最后一次升采样到全分辨率 chain[0]，直接以 chain[1]
+                // （1/2 分辨率，GL_LINEAR）作为结果纹理 —— 模糊本来就是低频内容，放大后
+                // 视觉几乎无差别，但省掉一次全分辨率 pass（约 40% 模糊管线像素工作量）
+                framebuffer = chain[1]
+            } else {
             // 最后一次 upsample 到 chain[0]：
             // check=0 → alpha=1.0（完全不透明）；check=1 → 用 stencil 纹理做形状遮罩
             val lastBuffer = chain[0]
@@ -332,6 +359,10 @@ object KawaseBlur {
                 ShaderUtil.drawQuads()
                 up.unload()
             }
+                framebuffer = lastBuffer
+            }
+            lastResultWidth = framebuffer.framebufferWidth
+            lastResultHeight = framebuffer.framebufferHeight
         } finally {
             // 任何异常都必须恢复矩阵，否则下一帧起整个画面都会错位
             popGuiMatrix()
@@ -366,15 +397,18 @@ object KawaseBlur {
 
     /**
      * 全屏 downsample + upsample 链（在主 framebuffer 读取源画面），
-     * 结果只保存在 chain[0]（[framebuffer]）的纹理中，**不写回主 framebuffer**。
+     * 结果只保存在链纹理中，**不写回主 framebuffer**。
      * 之后由调用方（HudBlur）把该纹理按遮罩裁剪贴回。
      *
-     * @return 模糊结果的纹理 id；着色器不可用时返回 -1
+     * @param halfRes true 时跳过最后一次升采样到全分辨率，以 chain[1]（1/2 分辨率，
+     *        GL_LINEAR）作为结果纹理，省一次全分辨率 pass。派生强度（sourceTexture 非 null）
+     *        自动忽略此参数（走独立槽位的全管线，避免污染主链上的基准快照纹理）
+     * @return 模糊结果的纹理 id（实际尺寸见 [lastResultWidth]/[lastResultHeight]）；着色器不可用时返回 -1
      */
-    fun blurFullScreen(iterations: Int, offset: Int, sourceTexture: Int? = null): Int {
+    fun blurFullScreen(iterations: Int, offset: Int, sourceTexture: Int? = null, halfRes: Boolean = false): Int {
         initShaders()
         if (kawaseDown == null || kawaseUp == null) return -1
-        kawaseCore(iterations, offset, null, sourceTexture)
+        kawaseCore(iterations, offset, null, sourceTexture, halfRes)
         return framebuffer.framebufferTexture
     }
 
